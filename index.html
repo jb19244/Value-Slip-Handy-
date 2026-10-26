@@ -210,11 +210,7 @@ button.card.rec{display:flex;align-items:center;justify-content:space-between;ga
 .rnums small{font-size:12px;color:var(--muted);white-space:nowrap}
 .ticket.rec .t-head{align-items:flex-start}
 .tune{display:flex;flex-direction:column;gap:6px}
-.tbar{display:flex;flex-direction:column;gap:6px}
-.tbar .seg button{font-variant-numeric:tabular-nums;padding:8px 2px}
-.town{display:flex;gap:8px}
-.town input{flex:1;min-width:0;min-height:46px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font-family:var(--font-b);font-size:16px}
-.town input[aria-invalid="true"]{border-color:var(--bad,#d33)}
+.rule b{color:var(--accent);font-weight:600}
 .add{border:1.5px dashed var(--line);border-radius:14px;min-height:50px;color:var(--accent);font-weight:600}
 
 .fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -530,6 +526,84 @@ function buildSlips(matches, st){
   }
   dfs(0, [], 1, 1);
   return { slips: top, singles: singles, approx: approx };
+}
+
+// Feste Regel fuer die besten Wetten (keine Zielquote, keine Modi):
+// 1. Nur 2er- und 3er-Kombis, pro Spiel hoechstens ein Tipp.
+// 2. Jeder Tipp braucht mindestens den Mindest-Value (Einstellung, Standard 2 %) und eine Quote ab RULE.minLeg.
+// 3. Gesamtquote mindestens RULE.minSlip.
+// 4. Rangfolge: erwartetes Bankroll-Wachstum (Kelly-Wachstum) mit dem Einsatz, den die App empfiehlt.
+//    Das gewichtet Trefferchance und Value gemeinsam: hoher Value bei kleiner Chance zaehlt weniger als
+//    etwas weniger Value bei deutlich hoeherer Chance.
+// 5. Hoechstens 3 Scheine; zwei Scheine teilen sich hoechstens einen Tipp, damit sie wirklich verschieden sind.
+var RULE = { minLeg: 1.2, minSlip: 1.5, minLegs: 2, maxLegs: 3, show: 3, maxCands: 150, pool: 60, hitEv: -0.03 };
+function slipStakeFrac(p, o, st){ var k = kellyFull(p, o); return k > 0 ? Math.min(k * (st.kelly || 0.25), 0.03) : 0; }
+function slipGrowth(p, o, st){
+  var f = slipStakeFrac(p, o, st);
+  if (!(f > 0)) return 0;
+  return p * Math.log(1 + f * (o - 1)) + (1 - p) * Math.log(1 - f);
+}
+function legSig(l){ return l.mid + '|' + l.market + '|' + l.key; }
+// Alle 2er- und 3er-Kombis aus den Kandidaten durchgehen; score(p, odds) bewertet, keep(p, odds) filtert.
+function enumCombos(legs, score, keep, poolSize){
+  var n = legs.length, pool = [], worst = -Infinity;
+  function add(ls, p, o){
+    if (!keep(p, o)) return;
+    var sc = score(p, o);
+    if (pool.length >= poolSize && sc <= worst) return;
+    pool.push({ legs: ls, odds: o, p: p, ev: p * o - 1, score: sc });
+    if (pool.length > poolSize * 2){ pool.sort(cmpSlip); pool.length = poolSize; worst = pool[poolSize - 1].score; }
+  }
+  for (var i = 0; i < n; i++){
+    var a = legs[i];
+    for (var j = i + 1; j < n; j++){
+      var b = legs[j];
+      if (b.mid === a.mid) continue;
+      var p2 = a.p * b.p, o2 = a.book * b.book;
+      if (RULE.minLegs <= 2) add([a, b], p2, o2);
+      if (RULE.maxLegs < 3) continue;
+      for (var k = j + 1; k < n; k++){
+        var c = legs[k];
+        if (c.mid === a.mid || c.mid === b.mid) continue;
+        add([a, b, c], p2 * c.p, o2 * c.book);
+      }
+    }
+  }
+  pool.sort(cmpSlip);
+  return pool.slice(0, poolSize);
+}
+function cmpSlip(a, b){ return (b.score - a.score) || (b.p - a.p) || (b.ev - a.ev); }
+// Aus der Rangliste die besten Scheine, die sich hoechstens einen Tipp teilen
+function diverse(pool, count){
+  var out = [];
+  for (var i = 0; i < pool.length && out.length < count; i++){
+    var sigs = pool[i].legs.map(legSig);
+    var clash = out.some(function(o){ var os = o.legs.map(legSig); return sigs.filter(function(x){ return os.indexOf(x) >= 0; }).length >= 2; });
+    if (!clash) out.push(pool[i]);
+  }
+  return out;
+}
+function bestBets(matches, st){
+  var all = [];
+  matches.forEach(function(m){ selectionsFor(m, st.devig).forEach(function(x){ if (passes(x, st) && x.book >= RULE.minLeg) all.push(x); }); });
+  var minEdge = st.minEdge == null ? 0.02 : st.minEdge;
+  var value = all.filter(function(x){ return x.ev >= minEdge; });
+  value.sort(function(a, b){ return slipGrowth(b.p, b.book, st) - slipGrowth(a.p, a.book, st) || b.p - a.p; });
+  var capped = value.length > RULE.maxCands;
+  var vc = value.slice(0, RULE.maxCands);
+  var pool = enumCombos(vc, function(p, o){ return slipGrowth(p, o, st); }, function(p, o){ return o >= RULE.minSlip - 1e-9; }, RULE.pool);
+  var slips = diverse(pool, RULE.show);
+  // Ohne Value-Kombi: die sicherste 2er/3er-Kombi mit hoechstens kleinem Nachteil pro Tipp, ehrlich gekennzeichnet
+  var safe = null;
+  if (!slips.length){
+    var hit = all.filter(function(x){ return x.ev >= RULE.hitEv; });
+    hit.sort(function(a, b){ return b.p - a.p || b.ev - a.ev; });
+    var hp = enumCombos(hit.slice(0, RULE.maxCands), function(p){ return p; }, function(p, o){ return o >= RULE.minSlip - 1e-9; }, 5);
+    safe = hp[0] || null;
+  }
+  var singles = value.slice().sort(function(a, b){ return b.ev - a.ev; });
+  var safeSingles = all.filter(function(x){ return x.ev >= RULE.hitEv; }).sort(function(a, b){ return (b.p - a.p) || (b.ev - a.ev); });
+  return { slips: slips, safe: safe, singles: singles, safeSingles: safeSingles, capped: capped, valueLegs: value.length };
 }
 
 // Geladene Tagesdaten (von Claude in den Datenspeicher geschrieben) pruefen und vereinheitlichen.
@@ -1036,33 +1110,20 @@ function seg(act, opts, cur, extra, cls){
     return '<button data-act="' + act + '" data-v="' + o[0] + '" aria-pressed="' + (String(cur) === String(o[0])) + '">' + o[1] + '</button>'; }).join('') + '</div>';
 }
 
-// Empfehlungen: die besten Scheine aus drei Blickwinkeln, ohne dass man Modi durchklicken muss.
-// Gleiche Scheine werden zusammengefasst.
+// Empfehlungen nach fester Regel (siehe bestBets): bis zu 3 verschiedene 2er-/3er-Kombis mit Value.
 function recommendations(active, st){
-  var defs = [
-    { mode: 'balanced', title: 'Beste Wahl', sub: 'Höchste Trefferchance mit mindestens ' + pct(st.minEdge, 0) + ' Value pro Tipp' },
-    { mode: 'hit', title: 'Höchste Trefferchance', sub: '' },
-    { mode: 'value', title: 'Maximaler Value', sub: 'Höchster Erwartungswert, dafür mehr Risiko' }
-  ];
-  var out = { recs: [], approx: false, singlesValue: [], singlesHit: [] }, sigs = {};
-  defs.forEach(function(def){
-    var r = buildSlips(active, Object.assign({}, st, { mode: def.mode }));
-    out.approx = out.approx || !!r.approx;
-    if (def.mode === 'balanced') out.singlesValue = r.singles;
-    if (def.mode === 'hit') out.singlesHit = r.singles;
-    var sl = r.slips[0];
-    if (!sl) return;
-    var sig = sl.legs.map(function(l){ return l.mid + '|' + l.market + '|' + l.key; }).sort().join(',');
-    if (sigs[sig] != null){ out.recs[sigs[sig]].also.push(def.title); return; }
-    sigs[sig] = out.recs.length;
-    out.recs.push({ mode: def.mode, title: def.title, sub: def.mode === 'hit' ? (sl.ev >= 0 ? 'Mit Value' : 'Ohne Value: auf Dauer leicht im Minus') : def.sub, slip: sl, also: [] });
+  var r = bestBets(active, st);
+  var names = ['Beste Wette', 'Alternative', 'Alternative'];
+  var recs = r.slips.map(function(sl, i){
+    return { title: names[i], sub: 'Jeder Tipp mit Value', slip: sl, also: [], rank: i + 1 };
   });
-  return out;
+  if (!recs.length && r.safe) recs.push({ title: 'Heute ohne Value', sub: 'Sicherste Kombi ohne Value: auf Dauer leicht im Minus', slip: r.safe, also: [], rank: 0, noValue: true });
+  return { recs: recs, approx: r.capped, singlesValue: r.singles, singlesHit: r.safeSingles, valueLegs: r.valueLegs };
 }
 function ticketHtml(rec, st){
   var sl = rec.slip, stake = stakeFor(sl.p, sl.odds, st.bankroll, st.kelly);
   return '<article class="card ticket rec open">' +
-    '<div class="t-head"><span class="rtitle"><b>' + esc(rec.title) + '</b>' + (rec.also.length ? '<small>auch: ' + esc(rec.also.join(', ')) + '</small>' : '') + '<small>' + esc(rec.sub) + '</small></span>' +
+    '<div class="t-head"><span class="rtitle"><b>' + esc(rec.title) + '</b><small>' + esc(rec.sub) + '</small></span>' +
     '<span class="label">' + sl.legs.length + (sl.legs.length === 1 ? ' Tipp' : 'er-Kombi') + '</span></div>' +
     '<div class="t-odds"><b>' + f2(sl.odds) + '</b><span class="muted small">Gesamtquote</span></div>' +
     '<dl class="stats">' +
@@ -1091,12 +1152,12 @@ function renderSlip(){
   if (!(state.recOpen >= 0) || state.recOpen >= R.recs.length) state.recOpen = 0;
   var sportName = { all: 'alle Sportarten', fb: 'Fußball', bb: 'Basketball', ih: 'Eishockey' }[st.sport] || 'alle Sportarten';
   var mkName = { all: 'alle Märkte', res: '1X2', dc: 'Doppelte Chance', ou: 'Über/Unter', hc: 'Handicap', x: 'weitere Märkte' }[st.market] || 'alle Märkte';
-  var h = '<div class="row"><h2>Beste Wetten</h2><button class="link" data-act="tune" aria-expanded="' + !!state.tuneOpen + '">' + (state.tuneOpen ? 'Fertig' : 'Anpassen') + '</button></div>' +
-    targetBar(st) +
-    '<p class="muted small" style="margin:0">Bis ' + st.maxLegs + ' Tipps · ' + sportName + ' · ' + mkName + '</p>';
+  var filt = (st.sport !== 'all' && st.sport ? sportName : '') + (st.market !== 'all' && st.market ? (st.sport !== 'all' && st.sport ? ' · ' : '') + mkName : '');
+  var h = '<div class="row"><h2>Beste Wetten</h2><button class="link" data-act="tune" aria-expanded="' + !!state.tuneOpen + '">' + (state.tuneOpen ? 'Fertig' : 'Filter') + '</button></div>' +
+    '<p class="muted small rule" style="margin:0">2er- und 3er-Kombis, jeder Tipp mit mindestens ' + pct(st.minEdge, 0) + ' Value und Quote ab ' + f2(RULE.minLeg) + '. Sortiert nach dem, was deine Bankroll auf Dauer am stärksten wachsen lässt.' +
+    (filt ? ' <b>Filter: ' + esc(filt) + '</b>' : '') + '</p>';
   if (state.tuneOpen){
     h += '<div class="card tune"><div class="filters" style="margin-top:0">' +
-      '<span class="label">Höchstens so viele Tipps</span>' + seg('legsf', [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5'], [6, '6']], st.maxLegs, null, 'sm') +
       '<span class="label">Sportart</span>' + seg('sportf', [['all', 'Alle'], ['fb', 'Fußball'], ['bb', 'Basketball'], ['ih', 'Eishockey']], st.sport, null, 'sm') +
       '<span class="label">Markt</span>' + seg('marketf', [['all', 'Alle'], ['res', '1X2'], ['dc', 'DC'], ['ou', 'Ü/U'], ['hc', 'HC'], ['x', 'Mehr']], st.market, null, 'sm') +
       (st.market === 'x' ? '<p class="hint" style="margin:0">„Mehr“ sind Fußballmärkte mit Modell-Chance. Sie fließen ein, sobald du eine Betano-Quote dafür einträgst.</p>' : '') +
@@ -1112,10 +1173,10 @@ function renderSlip(){
     if (!usable && hasFeed() && active.length) h += '<p>Für die offenen Spiele fehlen noch Quoten. Lade sie unter „Spiele“ oder trag sie ein.</p><button class="btn" data-act="tab" data-tab="games">Spiele öffnen</button>';
     else if (!usable && hasFeed()) h += '<p>Alle geladenen Spiele haben schon begonnen. Tippe auf „Aktualisieren“, um neue zu holen.</p><button class="btn" data-act="refresh">Aktualisieren</button>';
     else if (!usable) h += '<p>Es fehlen Spiele mit Referenzquoten. Lade Spiele oder trag sie unter „Spiele“ ein.</p><button class="btn" data-act="tab" data-tab="games">Spiele öffnen</button>';
-    else h += '<p>Mit den aktuellen Quoten erreicht kein Schein die Zielquote ' + f2(st.target) + ' ohne zu großen Nachteil. Wähle oben eine kleinere Zielquote oder erlaube unter „Anpassen“ mehr Tipps.</p>';
+    else h += '<p>Gerade gibt es keine 2er- oder 3er-Kombi, die die Regel erfüllt. ' + (R.valueLegs ? 'Es gibt nur einzelne Tipps mit Value, siehe unten.' : 'Trag Betano-Quoten ein oder schau kurz vor Anpfiff wieder rein.') + '</p>';
     h += '</div>';
   } else {
-    if (R.approx) h += '<div class="banner"><span>Sehr viele gleichwertige Tipps: die Suche wurde abgekürzt.</span></div>';
+    if (R.approx) h += '<div class="banner"><span>Sehr viele Tipps mit Value: die App hat die 150 stärksten kombiniert.</span></div>';
     h += '<div class="recs">' + R.recs.map(function(rec, i){ return i === state.recOpen ? ticketHtml(rec, st) : recCard(rec, i, st); }).join('') + '</div>';
     if (R.recs[state.recOpen].slip.legs.some(function(l){ return l.sample; })) h += '<div class="banner"><span>Dieser Schein nutzt Beispielquoten. Ersetze sie unter „Spiele“ durch aktuelle Quoten.</span></div>';
   }
@@ -1164,22 +1225,6 @@ function legRow(l){
   return '<li class="leg"><div class="pick">' + esc(pickName(l)) + '</div><div class="game">' + esc(l.game) + ' · ' + SPORTS[l.sport].name + ' · ' + MARKETS[l.market] + '</div>' +
     '<div class="fair">Chance ' + pct(l.p) + ' · fair ' + f2(l.fairOdds) + (l.src ? ' · Quote ' + esc(l.src) : '') + '</div>' +
     '<div class="q"><b>' + f2(l.book) + '</b>' + edgePill(l.ev, state.settings.minEdge) + '</div></li>';
-}
-var TARGETS = [1.5, 2, 3, 5, 10];
-function targetBar(st){
-  var preset = TARGETS.some(function(v){ return Math.abs(v - st.target) < 1e-9; });
-  var own = state.ownTarget || !preset;
-  var h = '<div class="tbar"><span class="label">Zielquote</span><div class="seg" role="group">' + TARGETS.map(function(v){
-    return '<button data-act="tgt" data-v="' + v + '" aria-pressed="' + (!own && Math.abs(v - st.target) < 1e-9) + '">' + f2(v).replace(/,00$/, '').replace(/(,\d)0$/, '$1') + '</button>'; }).join('') +
-    '<button data-act="tgt" data-v="own" aria-pressed="' + own + '">' + (own && !state.ownTarget ? f2(st.target) : 'Eigene') + '</button></div>';
-  if (state.ownTarget) h += '<div class="town"><input id="s-target" type="text" inputmode="decimal" enterkeyhint="done" autocomplete="off" aria-label="Eigene Zielquote" placeholder="z. B. 7,5" value="' + (preset ? '' : f2(st.target)) + '"><button class="btn sm" data-act="tgtok">OK</button></div>';
-  return h + '</div>';
-}
-function setTarget(v){
-  var st = state.settings;
-  if (!(v > 1)) return false;
-  st.target = Math.min(1000, Math.max(1.1, Math.round(v * 100) / 100));
-  state.slipIdx = 0; state.recOpen = 0; save(); return true;
 }
 function stepper(key, label, val){
   return '<div class="stepper"><span class="label">' + label + '</span><div class="ctl">' +
@@ -2022,18 +2067,6 @@ document.addEventListener('click', function(e){
       else st.maxLegs = Math.min(6, Math.max(1, st.maxLegs + dir));
       state.slipIdx = 0; state.recOpen = 0; save(); renderSlip(); break;
     }
-    case 'tgt': {
-      var tv = t.getAttribute('data-v');
-      if (tv === 'own'){ state.ownTarget = true; renderSlip(); var ti = $('s-target'); if (ti) ti.focus(); break; }
-      state.ownTarget = false; setTarget(+tv); renderSlip(); break;
-    }
-    case 'tgtok': {
-      var ti2 = $('s-target');
-      if (ti2 && setTarget(parseNum(ti2.value))){ state.ownTarget = false; renderSlip(); }
-      else if (ti2){ ti2.setAttribute('aria-invalid', 'true'); toast('Bitte eine Quote über 1 eingeben'); }
-      break;
-    }
-    case 'legsf': st.maxLegs = +t.getAttribute('data-v'); state.slipIdx = 0; state.recOpen = 0; save(); renderSlip(); break;
     case 'pickslip': state.slipIdx = +t.getAttribute('data-i'); renderSlip(); break;
     case 'rec': state.recOpen = +t.getAttribute('data-i'); renderSlip(); break;
     case 'tune': state.tuneOpen = !state.tuneOpen; renderSlip(); break;
@@ -2094,8 +2127,7 @@ document.addEventListener('input', function(e){
   if (id === 's-base'){ state.api.base = e.target.value.trim(); saveApi(); }
   if (id === 's-edge'){ var d = parseNum(e.target.value); if (d >= 0 && d <= 50){ state.settings.minEdge = d / 100; save(); renderSlip(); renderGames(); updateCalc(); } }
 });
-document.addEventListener('keydown', function(e){
-  if (e.key === 'Enter' && e.target && e.target.id === 's-target'){ e.preventDefault(); var okb = document.querySelector('[data-act="tgtok"]'); if (okb) okb.click(); return; } if (e.key === 'Escape' && !$('overlay').hidden) closeSheet(); });
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && !$('overlay').hidden) closeSheet(); });
 
 renderAll();
 startApi();
