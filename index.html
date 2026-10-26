@@ -200,6 +200,16 @@ details.xmore .xg{margin:12px 0 8px}
 .mini.on.bad{background:var(--bad-bg);color:var(--bad);border-color:var(--bad)}
 .kv dd.good{color:var(--good)} .kv dd.bad{color:var(--bad)}
 .bact{margin-top:4px}
+.recs{display:flex;flex-direction:column;gap:10px}
+button.card.rec{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;text-align:left}
+.rtitle{display:flex;flex-direction:column;gap:2px;min-width:0}
+.rtitle b{font-size:16px}
+.rtitle small{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.rnums{display:flex;flex-direction:column;align-items:flex-end;flex:none;gap:2px}
+.rnums b{font-family:var(--font-d);font-size:28px;line-height:1;font-variant-numeric:tabular-nums}
+.rnums small{font-size:12px;color:var(--muted);white-space:nowrap}
+.ticket.rec .t-head{align-items:flex-start}
+.tune{display:flex;flex-direction:column;gap:6px}
 .add{border:1.5px dashed var(--line);border-radius:14px;min-height:50px;color:var(--accent);font-weight:600}
 
 .fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -874,6 +884,32 @@ function apiErrorText(status, body){
   if (status === 422) return 'The Odds API hat die Anfrage abgelehnt (ungültige Liga oder Einstellung).';
   return 'The Odds API antwortet mit Fehler ' + status + '. Versuch es später noch einmal.';
 }
+// Spar-Modus: Tagesanteil am Restkontingent (20 Abrufe Reserve fuer Ergebnisse und Knopfdruck)
+var SMART_RESERVE = 20, SMART_SOON = 3 * 3600000, SMART_FRESH_SOON = 45 * 60000, SMART_FRESH = 12 * 3600000;
+function daysLeftInMonth(nowMs){
+  var d = new Date(nowMs), end = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  return Math.max(1, Math.ceil((end - d) / 86400000));
+}
+function dailyBudget(remaining, spentToday, nowMs){
+  if (remaining == null || !isFinite(remaining)) return null;
+  var spent = Math.max(0, spentToday || 0), start = remaining + spent;
+  var allow = Math.floor(Math.max(0, start - SMART_RESERVE) / daysLeftInMonth(nowMs));
+  return { allow: allow, spent: spent, left: Math.max(0, Math.min(allow - spent, remaining - SMART_RESERVE)) };
+}
+// Welche Ligen jetzt Quoten brauchen: kurz vor Anpfiff (unter 3 Std) alle 45 Min, sonst alle 12 Std;
+// zuerst Anpfiff-nah, dann Ligen, die dich interessieren, dann nach Anstosszeit. Nur was ins Budget passt.
+function planSmart(infos, budgetLeft, nowMs){
+  var need = (infos || []).filter(function(x){
+    if (!(x.next > nowMs)) return false;
+    var age = x.oddsAt ? nowMs - x.oddsAt : Infinity;
+    var soon = x.next - nowMs <= SMART_SOON;
+    return age > SMART_FRESH || (soon && age > SMART_FRESH_SOON);
+  }).map(function(x){ return Object.assign({}, x, { prio: (x.next - nowMs <= SMART_SOON ? 0 : 2) + (x.interest ? 0 : 1) }); });
+  need.sort(function(a, b){ return (a.prio - b.prio) || (a.next - b.next); });
+  var out = [], left = budgetLeft == null ? Infinity : budgetLeft;
+  need.forEach(function(x){ if (x.cost <= left){ out.push(x.key); left -= x.cost; } });
+  return out;
+}
 // END API
 
 var f2 = function(n){ return n.toFixed(2).replace('.', ','); };
@@ -928,7 +964,7 @@ function save(){ try { localStorage.setItem(KEY, JSON.stringify({ matches: state
 
 // Einstellungen fuer den automatischen Abruf. Der Schluessel bleibt nur auf diesem Geraet.
 var API_KEY_STORE = 'valueslip.api', FEED_STORE = 'valueslip.feed';
-var API_DEFAULTS = { key: '', base: '', windowH: 24, autoH: 6, oddsMode: 'auto', leagues: {}, lastFetch: 0, lastAttempt: 0, lastSchedule: 0, quota: null };
+var API_DEFAULTS = { key: '', base: '', windowH: 24, autoH: 6, oddsMode: 'smart', modeSet: false, leagues: {}, lastFetch: 0, lastAttempt: 0, lastSchedule: 0, quota: null, spent: null, interest: {} };
 LEAGUES.forEach(function(l){ API_DEFAULTS.leagues[l.key] = l.on; });
 state.api = JSON.parse(JSON.stringify(API_DEFAULTS));
 state.loading = false; state.apiError = '';
@@ -937,9 +973,24 @@ try {
   if (rawApi && typeof rawApi === 'object'){
     state.api = Object.assign({}, state.api, rawApi);
     state.api.leagues = Object.assign({}, API_DEFAULTS.leagues, rawApi.leagues || {});
+    // Neu: Spar-Modus ist Standard, solange du nicht selbst einen Modus gewaehlt hast
+    if (!rawApi.modeSet && (!rawApi.oddsMode || rawApi.oddsMode === 'auto')) state.api.oddsMode = 'smart';
+    if (!state.api.interest || typeof state.api.interest !== 'object') state.api.interest = {};
   }
 } catch (e) {}
 function saveApi(){ try { localStorage.setItem(API_KEY_STORE, JSON.stringify(state.api)); } catch (e) {} }
+function todayKey(){ return berlinDateOf(Date.now()); }
+function berlinDateOf(ms){ try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(new Date(ms)); } catch (e) { return new Date(ms).toISOString().slice(0, 10); } }
+function spentToday(){ var s = state.api.spent; return s && s.day === todayKey() ? s.n : 0; }
+function addSpent(n){ if (!(n > 0)) return; var d = todayKey(); if (!state.api.spent || state.api.spent.day !== d) state.api.spent = { day: d, n: 0 }; state.api.spent.n += n; }
+function markInterest(lkey){ if (lkey){ state.api.interest[lkey] = Date.now(); saveApi(); } }
+function interested(lkey, now){
+  var t = state.api.interest[lkey];
+  if (t && now - t < 24 * 3600000) return true;
+  var ids = {}; (state.feed ? state.feed.matches : []).forEach(function(m){ if (m.lkey === lkey) ids[m.id] = 1; });
+  if (Object.keys(state.ov).some(function(id){ return ids[id]; })) return true;
+  return (state.bets || []).some(function(b){ return b.status === 'open' && b.legs.some(function(l){ return l.lkey === lkey && l.state === 'open'; }); });
+}
 function apiReady(){ return !!(String(state.api.key || '').trim() || String(state.api.base || '').trim()); }
 function selectedLeagues(){ return LEAGUES.filter(function(l){ return state.api.leagues[l.key]; }); }
 
@@ -980,76 +1031,94 @@ function seg(act, opts, cur, extra, cls){
     return '<button data-act="' + act + '" data-v="' + o[0] + '" aria-pressed="' + (String(cur) === String(o[0])) + '">' + o[1] + '</button>'; }).join('') + '</div>';
 }
 
+// Empfehlungen: die besten Scheine aus drei Blickwinkeln, ohne dass man Modi durchklicken muss.
+// Gleiche Scheine werden zusammengefasst.
+function recommendations(active, st){
+  var defs = [
+    { mode: 'balanced', title: 'Beste Wahl', sub: 'Höchste Trefferchance mit mindestens ' + pct(st.minEdge, 0) + ' Value pro Tipp' },
+    { mode: 'hit', title: 'Höchste Trefferchance', sub: '' },
+    { mode: 'value', title: 'Maximaler Value', sub: 'Höchster Erwartungswert, dafür mehr Risiko' }
+  ];
+  var out = { recs: [], approx: false, singlesValue: [], singlesHit: [] }, sigs = {};
+  defs.forEach(function(def){
+    var r = buildSlips(active, Object.assign({}, st, { mode: def.mode }));
+    out.approx = out.approx || !!r.approx;
+    if (def.mode === 'balanced') out.singlesValue = r.singles;
+    if (def.mode === 'hit') out.singlesHit = r.singles;
+    var sl = r.slips[0];
+    if (!sl) return;
+    var sig = sl.legs.map(function(l){ return l.mid + '|' + l.market + '|' + l.key; }).sort().join(',');
+    if (sigs[sig] != null){ out.recs[sigs[sig]].also.push(def.title); return; }
+    sigs[sig] = out.recs.length;
+    out.recs.push({ mode: def.mode, title: def.title, sub: def.mode === 'hit' ? (sl.ev >= 0 ? 'Mit Value' : 'Ohne Value: auf Dauer leicht im Minus') : def.sub, slip: sl, also: [] });
+  });
+  return out;
+}
+function ticketHtml(rec, st){
+  var sl = rec.slip, stake = stakeFor(sl.p, sl.odds, st.bankroll, st.kelly);
+  return '<article class="card ticket rec open">' +
+    '<div class="t-head"><span class="rtitle"><b>' + esc(rec.title) + '</b>' + (rec.also.length ? '<small>auch: ' + esc(rec.also.join(', ')) + '</small>' : '') + '<small>' + esc(rec.sub) + '</small></span>' +
+    '<span class="label">' + sl.legs.length + (sl.legs.length === 1 ? ' Tipp' : 'er-Kombi') + '</span></div>' +
+    '<div class="t-odds"><b>' + f2(sl.odds) + '</b><span class="muted small">Gesamtquote</span></div>' +
+    '<dl class="stats">' +
+      '<div><dt>Trefferchance</dt><dd>' + pct(sl.p) + '</dd></div>' +
+      '<div><dt>Erwarteter Wert</dt><dd class="' + (sl.ev >= 0 ? 'good' : 'bad') + '">' + sgn(sl.ev) + '</dd></div>' +
+      '<div><dt>Empfohlener Einsatz</dt><dd>' + (stake > 0 ? eur(stake) : '–') + '</dd></div>' +
+      '<div><dt>Auszahlung bei Treffer</dt><dd>' + (stake > 0 ? eur(stake * sl.odds) : '–') + '</dd></div>' +
+    '</dl>' +
+    (sl.ev < 0 ? '<p class="neg">Kein Value: Pro 10 € Einsatz verlierst du im Schnitt ' + eur(-sl.ev * 10) + '. Kelly empfiehlt deshalb keinen Einsatz.</p>' : '') +
+    '<div class="sep"></div>' +
+    '<ol class="legs">' + sl.legs.map(legRow).join('') + '</ol>' +
+    '<div class="t-foot"><button class="btn ghost block" data-act="copy">Kopieren</button><button class="btn block" data-act="logslip">Gespielt: ins Tagebuch</button></div>' +
+    '</article>';
+}
+function recCard(rec, i, st){
+  var sl = rec.slip;
+  return '<button class="card rec" data-act="rec" data-i="' + i + '">' +
+    '<span class="rtitle"><b>' + esc(rec.title) + '</b><small>' + esc(rec.sub) + '</small></span>' +
+    '<span class="rnums"><b>' + f2(sl.odds) + '</b><small>' + pct(sl.p, 0) + ' · ' + edgePill(sl.ev, 0) + '</small><small>' + sl.legs.length + (sl.legs.length === 1 ? ' Tipp' : ' Tipps') + '</small></span></button>';
+}
 function renderSlip(){
   var st = state.settings;
   var active = activeMatches();
-  var res = buildSlips(active, st);
-  var slips = res.slips;
-  if (state.slipIdx >= slips.length) state.slipIdx = 0;
-  var mode = MODES[st.mode];
-  var hints = {
-    hit: 'Höchste Trefferchance für deine Zielquote, auch ohne Value. Tipps mit mehr als 5 % Nachteil fliegen raus. Auf Dauer verlierst du in diesem Modus meist leicht.',
-    safe: 'Nur Favoriten (ab 50 % Chance) mit Value. Hohe Trefferchance, kleinere Gewinne.',
-    balanced: 'Nur Tipps mit mindestens ' + pct(st.minEdge, 0) + ' Value. Höchste Trefferchance bei deiner Zielquote.',
-    value: 'Höchster Erwartungswert bei deiner Zielquote. Mehr Risiko pro Schein.'
-  };
-  var h = '<div class="card">' +
-    '<div class="seg" role="group" aria-label="Modus">' +
-    ['hit', 'safe', 'balanced', 'value'].map(function(k){ return '<button data-act="mode" data-mode="' + k + '" aria-pressed="' + (st.mode === k) + '">' + MODES[k].name + '</button>'; }).join('') +
-    '</div><p class="hint">' + hints[st.mode] + '</p>' +
-    '<div class="filters">' +
-    '<span class="label">Sportart</span>' + seg('sportf', [['all', 'Alle'], ['fb', 'Fußball'], ['bb', 'Basketball'], ['ih', 'Eishockey']], st.sport, null, 'sm') +
-    '<span class="label">Markt</span>' + seg('marketf', [['all', 'Alle'], ['res', '1X2'], ['dc', 'DC'], ['ou', 'Ü/U'], ['hc', 'HC'], ['x', 'Mehr']], st.market, null, 'sm') +
-    (st.market === 'x' ? '<p class="hint" style="margin:0">„Mehr“ sind Fußballmärkte mit Modell-Chance (Tore, Beide treffen, Team-Tore, Handicap, Kombis). Sie fließen ein, sobald du eine Betano-Quote dafür einträgst.</p>' : '') +
-    (st.market === 'dc' && st.sport !== 'all' && st.sport !== 'fb' ? '<p class="hint" style="margin:0">Doppelte Chance gibt es nur beim Fußball.</p>' : '') +
-    (st.market === 'hc' && st.sport === 'fb' ? '<p class="hint" style="margin:0">Handicap gibt es hier nur bei Basketball und Eishockey.</p>' : '') +
-    '</div>' +
-    '<div class="steppers">' +
-    stepper('target', 'Zielquote', f2(st.target)) + stepper('maxLegs', 'Max. Tipps', String(st.maxLegs)) +
-    '</div></div>';
-
+  var R = recommendations(active, st);
+  state.recs = R.recs;
+  if (!(state.recOpen >= 0) || state.recOpen >= R.recs.length) state.recOpen = 0;
+  var sportName = { all: 'alle Sportarten', fb: 'Fußball', bb: 'Basketball', ih: 'Eishockey' }[st.sport] || 'alle Sportarten';
+  var mkName = { all: 'alle Märkte', res: '1X2', dc: 'Doppelte Chance', ou: 'Über/Unter', hc: 'Handicap', x: 'weitere Märkte' }[st.market] || 'alle Märkte';
+  var h = '<div class="row"><h2>Beste Wetten</h2><button class="link" data-act="tune" aria-expanded="' + !!state.tuneOpen + '">' + (state.tuneOpen ? 'Fertig' : 'Anpassen') + '</button></div>' +
+    '<p class="muted small" style="margin:0">Zielquote ' + f2(st.target) + ' · bis ' + st.maxLegs + ' Tipps · ' + sportName + ' · ' + mkName + '</p>';
+  if (state.tuneOpen){
+    h += '<div class="card tune"><div class="steppers" style="margin-top:0">' + stepper('target', 'Zielquote', f2(st.target)) + stepper('maxLegs', 'Max. Tipps', String(st.maxLegs)) + '</div>' +
+      '<div class="filters">' +
+      '<span class="label">Sportart</span>' + seg('sportf', [['all', 'Alle'], ['fb', 'Fußball'], ['bb', 'Basketball'], ['ih', 'Eishockey']], st.sport, null, 'sm') +
+      '<span class="label">Markt</span>' + seg('marketf', [['all', 'Alle'], ['res', '1X2'], ['dc', 'DC'], ['ou', 'Ü/U'], ['hc', 'HC'], ['x', 'Mehr']], st.market, null, 'sm') +
+      (st.market === 'x' ? '<p class="hint" style="margin:0">„Mehr“ sind Fußballmärkte mit Modell-Chance. Sie fließen ein, sobald du eine Betano-Quote dafür einträgst.</p>' : '') +
+      (st.market === 'dc' && st.sport !== 'all' && st.sport !== 'fb' ? '<p class="hint" style="margin:0">Doppelte Chance gibt es nur beim Fußball.</p>' : '') +
+      (st.market === 'hc' && st.sport === 'fb' ? '<p class="hint" style="margin:0">Handicap gibt es hier nur bei Basketball und Eishockey.</p>' : '') +
+      '</div></div>';
+  }
   h += feedStatus(active);
 
-  if (!slips.length){
+  if (!R.recs.length){
     var usable = active.filter(function(m){ return selectionsFor(m, st.devig).length; }).length;
-    h += '<div class="card empty"><h2>Kein passender Schein</h2>';
-    if (!usable && hasFeed() && active.length) h += '<p>Für die offenen Spiele fehlen noch deine Betano-Quoten. Trage sie unter „Spiele“ ein.</p><button class="btn" data-act="tab" data-tab="games">Spiele öffnen</button>';
+    h += '<div class="card empty"><h2>Gerade kein guter Schein</h2>';
+    if (!usable && hasFeed() && active.length) h += '<p>Für die offenen Spiele fehlen noch Quoten. Lade sie unter „Spiele“ oder trag sie ein.</p><button class="btn" data-act="tab" data-tab="games">Spiele öffnen</button>';
     else if (!usable && hasFeed()) h += '<p>Alle geladenen Spiele haben schon begonnen. Tippe auf „Aktualisieren“, um neue zu holen.</p><button class="btn" data-act="refresh">Aktualisieren</button>';
-    else if (!usable) h += '<p>Es fehlen Spiele mit Referenzquoten. Trage sie unter „Spiele“ ein.</p><button class="btn" data-act="tab" data-tab="games">Spiele öffnen</button>';
-    else if (!res.singles.length) h += '<p>Kein Tipp erfüllt Modus „' + mode.name + '“ und deine Filter. Senke den Mindest-Value in den Einstellungen, wähle einen anderen Modus oder lockere Sportart und Markt.</p>';
-    else h += '<p>Mit diesen Tipps erreichst du die Zielquote ' + f2(st.target) + ' nicht. Senke die Zielquote oder erhöhe die Zahl der Tipps.</p>';
+    else if (!usable) h += '<p>Es fehlen Spiele mit Referenzquoten. Lade Spiele oder trag sie unter „Spiele“ ein.</p><button class="btn" data-act="tab" data-tab="games">Spiele öffnen</button>';
+    else h += '<p>Mit den aktuellen Quoten erreicht kein Schein die Zielquote ' + f2(st.target) + ' ohne zu großen Nachteil. Tippe auf „Anpassen“ und senke die Zielquote oder erlaube mehr Tipps.</p>';
     h += '</div>';
-    if (res.singles.length){
-      h += '<div class="card"><div class="label">Beste Einzeltipps</div><div class="singles">' +
-        res.singles.slice(0, 5).map(legRow).join('') + '</div></div>';
-    }
   } else {
-    var sl = slips[state.slipIdx];
-    if (res.approx) h += '<div class="banner"><span>Sehr viele gleichwertige Tipps: die Suche wurde abgekürzt. Erhöhe den Mindest-Value für ein exaktes Ergebnis.</span></div>';
-    var hasSample = sl.legs.some(function(l){ return l.sample; });
-    var stake = stakeFor(sl.p, sl.odds, st.bankroll, st.kelly);
-    h += '<article class="card ticket">' +
-      '<div class="t-head"><span class="label">Wettschein · ' + sl.legs.length + (sl.legs.length === 1 ? ' Einzelwette' : 'er-Kombi') + '</span>' +
-      (slips.length > 1 ? '<div class="t-chips" role="group" aria-label="Alternative Scheine">' + slips.map(function(_, i){
-        return '<button data-act="pickslip" data-i="' + i + '" aria-pressed="' + (i === state.slipIdx) + '" aria-label="Schein ' + (i + 1) + '">' + (i + 1) + '</button>'; }).join('') + '</div>' : '') +
-      '</div>' +
-      '<div class="t-odds"><b>' + f2(sl.odds) + '</b><span class="muted small">Gesamtquote</span></div>' +
-      '<dl class="stats">' +
-        '<div><dt>Trefferchance</dt><dd>' + pct(sl.p) + '</dd></div>' +
-        '<div><dt>Erwarteter Wert</dt><dd class="' + (sl.ev >= 0 ? 'good' : 'bad') + '">' + sgn(sl.ev) + '</dd></div>' +
-        '<div><dt>Empfohlener Einsatz</dt><dd>' + (stake > 0 ? eur(stake) : '–') + '</dd></div>' +
-        '<div><dt>Auszahlung bei Treffer</dt><dd>' + (stake > 0 ? eur(stake * sl.odds) : '–') + '</dd></div>' +
-      '</dl>' +
-      (sl.ev < 0 ? '<p class="neg">Kein Value: Pro 10 € Einsatz verlierst du im Schnitt ' + eur(-sl.ev * 10) + '. Kelly empfiehlt deshalb keinen Einsatz. Wenn du spielst, dann nur mit Geld, das du verlieren kannst.</p>' : '') +
-      '<div class="sep"></div>' +
-      '<ol class="legs">' + sl.legs.map(legRow).join('') + '</ol>' +
-      '<div class="t-foot"><button class="btn ghost block" data-act="copy">Kopieren</button><button class="btn block" data-act="logslip">Gespielt: ins Tagebuch</button></div>' +
-      '</article>';
-    if (hasSample) h += '<div class="banner"><span>Dieser Schein nutzt Beispielquoten. Ersetze sie unter „Spiele“ durch aktuelle Quoten.</span></div>';
-    h += '<div class="card"><div class="label">' + (st.mode === 'hit' ? 'Top-Einzeltipps (erlaubt im Modus Treffer) nach Value' : 'Top-Einzeltipps nach Value') + '</div><ol class="legs singles top">' +
-      res.singles.slice(0, 5).map(legRow).join('') + '</ol></div>';
+    if (R.approx) h += '<div class="banner"><span>Sehr viele gleichwertige Tipps: die Suche wurde abgekürzt.</span></div>';
+    h += '<div class="recs">' + R.recs.map(function(rec, i){ return i === state.recOpen ? ticketHtml(rec, st) : recCard(rec, i, st); }).join('') + '</div>';
+    if (R.recs[state.recOpen].slip.legs.some(function(l){ return l.sample; })) h += '<div class="banner"><span>Dieser Schein nutzt Beispielquoten. Ersetze sie unter „Spiele“ durch aktuelle Quoten.</span></div>';
   }
-  h += '<p class="foot">Die Chancen sind Schätzungen aus den Referenzquoten ohne Marge. Weitere Fußballmärkte stammen aus einem Torverteilungsmodell (Dixon-Coles), das an die Pinnacle-Quoten angepasst wird. Pro Spiel gibt es höchstens einen Tipp, weil sich alle Märkte desselben Spiels gegenseitig beeinflussen. Die Suche prüft jede mögliche Kombination der bis zu 60 Spiele mit dem meisten Value und liefert die drei besten Scheine. Bereits begonnene Spiele fließen nicht ein. Prüfe jede Quote vor dem Setzen in der Betano-App, Quoten ändern sich laufend. Value zeigt sich erst über viele Wetten, einzelne Scheine verlieren oft. Einsatz: ' +
+  // Beste Einzelwetten: zuerst echte Value-Tipps, sonst die sichersten Tipps mit kleinem Nachteil
+  var sv = R.singlesValue.slice(0, 5);
+  var sh = R.singlesHit.filter(function(x){ return x.ev >= -0.03; }).sort(function(a, b){ return (b.p - a.p) || (b.ev - a.ev); }).slice(0, 5);
+  if (sv.length) h += '<div class="card"><div class="label">Beste Einzelwetten (mit Value)</div><ol class="legs singles top">' + sv.map(legRow).join('') + '</ol></div>';
+  else if (sh.length) h += '<div class="card"><div class="label">Sicherste Einzelwetten (ohne Value)</div><ol class="legs singles top">' + sh.map(legRow).join('') + '</ol></div>';
+  h += '<p class="foot">Chancen aus Pinnacle-Quoten ohne Marge, weitere Fußballmärkte aus einem Torverteilungsmodell. Die App prüft jede mögliche Kombination und zeigt nur die besten Scheine; pro Spiel höchstens ein Tipp. Begonnene Spiele fließen nicht ein. Prüfe jede Quote vor dem Setzen in der Betano-App. Einsatz: ' +
     kellyName(st.kelly) + 'Kelly, höchstens 3 % der Bankroll. Ab 18. Hilfe bei Spielproblemen: check-dein-spiel.de</p>';
   $('tab-slip').innerHTML = h;
 }
@@ -1062,9 +1131,13 @@ function apiBar(){
   if (!apiReady()) return '<div class="card setup"><b>Quoten automatisch laden</b><p class="muted small">Mit einem kostenlosen Schlüssel von The Odds API holt sich die App die Spiele und Pinnacle-Quoten selbst.</p><button class="btn" data-act="settings">Einrichten</button></div>';
   var a = feedAge(), q = state.api.quota;
   var txt = state.loading ? 'Lädt Quoten …' : (state.feed ? (a.stale ? 'Geladen am ' + esc(a.dateLabel) : 'Geladen') + (a.when ? ' um ' + esc(a.when) : '') : 'Noch nicht geladen');
-  if (!state.loading && q && q.remaining != null) txt += ' · ' + Math.round(q.remaining) + ' Abrufe übrig';
+  if (!state.loading && q && q.remaining != null){
+    if (state.api.oddsMode === 'smart'){ var bd = dailyBudget(q.remaining, spentToday(), Date.now()); txt += ' · Spar-Modus: heute noch ' + bd.left; }
+    else txt += ' · ' + Math.round(q.remaining) + ' Abrufe übrig';
+  }
   var h = '<div class="status"><span class="dot' + (state.loading ? ' busy' : (!state.feed || a.stale || state.apiError ? ' old' : '')) + '"></span><span class="grow">' + txt + '</span>' +
     '<button class="link" data-act="refresh"' + (state.loading ? ' disabled' : '') + '>Aktualisieren</button></div>';
+  if (state.smartNote && !state.apiError) h += '<p class="muted small" style="margin:0">' + esc(state.smartNote) + '</p>';
   if (state.apiError) h += '<div class="banner err-b" role="alert"><span>' + esc(state.apiError) + '</span><button data-act="settings">Einstellungen</button></div>';
   return h;
 }
@@ -1372,7 +1445,7 @@ var BETS_STORE = 'valueslip.bets';
 state.bets = [];
 try { var rb = JSON.parse(localStorage.getItem(BETS_STORE) || '[]'); if (Array.isArray(rb)) state.bets = rb; } catch (e) {}
 function saveBets(){ try { localStorage.setItem(BETS_STORE, JSON.stringify(state.bets)); } catch (e) {} }
-function currentSlip(){ var r = buildSlips(activeMatches(), state.settings); return r.slips[state.slipIdx] || null; }
+function currentSlip(){ var r = state.recs || []; return r[state.recOpen] ? r[state.recOpen].slip : null; }
 function openLogSlip(){
   var sl = currentSlip(); if (!sl) return;
   var st = state.settings, stake = stakeFor(sl.p, sl.odds, st.bankroll, st.kelly);
@@ -1445,7 +1518,7 @@ function settleBets(){
   keys.forEach(function(k){
     chain = chain.then(function(){
       if (stop) return;
-      return fetchJson(scoresUrl(a.base, String(a.key || '').trim(), k, Object.keys(need[k]))).then(function(evs){
+      return fetchJson(scoresUrl(a.base, String(a.key || '').trim(), k, Object.keys(need[k])), 2).then(function(evs){
         var sc = {}; evs.forEach(function(ev){ var x = scoreOf(ev); if (x) sc[ev.id] = x; });
         state.bets.forEach(function(b){ b.legs.forEach(function(l){
           if (l.state !== 'open' || !sc[l.mid]) return;
@@ -1672,7 +1745,8 @@ function budgetLine(){
   if (!q || q.remaining == null) return '';
   var now = new Date(), end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   var days = Math.max(1, Math.ceil((end - now) / 86400000));
-  return '<p class="hint" style="margin:0" id="s-budget">Budget: ' + Math.round(q.remaining) + ' Abrufe für etwa ' + days + (days === 1 ? ' Tag' : ' Tage') + ' bis Monatsende, also rund ' + Math.floor(q.remaining / days) + ' pro Tag (ungefähr, die API rechnet nach deinem Abrechnungsdatum).</p>';
+  var bud = dailyBudget(q.remaining, spentToday(), Date.now());
+  return '<p class="hint" style="margin:0" id="s-budget">Budget: ' + Math.round(q.remaining) + ' Abrufe für etwa ' + days + (days === 1 ? ' Tag' : ' Tage') + ' bis Monatsende. Tagesanteil: ' + bud.allow + ', heute genutzt: ' + bud.spent + ' (' + SMART_RESERVE + ' bleiben als Reserve für Ergebnisse und Knopfdruck).</p>';
 }
 function apiSettings(){
   var a = state.api, sel = selectedLeagues(), cost = costFor(sel);
@@ -1687,9 +1761,13 @@ function apiSettings(){
     '<p class="hint" style="margin:0">Bleibt nur auf diesem Gerät gespeichert.</p>' +
     '<div class="field wide"><label for="s-base">Zwischendienst (nur falls nötig)</label><input id="s-base" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(a.base) + '" placeholder="https://….workers.dev"></div>' +
     '<span class="label">Zeitraum</span>' + seg('win', [[12, '12 Std'], [24, '24 Std'], [48, '48 Std']], a.windowH, null, 'sm') +
-    '<span class="label">Quoten laden</span>' + seg('omode', [['auto', 'Automatisch'], ['manual', 'Nur per Knopf']], a.oddsMode || 'auto', null, 'sm') +
-    '<p class="hint" style="margin:0">Der Spielplan lädt immer automatisch und kostenlos. „Nur per Knopf“: Quoten holst du je Liga unter „Spiele“.</p>' +
-    '<span class="label">Quoten automatisch erneuern</span>' + seg('auto', [[0, 'Aus'], [3, 'ab 3 Std'], [6, 'ab 6 Std'], [12, 'ab 12 Std']], a.autoH, null, 'sm') +
+    '<span class="label">Quoten laden</span>' + seg('omode', [['smart', 'Spar-Modus'], ['auto', 'Immer alle'], ['manual', 'Per Knopf']], a.oddsMode || 'smart', null, 'sm') +
+    '<p class="hint" style="margin:0">' + ({
+      smart: 'Empfohlen. Die App teilt dein Kontingent auf die Tage bis Monatsende auf und lädt nie mehr als den Tagesanteil. Vorrang haben Ligen mit Anpfiff in den nächsten 3 Stunden (dann alle 45 Minuten frisch) und Ligen, die du dir ansiehst. Sonst höchstens alle 12 Stunden.',
+      auto: 'Lädt beim Öffnen alle Ligen mit Spielen, wenn die Quoten älter sind als unten gewählt. Kann das Kontingent schnell verbrauchen.',
+      manual: 'Quoten holst du je Liga unter „Spiele“. Der Spielplan lädt trotzdem automatisch und kostenlos.'
+    })[a.oddsMode || 'smart'] + '</p>' +
+    (a.oddsMode === 'auto' ? '<span class="label">Quoten automatisch erneuern</span>' + seg('auto', [[0, 'Aus'], [3, 'ab 3 Std'], [6, 'ab 6 Std'], [12, 'ab 12 Std']], a.autoH, null, 'sm') : '') +
     '<p class="hint" style="margin:0">Lädt neu, wenn die Daten älter sind als gewählt.</p>' +
     '<span class="label">Ligen</span>' + lg +
     '<p class="hint" style="margin:0" id="s-cost">Quoten für alle gewählten Ligen kosten bis zu ' + cost + ' Abrufe; Ligen ohne Spiele im Zeitraum kosten nichts. ' + q + '.</p>' + budgetLine() +
@@ -1730,13 +1808,14 @@ function onFeed(raw, persist){
   if (state.editing && !$('overlay').hidden) return void (state.pendingRender = true);
   renderAll(true);
 }
-function fetchJson(url){
+function fetchJson(url, estCost){
   var ctl = typeof AbortController === 'function' ? new AbortController() : null;
   var timer = ctl ? setTimeout(function(){ ctl.abort(); }, 20000) : null;
   return fetch(url, { signal: ctl ? ctl.signal : undefined, headers: { Accept: 'application/json' } }).then(function(r){
     if (timer) clearTimeout(timer);
     var quota = parseQuota(function(k){ return r.headers.get(k); });
     if (quota.remaining != null) state.api.quota = { remaining: quota.remaining, used: quota.used, at: Date.now() };
+    if (r.ok) addSpent(quota.last != null ? quota.last : (estCost || 0));
     if (!r.ok) return r.text().then(function(t){ var e = new Error('http'); e.status = r.status; e.body = t; throw e; });
     return r.json().then(function(j){
       if (!Array.isArray(j)) throw new Error('fmt');
@@ -1755,7 +1834,7 @@ function refreshOdds(opts){
   if (!leagues.length){ state.apiError = 'Wähle mindestens eine Liga aus.'; renderAll(true); return Promise.resolve(); }
   var now = Date.now(), to = now + a.windowH * 3600000;
   state.loading = true; state.apiError = ''; a.lastAttempt = now; saveApi(); rerenderApi();
-  var fixtures = {}, odds = {}, failed = [], fatal = null, todo = [], skippedBudget = false, oddsAsked = 0, plannedOdds = -1;
+  var fixtures = {}, odds = {}, failed = [], fatal = null, todo = [], skippedBudget = false, oddsAsked = 0, plannedOdds = -1, smartSkipped = false;
   var done = function(){ state.loading = false; saveApi(); if (!$('overlay').hidden && !state.editing) openSettings(); };
   var guard = function(e){ if (e.status === 401 || e.status === 429 || e.status === 0) fatal = e; return e; };
   return fetchJson(sportsUrl(base, key)).then(function(sports){
@@ -1774,16 +1853,29 @@ function refreshOdds(opts){
       if (fatal || opts.noOdds) return;
       var withGames = todo.filter(function(l){ return fixtures[l.key] && fixtures[l.key].length; });
       if (!opts.only && a.oddsMode === 'manual') return;
-      plannedOdds = withGames.length;
+      if (opts.smart){
+        // Alter der Quoten je Liga = letzter erfolgreicher Quoten-Abruf dieser Liga (Spiele, fuer die es noch gar keine
+        // Quoten gibt, loesen so keine Dauer-Kaeufe aus; sie kommen mit dem naechsten faelligen Abruf der Liga)
+        var lf = a.lf || {};
+        var infos = withGames.map(function(l){
+          var next = fixtures[l.key].reduce(function(m, f){ var k = Date.parse(f.kickoff); return k > now ? Math.min(m, k) : m; }, Infinity);
+          return { key: l.key, cost: marketsFor(l.sport).length, next: next, oddsAt: lf[l.key] || null, interest: interested(l.key, now) };
+        });
+        var bud = dailyBudget(a.quota && a.quota.remaining, spentToday(), now);
+        var plan = planSmart(infos, bud ? bud.left : null, now);
+        smartSkipped = infos.length && !plan.length && bud && bud.left < Math.min.apply(null, infos.map(function(x){ return x.cost; }));
+        withGames = withGames.filter(function(l){ return plan.indexOf(l.key) >= 0; });
+        plannedOdds = withGames.length;
+      } else plannedOdds = withGames.length;
       // Budget: reichen die Abrufe nicht fuer alle, Quoten auslassen (Spielplan bleibt aktuell)
       var q = a.quota && a.quota.remaining;
-      if (!opts.only && q != null && q < costFor(withGames)){ skippedBudget = true; return; }
+      if (!opts.only && !opts.smart && q != null && q < costFor(withGames)){ skippedBudget = true; return; }
       var c2 = Promise.resolve();
       withGames.forEach(function(l){
         c2 = c2.then(function(){
           if (fatal) return;
           oddsAsked++;
-          return fetchJson(oddsUrl(base, key, l, now, to)).then(function(evs){ odds[l.key] = convertEvents(evs, l, now); }, function(e){ guard(e); if (!fatal) failed.push(l.name); });
+          return fetchJson(oddsUrl(base, key, l, now, to), marketsFor(l.sport).length).then(function(evs){ odds[l.key] = convertEvents(evs, l, now); a.lf = a.lf || {}; a.lf[l.key] = now; }, function(e){ guard(e); if (!fatal) failed.push(l.name); });
         });
       });
       return c2;
@@ -1820,13 +1912,15 @@ function refreshOdds(opts){
     feed.notes = out.length + ' Spiele im Zeitraum, davon ' + withOdds + ' mit Quoten. ' + feed.notes;
     if (failed.length) feed.notes += ' Nicht aktualisiert: ' + failed.join(', ') + (keptOld ? ' (ältere Quoten dieser Ligen bleiben stehen).' : '.');
     // Nur ein vollstaendiges automatisches Quoten-Laden verschiebt das naechste automatische Laden
-    if (!opts.only && !opts.noOdds && plannedOdds >= 0 && !fatal && !skippedBudget && Object.keys(odds).length === plannedOdds) a.lastFetch = now;
+    if (!opts.only && !opts.noOdds && !opts.smart && plannedOdds >= 0 && !fatal && !skippedBudget && Object.keys(odds).length === plannedOdds) a.lastFetch = now;
     a.lastSchedule = now;
     if (fatal) state.apiError = apiErrorText(fatal.status, fatal.body);
     else if (skippedBudget) state.apiError = apiErrorText(-3);
+    state.smartNote = opts.smart && smartSkipped ? 'Spar-Modus: Das Tagesbudget ist aufgebraucht. Neue Quoten gibt es morgen, oder du lädst eine Liga gezielt per Knopf.' : '';
     done();
     onFeed(feed, true);
-    if (!fatal && !skippedBudget) toast(out.length ? out.length + ' Spiele' + (oddsAsked ? ', Quoten für ' + oddsAsked + (oddsAsked === 1 ? ' Liga' : ' Ligen') : '') : 'Im Zeitraum keine Spiele gefunden');
+    if (opts.smart && !fatal){ if (oddsAsked) toast('Spar-Modus: Quoten für ' + oddsAsked + (oddsAsked === 1 ? ' Liga' : ' Ligen') + ' aktualisiert'); }
+    else if (!fatal && !skippedBudget) toast(out.length ? out.length + ' Spiele' + (oddsAsked ? ', Quoten für ' + oddsAsked + (oddsAsked === 1 ? ' Liga' : ' Ligen') : '') : 'Im Zeitraum keine Spiele gefunden');
   }).catch(function(e){
     state.apiError = apiErrorText(e.status == null ? -1 : e.status, e.body);
     done(); renderAll(true);
@@ -1841,9 +1935,10 @@ function maybeAutoRefresh(){
   if (!apiReady() || state.loading) return;
   // Nach einem Fehlschlag fruehestens nach 30 Minuten automatisch neu versuchen (spart Abrufe)
   if (Date.now() - (a.lastAttempt || 0) < 30 * 60000) return;
-  var oddsDue = a.autoH > 0 && a.oddsMode !== 'manual' && Date.now() - (a.lastFetch || 0) >= a.autoH * 3600000;
   // Spielplan ist kostenlos: hoechstens alle 30 Minuten, damit die Spiele immer tagesaktuell sind
   var schedDue = Date.now() - (a.lastSchedule || 0) >= 30 * 60000;
+  if (a.oddsMode === 'smart'){ if (schedDue) refreshOdds({ smart: true }); return; }
+  var oddsDue = a.autoH > 0 && a.oddsMode !== 'manual' && Date.now() - (a.lastFetch || 0) >= a.autoH * 3600000;
   if (oddsDue) refreshOdds();
   else if (schedDue) refreshOdds({ noOdds: true });
 }
@@ -1854,6 +1949,8 @@ function startApi(){
   } catch (e) {}
   maybeAutoRefresh();
   document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') maybeAutoRefresh(); });
+  // Solange die App offen ist, alle 5 Minuten pruefen (kostet nur, wenn der Spar-Modus etwas laden will)
+  setInterval(function(){ if (document.visibilityState !== 'hidden') maybeAutoRefresh(); }, 5 * 60000);
   if ('serviceWorker' in navigator && location.protocol !== 'file:'){
     navigator.serviceWorker.register('sw.js').catch(function(){});
   }
@@ -1870,8 +1967,7 @@ setInterval(function(){
 }, 60000);
 
 function slipText(){
-  var res = buildSlips(activeMatches(), state.settings);
-  var sl = res.slips[state.slipIdx];
+  var sl = currentSlip();
   if (!sl) return '';
   var lines = ['Value Slip · ' + sl.legs.length + ' Tipps · Quote ' + f2(sl.odds)];
   sl.legs.forEach(function(l, i){ lines.push((i + 1) + ') ' + pickName(l) + ' (' + l.game + ') @ ' + f2(l.book) + (l.src && l.src !== 'Betano' ? ' [' + l.src + ']' : '') + ' · Chance ' + pct(l.p)); });
@@ -1895,19 +1991,21 @@ document.addEventListener('click', function(e){
   var act = t.getAttribute('data-act'), st = state.settings;
   switch (act){
     case 'tab': showTab(t.getAttribute('data-tab')); break;
-    case 'mode': st.mode = t.getAttribute('data-mode'); state.slipIdx = 0; save(); renderSlip(); break;
-    case 'sportf': st.sport = t.getAttribute('data-v'); state.slipIdx = 0; save(); renderSlip(); break;
-    case 'marketf': st.market = t.getAttribute('data-v'); state.slipIdx = 0; save(); renderSlip(); break;
+    case 'mode': st.mode = t.getAttribute('data-mode'); state.slipIdx = 0; state.recOpen = 0; save(); renderSlip(); break;
+    case 'sportf': st.sport = t.getAttribute('data-v'); state.slipIdx = 0; state.recOpen = 0; save(); renderSlip(); break;
+    case 'marketf': st.market = t.getAttribute('data-v'); state.slipIdx = 0; state.recOpen = 0; save(); renderSlip(); break;
     case 'step': {
       var key = t.getAttribute('data-key'), dir = +t.getAttribute('data-dir');
       if (key === 'target') st.target = Math.min(100, Math.max(1.5, Math.round((st.target + dir * 0.5) * 10) / 10));
       else st.maxLegs = Math.min(6, Math.max(1, st.maxLegs + dir));
-      state.slipIdx = 0; save(); renderSlip(); break;
+      state.slipIdx = 0; state.recOpen = 0; save(); renderSlip(); break;
     }
     case 'pickslip': state.slipIdx = +t.getAttribute('data-i'); renderSlip(); break;
+    case 'rec': state.recOpen = +t.getAttribute('data-i'); renderSlip(); break;
+    case 'tune': state.tuneOpen = !state.tuneOpen; renderSlip(); break;
     case 'copy': copyText(slipText()); break;
     case 'edit': openEditor(t.getAttribute('data-id')); break;
-    case 'fedit': openFeedEditor(t.getAttribute('data-id')); break;
+    case 'fedit': { var fid = t.getAttribute('data-id'); var fmm = (state.feed ? state.feed.matches : []).filter(function(x){ return x.id === fid; })[0]; if (fmm) markInterest(fmm.lkey); openFeedEditor(fid); break; }
     case 'fsave': saveFeedOdds(); break;
     case 'freset': delete state.ov[state.editing]; save(); closeSheet(); renderAll(true); toast('Geladene Quoten wiederhergestellt'); break;
     case 'new': openEditor(null); break;
@@ -1924,9 +2022,9 @@ document.addEventListener('click', function(e){
     case 'clearsamples': state.matches = state.matches.filter(function(m){ return !m.sample; }); save(); renderAll(); toast('Beispiele entfernt'); break;
     case 'resetsamples': state.matches = state.matches.filter(function(m){ return !m.sample; }).concat(sampleMatches()); save(); closeSheet(); renderAll(); toast('Beispiele geladen'); break;
     case 'calcmode': state.calc.mode = t.getAttribute('data-m'); renderCalc(); break;
-    case 'refresh': refreshOdds(); break;
+    case 'refresh': refreshOdds(state.api.oddsMode === 'smart' ? { smart: true } : undefined); break;
     case 'lodds': refreshOdds({ only: t.getAttribute('data-k') }); break;
-    case 'omode': state.api.oddsMode = t.getAttribute('data-v'); saveApi(); openSettings(); break;
+    case 'omode': state.api.oddsMode = t.getAttribute('data-v'); state.api.modeSet = true; saveApi(); openSettings(); break;
     case 'logslip': openLogSlip(); break;
     case 'savebet': saveBet(); break;
     case 'settle': settleBets(); break;
