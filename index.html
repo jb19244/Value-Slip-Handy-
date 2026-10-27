@@ -211,6 +211,10 @@ button.card.rec{display:flex;align-items:center;justify-content:space-between;ga
 .ticket.rec .t-head{align-items:flex-start}
 .tune{display:flex;flex-direction:column;gap:6px}
 .rule b{color:var(--accent);font-weight:600}
+.refl{font-size:12px;color:var(--muted);margin:2px 0 6px;font-variant-numeric:tabular-nums;line-height:1.4}
+.refl b{color:var(--fg);font-weight:600}
+.pinb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--good-bg);color:var(--good)}
+.xload{display:flex;flex-direction:column;gap:6px;margin:4px 0 10px}
 .add{border:1.5px dashed var(--line);border-radius:14px;min-height:50px;color:var(--accent);font-weight:600}
 
 .fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -302,7 +306,7 @@ function fmtLine(line){ return String(line).replace('.', ','); }
 function fmtHc(line){ return (line > 0 ? '+' : '−') + fmtLine(Math.abs(line)); }
 function isHcLine(line){ return typeof line === 'number' && isHalfLine(Math.abs(line)); }
 
-var MARKETS = { res: 'Ergebnis', dc: 'Doppelte Chance', ou: 'Über/Unter', hc: 'Handicap', x: 'Weitere (Modell)' };
+var MARKETS = { res: 'Ergebnis', dc: 'Doppelte Chance', ou: 'Über/Unter', hc: 'Handicap', x: 'Weitere Märkte' };
 
 // Torverteilungsmodell (Dixon-Coles): Torerwartung beider Teams so bestimmen, dass das Modell die marginfreien
 // Marktchancen fuer 1, X, 2 und Ueber/Unter trifft. Daraus folgen Chancen fuer weitere Fussballmaerkte.
@@ -351,6 +355,16 @@ function fitGoals(tg){
   return res;
 }
 // Weitere Fussballmaerkte mit Modell-Chance. Nur halbe Linien, also immer genau Gewinn oder Verlust.
+// Faire Chancen aus geladenen Pinnacle-Paaren (z. B. Beide treffen Ja/Nein), Schluessel wie in extraMarkets
+function pinExtraProbs(m, method){
+  var out = {};
+  (Array.isArray(m.xpairs) ? m.xpairs : []).forEach(function(pr){
+    if (!pr || !Array.isArray(pr.keys) || !Array.isArray(pr.odds) || pr.odds.length !== 2 || !(pr.odds[0] > 1 && pr.odds[1] > 1)) return;
+    var f = fairProbs(pr.odds, method);
+    pr.keys.forEach(function(k, i){ if (k && f[i] > 0.001 && f[i] < 0.999) out[k] = f[i]; });
+  });
+  return out;
+}
 function extraMarkets(m, method){
   var ref = m.ref || {};
   if ((m.sport || 'fb') !== 'fb' || !(ref.h > 1 && ref.d > 1 && ref.a > 1)) return [];
@@ -362,7 +376,12 @@ function extraMarkets(m, method){
   var out = [];
   // Vorsichtsabschlag: Modell-Chancen sind unsicherer als Marktquoten (ohne Ue/U-Markt noch mehr)
   var unc = 0.02 + fit.err + (tg.ouLine == null ? 0.03 : 0);
-  var add = function(key, group, label, p){ if (p > 0.001 && p < 0.999) out.push({ key: key, group: group, label: label, praw: p, p: Math.max(0.002, p - unc) }); };
+  // Geladene Pinnacle-Quoten fuer weitere Maerkte ersetzen die Modell-Chance (ohne Abschlag, es ist der Markt selbst)
+  var pin = pinExtraProbs(m, method);
+  var add = function(key, group, label, p){
+    if (pin[key] != null){ out.push({ key: key, group: group, label: label, praw: pin[key], p: pin[key], model: false }); return; }
+    if (p > 0.001 && p < 0.999) out.push({ key: key, group: group, label: label, praw: p, p: Math.max(0.002, p - unc), model: true });
+  };
   [0.5, 1.5, 2.5, 3.5, 4.5].forEach(function(L){
     if (tg.ouLine === L) return;
     var po = P(function(i, j){ return i + j > L; }), k = String(L).replace('.', '');
@@ -420,7 +439,7 @@ function selectionsFor(m, method){
   // Weitere Fussballmaerkte (Modell): nur wenn eine Quote dafuer eingetragen ist
   if (sport === 'fb' && m.xb){
     var xs = extraMarkets(m, method);
-    xs.forEach(function(x){ var b = m.xb[x.key]; if (b > 1) push('x', x.key, x.label, x.p, b); });
+    xs.forEach(function(x){ var b = m.xb[x.key]; if (b > 1){ push('x', x.key, x.label, x.p, b); out[out.length - 1].model = x.model; } });
   }
   // Handicap (Basketball, Eishockey): Linie gilt fuer das Heimteam, nur halbe Linien (kein Push)
   var hc = m.hc;
@@ -646,13 +665,16 @@ function normalizeFeed(raw){
       if (href.h && href.a) hc = { line: r.hc.line, ref: href, book: { h: feedOdd(hb.h), a: feedOdd(hb.a) } };
     }
     var fixture = r.fixture === true;
+    // Nur Pinnacle als Referenz: aeltere Daten mit anderer Referenz werden zu Spielen ohne Quoten (beim naechsten Laden neu)
+    var srcName = feedStr(r.src, 40);
+    if (srcName && srcName !== 'Pinnacle'){ ref = { h: null, d: null, a: null }; book = { h: null, d: null, a: null }; ou = null; hc = null; dc = null; fixture = true; srcName = ''; }
     if (!(ref.h && ref.a) && !ou && !hc && !fixture) return;
     var id = feedStr(r.id, 120) || ('f' + i + '-' + (home + '-' + away).toLowerCase().replace(/[^a-z0-9]+/g, '-'));
     if (seen[id]) id += '-' + i;
     seen[id] = true;
     var ko = typeof r.kickoff === 'string' ? Date.parse(r.kickoff) : NaN;
     matches.push({ id: id, feed: true, sport: sport, league: feedStr(r.league, 40), time: feedStr(r.time, 20),
-      kickoff: isFinite(ko) ? ko : null, home: home, away: away, ref: ref, book: book, ou: ou, dc: dc, hc: hc, src: feedStr(r.src, 40), bookSrc: feedStr(r.bookSrc, 40), bsrc: cleanSrc(r.bsrc), lkey: feedStr(r.lkey, 60), fixture: fixture && !(ref.h && ref.a) && !ou && !hc,
+      kickoff: isFinite(ko) ? ko : null, home: home, away: away, ref: ref, book: book, ou: ou, dc: dc, hc: hc, src: srcName, bookSrc: feedStr(r.bookSrc, 40), noRef: r.noRef === true, refAt: typeof r.refAt === 'number' && isFinite(r.refAt) ? r.refAt : null, bsrc: cleanSrc(r.bsrc), lkey: feedStr(r.lkey, 60), fixture: fixture && !(ref.h && ref.a) && !ou && !hc,
       oddsAt: typeof r.oddsAt === 'number' && isFinite(r.oddsAt) ? r.oddsAt : (typeof r.oddsAt === 'string' && isFinite(Date.parse(r.oddsAt)) ? Date.parse(r.oddsAt) : null) });
   });
   matches.sort(function(a, b){ return (a.kickoff || 0) - (b.kickoff || 0); });
@@ -684,13 +706,27 @@ function applyOverride(m, ov){
   if (m.ou && ov.ou && sameLine(ov.ou.line, m.ou.line)){ var ob = m.ou.book || {}; out.ou = Object.assign({}, m.ou, { book: { o: pick(ob.o, ov.ou.o, 'ou.o'), u: pick(ob.u, ov.ou.u, 'ou.u') } }); }
   if (out.sport === 'fb' && ov.dc){ var d = m.dc || {}; out.dc = { hx: pick(d.hx, ov.dc.hx, 'dc.hx'), xa: pick(d.xa, ov.dc.xa, 'dc.xa'), ha: pick(d.ha, ov.dc.ha, 'dc.ha') }; }
   if (out.sport === 'fb' && ov.x && typeof ov.x === 'object'){
-    out.xb = {};
+    out.xb = Object.assign({}, m.xb || {});
     Object.keys(ov.x).forEach(function(k){ var v = feedOdd(ov.x[k]); if (v){ out.xb[k] = v; ovf['x.' + k] = true; } });
   }
   if (m.hc && ov.hc && sameLine(ov.hc.line, m.hc.line)){ var hb = m.hc.book || {}; out.hc = Object.assign({}, m.hc, { book: { h: pick(hb.h, ov.hc.h, 'hc.h'), a: pick(hb.a, ov.hc.a, 'hc.a') } }); }
   out.ovf = ovf;
   out.mine = Object.keys(ovf).filter(function(k){ return k !== 'ref' && k !== 'ouRef' && k !== 'hcRef'; }).length > 0;
   out.ownRef = !!(ovf.ref || ovf.ouRef || ovf.hcRef);
+  return out;
+}
+// Geladene weitere Maerkte eines Spiels (Pinnacle-Referenz + Betano-Quoten) einsetzen
+function applyExtras(m, ex){
+  if (!ex || (m.sport || 'fb') !== 'fb') return m;
+  var out = Object.assign({}, m), bsrc = Object.assign({}, m.bsrc || {});
+  out.xpairs = Array.isArray(ex.pairs) ? ex.pairs : [];
+  out.xb = {};
+  Object.keys(ex.book || {}).forEach(function(k){ var v = feedOdd(ex.book[k]); if (v){ out.xb[k] = v; bsrc['x.' + k] = ex.bookName || 'Betano'; } });
+  if (ex.dc && typeof ex.dc === 'object'){
+    var d = { hx: feedOdd(ex.dc.hx), xa: feedOdd(ex.dc.xa), ha: feedOdd(ex.dc.ha) };
+    if (d.hx || d.xa || d.ha){ out.dc = d; ['hx', 'xa', 'ha'].forEach(function(k){ if (d[k]) bsrc['dc.' + k] = ex.bookName || 'Betano'; }); }
+  }
+  out.bsrc = bsrc; out.xAt = ex.at || null;
   return out;
 }
 function hasStarted(m, now){ return m.kickoff != null && now >= m.kickoff; }
@@ -730,10 +766,11 @@ function allPicks(m, method){
     xb: {}
   });
   var groups = {};
+  fill.xb = {};
   extraMarkets(m, method).forEach(function(x){ fill.xb[x.key] = q; groups[x.key] = x.group; });
   return selectionsFor(fill, method).filter(function(s){ return s.p < 0.999; }).map(function(s){
     var r = real[s.market + '|' + s.key];
-    return Object.assign({}, s, { book: r ? r.book : null, ev: r ? r.ev : null, model: s.market === 'x', group: s.market === 'x' ? groups[s.key] : MARKETS[s.market] });
+    return Object.assign({}, s, { book: r ? r.book : null, ev: r ? r.ev : null, model: s.market === 'x' && !!s.model, group: s.market === 'x' ? groups[s.key] : MARKETS[s.market] });
   });
 }
 
@@ -788,9 +825,11 @@ function stakeFor(p, o, bank, frac){
 var API_BASE = 'https://api.the-odds-api.com';
 // Referenz (scharf, ohne/mit kleiner Marge) in dieser Reihenfolge; deutsche Buchmacher liefern eine automatische Quote.
 // Alle fuenf zusammen kosten wie einer (bis 10 Buchmacher zaehlen als 1 Region).
-var REF_BOOKS = ['pinnacle', 'betfair_ex_eu', 'matchbook'];
-var DE_BOOKS = ['tipico_de', 'winamax_de'];
-var BOOK_NAMES = { pinnacle: 'Pinnacle', betfair_ex_eu: 'Betfair-Börse', matchbook: 'Matchbook', tipico_de: 'Tipico', winamax_de: 'Winamax' };
+// Referenz: ausschliesslich Pinnacle. Spiele ohne Pinnacle-Quote bekommen keine automatische Chance.
+var REF_BOOKS = ['pinnacle'];
+// Buchmacher-Quote: Betano (bei The Odds API nur als Betano UK verfuegbar)
+var DE_BOOKS = ['betano_uk'];
+var BOOK_NAMES = { betano_uk: 'Betano UK', pinnacle: 'Pinnacle', betfair_ex_eu: 'Betfair-Börse', matchbook: 'Matchbook', tipico_de: 'Tipico', winamax_de: 'Winamax' };
 var LEAGUES = [
   { key: 'soccer_germany_bundesliga', name: 'Bundesliga', sport: 'fb', on: true },
   { key: 'soccer_germany_bundesliga2', name: '2. Bundesliga', sport: 'fb', on: true },
@@ -877,7 +916,7 @@ function refMarket(ev, mkey, conv){
     var bm = books.filter(function(b){ return b && b.key === REF_BOOKS[i]; })[0];
     var mk = bm && Array.isArray(bm.markets) ? bm.markets.filter(function(m){ return m && m.key === mkey; })[0] : null;
     var v = mk ? conv(mk) : null;
-    if (v) return { v: v, book: REF_BOOKS[i] };
+    if (v){ var at = Date.parse(mk.last_update || bm.last_update || ''); return { v: v, book: REF_BOOKS[i], at: isFinite(at) ? at : null }; }
   }
   return null;
 }
@@ -896,6 +935,70 @@ function deMarket(ev, mkey, conv, keys, line, twoWay){
     keys.forEach(function(k){ if (v[k] > 1 && !(best[k] >= v[k])){ best[k] = v[k]; src[k] = BOOK_NAMES[bk]; } });
   });
   return { best: best, src: src };
+}
+// Weitere Fussballmaerkte je Spiel (kostet je geliefertem Markt 1 Abruf; leere Antwort kostet nichts)
+var EXTRA_MARKETS = ['btts', 'double_chance', 'alternate_totals', 'team_totals'];
+function eventOddsUrl(base, key, sportKey, eventId){
+  return apiRoot(base) + '/v4/sports/' + encodeURIComponent(sportKey) + '/events/' + encodeURIComponent(eventId) + '/odds/?' + qs({
+    apiKey: key, bookmakers: REF_BOOKS.concat(DE_BOOKS).join(','), markets: EXTRA_MARKETS.join(','), oddsFormat: 'decimal', dateFormat: 'iso' });
+}
+var EXTRA_LINES = [0.5, 1.5, 2.5, 3.5, 4.5];
+function lineKey(L){ return String(L).replace('.', ''); }
+// Antwort von /events/{id}/odds in Paare (Pinnacle, zum Entfernen der Marge) und Buchmacher-Quoten (Betano) umwandeln.
+// mainLine: Ue/U-Linie des Hauptmarkts (die steht schon im Spiel und wird hier nicht doppelt gefuehrt).
+function parseExtras(ev, home, away, mainLine, nowMs){
+  var books = ev && Array.isArray(ev.bookmakers) ? ev.bookmakers : [];
+  var bk = function(key){ return books.filter(function(b){ return b && b.key === key; })[0] || null; };
+  var mkOf = function(b, key){ return b && Array.isArray(b.markets) ? b.markets.filter(function(m){ return m && m.key === key; })[0] || null : null; };
+  var outs = function(mk){ return mk && Array.isArray(mk.outcomes) ? mk.outcomes.filter(function(o){ return o && typeof o.name === 'string' && priceOk(o.price); }) : []; };
+  var low = function(x){ return String(x || '').toLowerCase().trim(); };
+  var H = low(home), A = low(away);
+  // Beide treffen
+  var btts = function(b){ var o = outs(mkOf(b, 'btts')); var y = o.filter(function(x){ return low(x.name) === 'yes'; }), n = o.filter(function(x){ return low(x.name) === 'no'; }); return y.length === 1 && n.length === 1 ? { y: y[0].price, n: n[0].price } : null; };
+  // Tore gesamt je Linie
+  var totals = function(b){
+    var res = {};
+    outs(mkOf(b, 'alternate_totals')).forEach(function(o){
+      if (typeof o.point !== 'number' || EXTRA_LINES.indexOf(o.point) < 0 || o.point === mainLine) return;
+      var side = low(o.name) === 'over' ? 'o' : (low(o.name) === 'under' ? 'u' : null); if (!side) return;
+      var r = res[o.point] = res[o.point] || {}; if (r[side]) r.dup = true; r[side] = o.price;
+    });
+    return res;
+  };
+  // Team-Tore (Ueber 0,5 und 1,5)
+  var team = function(b){
+    var res = {};
+    outs(mkOf(b, 'team_totals')).forEach(function(o){
+      if (typeof o.point !== 'number' || (o.point !== 0.5 && o.point !== 1.5)) return;
+      var d = low(o.description), who = d === H ? 'h' : (d === A ? 'a' : null);
+      var side = low(o.name) === 'over' ? 'o' : (low(o.name) === 'under' ? 'u' : null);
+      if (!who || !side) return;
+      var k = who + lineKey(o.point), r = res[k] = res[k] || {}; if (r[side]) r.dup = true; r[side] = o.price;
+    });
+    return res;
+  };
+  var dcOf = function(b){
+    var res = {};
+    outs(mkOf(b, 'double_chance')).forEach(function(o){
+      var n = low(o.name).replace(/\s+/g, ' ');
+      var hasH = n.indexOf(H) >= 0 || /\bhome\b/.test(n), hasA = n.indexOf(A) >= 0 || /\baway\b/.test(n), hasD = /\b(draw|tie)\b/.test(n);
+      var k = n === '1x' ? 'hx' : n === 'x2' ? 'xa' : n === '12' ? 'ha' : (hasH && hasD && !hasA ? 'hx' : (hasA && hasD && !hasH ? 'xa' : (hasH && hasA && !hasD ? 'ha' : null)));
+      if (k){ if (res[k]) res[k + '_dup'] = true; res[k] = o.price; }
+    });
+    ['hx', 'xa', 'ha'].forEach(function(k){ if (res[k + '_dup']){ delete res[k]; } delete res[k + '_dup']; });
+    return res;
+  };
+  var pin = bk('pinnacle'), bet = bk(DE_BOOKS[0]);
+  var pairs = [], book = {}, n = 0;
+  var pb = btts(pin); if (pb){ pairs.push({ keys: ['btsy', 'btsn'], odds: [pb.y, pb.n] }); n++; }
+  var pt = totals(pin); Object.keys(pt).forEach(function(L){ var r = pt[L]; if (!r.dup && r.o && r.u){ pairs.push({ keys: ['o' + lineKey(+L), 'u' + lineKey(+L)], odds: [r.o, r.u] }); n++; } });
+  var pm = team(pin); Object.keys(pm).forEach(function(k){ var r = pm[k]; if (!r.dup && r.o && r.u){ pairs.push({ keys: [k, null], odds: [r.o, r.u] }); n++; } });
+  var bb = btts(bet); if (bb){ book.btsy = bb.y; book.btsn = bb.n; }
+  var bt = totals(bet); Object.keys(bt).forEach(function(L){ var r = bt[L]; if (r.dup) return; if (r.o) book['o' + lineKey(+L)] = r.o; if (r.u) book['u' + lineKey(+L)] = r.u; });
+  var bm = team(bet); Object.keys(bm).forEach(function(k){ var r = bm[k]; if (!r.dup && r.o) book[k] = r.o; });
+  var dc = dcOf(bet);
+  var nb = Object.keys(book).length + Object.keys(dc).length;
+  return { at: nowMs, pairs: pairs, book: book, dc: Object.keys(dc).length ? dc : null, bookName: BOOK_NAMES[DE_BOOKS[0]], nPin: n, nBook: nb };
 }
 function timeLabel(ms, nowMs){
   try {
@@ -927,6 +1030,8 @@ function convertEvents(events, league, nowMs){
     Object.keys(dr.src).forEach(function(k){ bsrc['res.' + k] = dr.src[k]; });
     Object.keys(dt.src).forEach(function(k){ bsrc['ou.' + k] = dt.src[k]; });
     Object.keys(ds.src).forEach(function(k){ bsrc['hc.' + k] = ds.src[k]; });
+    var ats = [r, t, s].filter(function(x){ return x && x.at; }).map(function(x){ return x.at; });
+    var refAt = ats.length ? Math.min.apply(null, ats) : null;
     var bused = Object.keys(bsrc).map(function(k){ return bsrc[k]; }).filter(function(x, i, arr){ return arr.indexOf(x) === i; });
     out.push({
       id: ev.id, sport: sport, league: league.name, kickoff: new Date(ko).toISOString(), time: timeLabel(ko, nowMs),
@@ -935,15 +1040,16 @@ function convertEvents(events, league, nowMs){
       book: { h: dr.best.h || null, d: dr.best.d || null, a: dr.best.a || null },
       ou: t ? { line: t.v.line, ref: { o: t.v.o, u: t.v.u }, book: { o: dt.best.o || null, u: dt.best.u || null } } : null,
       hc: s ? { line: s.v.line, ref: { h: s.v.h, a: s.v.a }, book: { h: ds.best.h || null, a: ds.best.a || null } } : null,
-      dc: null, src: used.join(' + '), bookSrc: bused.join(' / '), bsrc: bsrc, lkey: league.key, oddsAt: nowMs
+      dc: null, src: used.join(' + '), bookSrc: bused.join(' / '), bsrc: bsrc, lkey: league.key, oddsAt: nowMs, refAt: refAt
     });
   });
   return out;
 }
 function buildFeed(matches, nowMs, leagueCount){
-  var pin = matches.filter(function(m){ return m.src === 'Pinnacle'; }).length;
-  var notes = 'Referenzquoten über The Odds API: ' + pin + ' von ' + matches.length + ' Spielen komplett von Pinnacle, der Rest ganz oder teilweise von der Betfair-Börse oder Matchbook. ' +
-    leagueCount + (leagueCount === 1 ? ' Liga' : ' Ligen') + ' abgefragt. Die automatischen Quoten sind die besten von Tipico und Winamax (deutsche Lizenz). Betano liefert die API nicht: Betano zahlt oft ähnlich, kann aber abweichen. Trag deine Betano-Quote ein, dann rechnet die App damit. Doppelte Chance und die weiteren Fußballmärkte berechnet die App aus 1X2 und Über/Unter (Modell).';
+  var bet = matches.filter(function(m){ return m.bookSrc; }).length;
+  var notes = 'Referenz ist ausschließlich Pinnacle (' + matches.length + ' Spiele mit Pinnacle-Quoten, ' + leagueCount + (leagueCount === 1 ? ' Liga' : ' Ligen') + ' abgefragt). ' +
+    'Buchmacher-Quote: Betano UK für ' + bet + ' Spiele. Die deutsche Betano-Seite kann etwas abweichen: Prüfe die Quote vor dem Setzen und trag sie ein, wenn sie anders ist. ' +
+    'Doppelte Chance rechnet die App aus Pinnacle 1X2. Weitere Fußballmärkte lädst du je Spiel nach; ohne Pinnacle-Quote dafür rechnet die App sie aus einem Modell.';
   var date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(new Date(nowMs));
   return { date: date, fetchedAt: new Date(nowMs).toISOString(), notes: notes, matches: matches };
 }
@@ -1042,7 +1148,14 @@ try {
 function save(){ try { localStorage.setItem(KEY, JSON.stringify({ matches: state.matches, settings: state.settings, ov: state.ov })); } catch (e) {} }
 
 // Einstellungen fuer den automatischen Abruf. Der Schluessel bleibt nur auf diesem Geraet.
-var API_KEY_STORE = 'valueslip.api', FEED_STORE = 'valueslip.feed';
+var API_KEY_STORE = 'valueslip.api', FEED_STORE = 'valueslip.feed', EXTRAS_STORE = 'valueslip.extras';
+state.extras = {};
+try { var rawEx = JSON.parse(localStorage.getItem(EXTRAS_STORE) || 'null'); if (rawEx && typeof rawEx === 'object') state.extras = rawEx; } catch (e) {}
+function saveExtras(){
+  var now = Date.now();
+  Object.keys(state.extras).forEach(function(k){ var e = state.extras[k]; if (!e || (e.kickoff && now - e.kickoff > 6 * 3600000)) delete state.extras[k]; });
+  try { localStorage.setItem(EXTRAS_STORE, JSON.stringify(state.extras)); } catch (e) {}
+}
 var API_DEFAULTS = { key: '', base: '', windowH: 24, autoH: 6, oddsMode: 'smart', modeSet: false, leagues: {}, lastFetch: 0, lastAttempt: 0, lastSchedule: 0, quota: null, spent: null, interest: {} };
 LEAGUES.forEach(function(l){ API_DEFAULTS.leagues[l.key] = l.on; });
 state.api = JSON.parse(JSON.stringify(API_DEFAULTS));
@@ -1075,7 +1188,7 @@ function selectedLeagues(){ return LEAGUES.filter(function(l){ return state.api.
 
 function feedMatches(){
   if (!state.feed) return [];
-  return state.feed.matches.map(function(m){ return applyOverride(m, state.ov[m.id]); });
+  return state.feed.matches.map(function(m){ return applyOverride(state.extras && !m.fixture ? applyExtras(m, state.extras[m.id]) : m, state.ov[m.id]); });
 }
 function hasFeed(){ return !!(state.feed && state.feed.matches.length); }
 function viewMatches(){
@@ -1160,7 +1273,7 @@ function renderSlip(){
     h += '<div class="card tune"><div class="filters" style="margin-top:0">' +
       '<span class="label">Sportart</span>' + seg('sportf', [['all', 'Alle'], ['fb', 'Fußball'], ['bb', 'Basketball'], ['ih', 'Eishockey']], st.sport, null, 'sm') +
       '<span class="label">Markt</span>' + seg('marketf', [['all', 'Alle'], ['res', '1X2'], ['dc', 'DC'], ['ou', 'Ü/U'], ['hc', 'HC'], ['x', 'Mehr']], st.market, null, 'sm') +
-      (st.market === 'x' ? '<p class="hint" style="margin:0">„Mehr“ sind Fußballmärkte mit Modell-Chance. Sie fließen ein, sobald du eine Betano-Quote dafür einträgst.</p>' : '') +
+      (st.market === 'x' ? '<p class="hint" style="margin:0">„Mehr“ sind weitere Fußballmärkte wie Beide treffen oder Team-Tore. Sie fließen ein, sobald eine Betano-Quote dafür da ist: lade sie je Spiel unter „Spiele“ oder trag sie ein.</p>' : '') +
       (st.market === 'dc' && st.sport !== 'all' && st.sport !== 'fb' ? '<p class="hint" style="margin:0">Doppelte Chance gibt es nur beim Fußball.</p>' : '') +
       (st.market === 'hc' && st.sport === 'fb' ? '<p class="hint" style="margin:0">Handicap gibt es hier nur bei Basketball und Eishockey.</p>' : '') +
       '</div></div>';
@@ -1213,7 +1326,7 @@ function feedStatus(active){
   if (!hasFeed()) return h;
   var a = feedAge();
   var open = active.filter(function(m){ return m.feed; });
-  var fx = open.filter(function(m){ return m.fixture; }).length;
+  var fx = open.filter(function(m){ return m.fixture && !m.noRef; }).length;
   var missing = open.filter(function(m){ return !m.fixture && missingBook(m); }).length;
   if (fx && !a.stale) h += '<div class="banner"><span>Für ' + fx + (fx === 1 ? ' Spiel sind' : ' Spiele sind') + ' noch keine Quoten geladen. Lade sie je Liga unter „Spiele“.</span><button data-act="tab" data-tab="games">Spiele</button></div>';
   if (a.stale) h += '<div class="banner"><span>Diese Daten sind nicht von heute. Tippe auf „Aktualisieren“.</span></div>';
@@ -1223,7 +1336,7 @@ function feedStatus(active){
 function pickName(l){ return l.market === 'res' && l.key !== 'd' ? l.label + ' siegt' : l.label; }
 function legRow(l){
   return '<li class="leg"><div class="pick">' + esc(pickName(l)) + '</div><div class="game">' + esc(l.game) + ' · ' + SPORTS[l.sport].name + ' · ' + MARKETS[l.market] + '</div>' +
-    '<div class="fair">Chance ' + pct(l.p) + ' · fair ' + f2(l.fairOdds) + (l.src ? ' · Quote ' + esc(l.src) : '') + '</div>' +
+    '<div class="fair">Chance ' + pct(l.p) + (l.model ? ' (Modell)' : '') + ' · fair ' + f2(l.fairOdds) + (l.src ? ' · Quote ' + esc(l.src) : '') + '</div>' +
     '<div class="q"><b>' + f2(l.book) + '</b>' + edgePill(l.ev, state.settings.minEdge) + '</div></li>';
 }
 function stepper(key, label, val){
@@ -1232,6 +1345,20 @@ function stepper(key, label, val){
     '<button data-act="step" data-key="' + key + '" data-dir="1" aria-label="' + label + ' erhöhen">+</button></div></div>';
 }
 
+// Woher die Chancen stammen: Pinnacle-Quoten mit Stand, damit man sie z. B. mit OddsPortal abgleichen kann
+function refLineHtml(m, now){
+  if (m.fixture || m.sample) return '';
+  if (m.ownRef) return '<div class="refl">Referenz: <b>deine Eingabe</b></div>';
+  if (!m.feed) return '<div class="refl">Referenz: <b>deine Eingabe</b></div>';
+  var r = m.ref || {}, parts = [];
+  if (r.h > 1 && r.a > 1) parts.push((r.d > 1 ? [r.h, r.d, r.a] : [r.h, r.a]).map(f2).join(' · '));
+  if (m.ou && m.ou.ref) parts.push((m.sport === 'fb' ? 'Ü/U ' : 'Ü/U ') + fmtLine(m.ou.line) + ': ' + f2(m.ou.ref.o) + ' · ' + f2(m.ou.ref.u));
+  if (m.hc && m.hc.ref) parts.push('HC ' + fmtHc(m.hc.line) + ': ' + f2(m.hc.ref.h) + ' · ' + f2(m.hc.ref.a));
+  var at = m.refAt || m.oddsAt;
+  var age = at ? Math.max(0, Math.round((now - at) / 60000)) : null;
+  var when = at ? ' · Stand ' + esc(berlinTime(new Date(at))) + (age != null && age >= 60 ? ' (vor ' + (age >= 120 ? Math.floor(age / 60) + ' Std.' : '1 Std.') + ')' : '') : '';
+  return '<div class="refl"><span class="pinb">Pinnacle</span> ' + parts.join(' · ') + when + '</div>';
+}
 function gameCard(m, now){
   var st = state.settings;
   var started = hasStarted(m, now);
@@ -1267,16 +1394,16 @@ function gameCard(m, now){
     var hcb = m.hc.book || {};
     rows += '<div class="g-odds">' + cell(by.hch, '1 ' + fmtHc(m.hc.line), hcb.h, fair.hc.h) + cell(by.hca, '2 ' + fmtHc(-m.hc.line), hcb.a, fair.hc.a) + '</div>';
   }
-  var refTag = m.src && m.src !== 'Pinnacle' ? (m.src.indexOf('Pinnacle') >= 0 ? ' · Ref. teils Börse' : ' · Ref. Börse') : '';
-  var tag = m.sample ? ' · <b>Beispiel</b>' : (m.mine ? ' · <b>deine Quoten</b>' : (m.bookSrc ? ' · Quote ' + esc(m.bookSrc) : '')) + (m.ownRef ? ' · <b>eigene Referenz</b>' : refTag);
+  var tag = m.sample ? ' · <b>Beispiel</b>' : (m.mine ? ' · <b>deine Quoten</b>' : (m.bookSrc ? ' · Quote ' + esc(m.bookSrc) : '')) + (m.ownRef ? ' · <b>eigene Referenz</b>' : '');
+  rows = refLineHtml(m, now) + rows;
   if (!m.fixture && m.oddsAt && now - m.oddsAt > 3 * 3600000) tag += ' · Quoten von ' + esc(berlinTime(new Date(m.oddsAt)));
-  if (m.fixture) rows = '<div class="nofx">Noch keine Quoten. Lade die Quoten der Liga oder trag Referenzquoten selbst ein (z. B. Pinnacle von OddsPortal).</div>';
+  if (m.fixture) rows = m.noRef ? '<div class="nofx">Pinnacle hat für dieses Spiel noch keine Quote. Ohne Pinnacle rechnet die App hier nichts. Schau später wieder rein oder trag die Pinnacle-Quoten selbst ein.</div>' : '<div class="nofx">Noch keine Quoten. Lade die Quoten der Liga oder trag Referenzquoten selbst ein (z. B. Pinnacle von OddsPortal).</div>';
   var right = started ? '<span class="pill">Begonnen</span>' : '<span>' + esc(m.time || '') + '</span>';
   var foot = '';
   if (!started && m.fixture) foot = '<div class="g-foot">Referenzquoten eintragen</div>';
   else if (!started && m.feed && missingBook(m)) foot = '<div class="g-foot">Betano-Quote eintragen</div>';
-  else if (!started && m.feed && !m.mine && m.bookSrc) foot = '<div class="g-foot">Gerechnet mit ' + esc(m.bookSrc) + ' · Betano eintragen</div>';
-  if (!started && Object.keys(fair.x).length) foot += '<div class="g-foot muted-foot">+ ' + Object.keys(fair.x).length + ' weitere Märkte mit Chance im Tab „Chancen“</div>';
+  else if (!started && m.feed && !m.mine && m.bookSrc) foot = '<div class="g-foot">Gerechnet mit ' + esc(m.bookSrc) + ' · weicht Betano DE ab? Eintragen</div>';
+  if (!started && Object.keys(fair.x).length) foot += '<div class="g-foot muted-foot">+ ' + Object.keys(fair.x).length + ' weitere Märkte' + (m.xAt ? ' (geladen)' : '') + ' im Tab „Chancen“</div>';
   var act = started ? '' : (m.feed ? ' data-act="fedit"' : ' data-act="edit"');
   return '<button class="gcard' + (started ? ' done' : '') + '"' + act + ' data-id="' + esc(m.id) + '"' + (started ? ' disabled' : '') + '>' +
     '<div class="g-meta"><span>' + SPORTS[m.sport || 'fb'].name + ' · ' + esc(m.league || 'Spiel') + tag + '</span>' + right + '</div>' +
@@ -1371,7 +1498,7 @@ function openFeedEditor(id){
   };
   var oddField = function(fid, label, tag, val, r, fo){
     var au = autoOf(tag);
-    var ph = au ? f2(au) + (rs[tag] ? ' ' + rs[tag] : '') : '';
+    var ph = au ? f2(au) : '';
     return '<div class="field"><label for="' + fid + '">' + label + '</label><input id="' + fid + '" type="text" inputmode="decimal" autocomplete="off" class="o" value="' + esc(ovf[tag] ? vo(val) : '') + '" placeholder="' + esc(ph) + '">' + refLine(r, fo) + '</div>';
   };
   var three = m.fixture ? m.sport === 'fb' : m.ref.d > 1;
@@ -1379,7 +1506,7 @@ function openFeedEditor(id){
   var ownOv = state.ov[m.id] || {};
   var needRef = !(raw.ref && raw.ref.h > 1 && raw.ref.a > 1);
   var h = '<div class="grab"></div><h2>Betano-Quoten</h2>' +
-    '<p class="sub"><b>' + esc(m.home) + ' – ' + esc(m.away) + '</b><br><span class="muted small">' + esc(m.league) + ' · ' + esc(m.time) + '</span></p>';
+    '<p class="sub"><b>' + esc(m.home) + ' – ' + esc(m.away) + '</b><br><span class="muted small">' + esc(m.league) + ' · ' + esc(m.time) + '</span></p>' + refLineHtml(m, Date.now());
   if (needRef){
     var rv = function(o, k){ return o && o[k] > 1 ? vo(o[k]) : ''; };
     var lv = function(o){ return o && typeof o.line === 'number' ? (o.line > 0 && m.sport !== 'fb' && o === ownOv.hcRef ? '+' : '') + String(o.line).replace('.', ',') : ''; };
@@ -1396,10 +1523,14 @@ function openFeedEditor(id){
       oddField('b-h', '1', 'res.h', b.h, m.ref.h, fair.res.h) + (three ? oddField('b-d', 'X', 'res.d', b.d, m.ref.d, fair.res.d) : '') + oddField('b-a', '2', 'res.a', b.a, m.ref.a, fair.res.a) +
       '</div></div>';
   }
+  var rawEx = applyExtras(raw, state.extras[m.id]);
+  rs = rawEx.bsrc || rs;
+  var rawDc = rawEx.dc || {}, rawXb = rawEx.xb || {};
   if (fair.dc.hx){
     var dcb = m.dc || {};
     var dcField = function(fid, label, val, fo){
-      return '<div class="field"><label for="' + fid + '">' + label + '</label><input id="' + fid + '" type="text" inputmode="decimal" autocomplete="off" class="o" value="' + esc(ovf[fid.replace('-', '.')] ? vo(val) : '') + '"><span class="refline">fair ' + f2(fo) + ' · ' + need(fo) + '</span></div>';
+      var tg = fid.replace('-', '.'), au = rawDc[tg.split('.')[1]];
+      return '<div class="field"><label for="' + fid + '">' + label + '</label><input id="' + fid + '" type="text" inputmode="decimal" autocomplete="off" class="o" value="' + esc(ovf[tg] ? vo(val) : '') + '" placeholder="' + esc(au > 1 ? f2(au) : '') + '"><span class="refline">fair ' + f2(fo) + ' · ' + need(fo) + '</span></div>';
     };
     h += '<div class="group"><div class="label">Doppelte Chance</div><div class="fields c3">' +
       dcField('dc-hx', '1X', dcb.hx, fair.dc.hx) + dcField('dc-xa', 'X2', dcb.xa, fair.dc.xa) + dcField('dc-ha', '12', dcb.ha, fair.dc.ha) +
@@ -1420,17 +1551,25 @@ function openFeedEditor(id){
   var xs = extraMarkets(m, st.devig);
   if (xs.length){
     var xb = m.xb || {}, groups = [], gmap = {};
+    var nPin = xs.filter(function(x){ return !x.model; }).length, anyModel = xs.some(function(x){ return x.model; });
     xs.forEach(function(x){ if (!gmap[x.group]){ gmap[x.group] = []; groups.push(x.group); } gmap[x.group].push(x); });
-    h += '<details class="xmore"' + (Object.keys(xb).length ? ' open' : '') + '><summary>Weitere Märkte (' + xs.length + ') mit Modell-Chance</summary>' +
+    if (m.feed && apiReady() && !hasStarted(m, Date.now())){
+      var busy = state.xloading === m.id;
+      h += '<div class="xload"><button class="btn ghost block" data-act="xload" data-id="' + esc(m.id) + '"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Lädt …' : (m.xAt ? 'Weitere Märkte neu laden' : 'Weitere Märkte laden')) + '</button>' +
+        '<p class="hint" style="margin:0">Pinnacle-Chancen und Betano-Quoten für Beide treffen, Tore, Team-Tore und Doppelte Chance. Kostet bis zu ' + EXTRA_MARKETS.length + ' Abrufe, nur für Märkte, die es gibt.' +
+        (m.xAt ? ' Zuletzt geladen um ' + esc(berlinTime(new Date(m.xAt))) + ' Uhr: ' + nPin + ' Märkte mit Pinnacle-Chance.' : '') + '</p></div>';
+    }
+    h += '<details class="xmore"' + (Object.keys(xb).length || m.xAt ? ' open' : '') + '><summary>Weitere Märkte (' + xs.length + ')' + (nPin ? ', ' + nPin + ' mit Pinnacle-Chance' : ', Chance aus Modell') + '</summary>' +
       groups.map(function(g){
         return '<div class="label xg">' + esc(g) + '</div><div class="fields">' + gmap[g].map(function(x){
-          return '<div class="field"><label for="x-' + x.key + '">' + esc(x.label) + '</label><input id="x-' + x.key + '" data-xkey="' + x.key + '" type="text" inputmode="decimal" autocomplete="off" class="o" value="' + esc(vo(xb[x.key])) + '">' +
-            '<span class="refline">Chance ' + pct(x.p, 0) + ' · ' + need(1 / x.p) + '</span></div>';
+          var au = rawXb[x.key];
+          return '<div class="field"><label for="x-' + x.key + '">' + esc(x.label) + '</label><input id="x-' + x.key + '" data-xkey="' + x.key + '" type="text" inputmode="decimal" autocomplete="off" class="o" value="' + esc(ovf['x.' + x.key] ? vo(xb[x.key]) : '') + '" placeholder="' + esc(au > 1 ? f2(au) : '') + '">' +
+            '<span class="refline">Chance ' + pct(x.p, 0) + (x.model ? ' Modell' : ' Pinnacle') + ' · ' + need(1 / x.p) + '</span></div>';
         }).join('') + '</div>';
-      }).join('') + '<p class="hint">Modell-Chancen sind vorsichtig gerechnet: ' + Math.round(xs.unc * 100) + ' Prozentpunkte sind bereits abgezogen' +
-      (xs.noOu ? ', mehr als sonst, weil für dieses Spiel keine Über/Unter-Quote vorliegt' : (xs.fitErr > 0.02 ? ', mehr als sonst, weil das Modell hier nur ungenau zu den Marktquoten passt' : '')) + '.</p></details>';
+      }).join('') + (anyModel ? '<p class="hint">„Modell“: Chance aus Pinnacle 1X2 und Über/Unter berechnet, vorsichtig gerechnet (' + Math.round(xs.unc * 100) + ' Prozentpunkte abgezogen' +
+      (xs.noOu ? ', mehr als sonst, weil für dieses Spiel keine Über/Unter-Quote vorliegt' : (xs.fitErr > 0.02 ? ', mehr als sonst, weil das Modell hier nur ungenau zu den Marktquoten passt' : '')) + '). „Pinnacle“: direkt aus Pinnacle-Quoten ohne Marge.</p>' : '') + '</details>';
   }
-  h += '<p class="hint">Trag die Quote ein, die du gerade in der Betano-App siehst. Leere Felder nutzen die automatische Quote (grau im Feld' + (raw.bookSrc ? ', von ' + esc(raw.bookSrc) : '') + ').</p>' +
+  h += '<p class="hint">Trag die Quote ein, die du gerade in der Betano-App siehst, wenn sie von der grauen abweicht. Leere Felder nutzen die automatische Quote (grau im Feld, von Betano UK).</p>' +
     '<p class="err" id="e-err" hidden></p>' +
     '<div class="actions">' + (state.ov[m.id] ? '<button class="btn danger" data-act="freset">Zurücksetzen</button>' : '') +
     '<button class="btn ghost" data-act="close">Abbrechen</button><button class="btn block" data-act="fsave">Speichern</button></div>';
@@ -1875,7 +2014,7 @@ function onFeed(raw, persist){
   if (state.editing && !$('overlay').hidden) return void (state.pendingRender = true);
   renderAll(true);
 }
-function fetchJson(url, estCost){
+function fetchJson(url, estCost, allowObj){
   var ctl = typeof AbortController === 'function' ? new AbortController() : null;
   var timer = ctl ? setTimeout(function(){ ctl.abort(); }, 20000) : null;
   return fetch(url, { signal: ctl ? ctl.signal : undefined, headers: { Accept: 'application/json' } }).then(function(r){
@@ -1885,10 +2024,33 @@ function fetchJson(url, estCost){
     if (r.ok) addSpent(quota.last != null ? quota.last : (estCost || 0));
     if (!r.ok) return r.text().then(function(t){ var e = new Error('http'); e.status = r.status; e.body = t; throw e; });
     return r.json().then(function(j){
-      if (!Array.isArray(j)) throw new Error('fmt');
+      if (!Array.isArray(j) && !(allowObj && j && typeof j === 'object')) throw new Error('fmt');
       return j;
     }).catch(function(){ var e = new Error('fmt'); e.status = -1; throw e; });
   }, function(err){ if (timer) clearTimeout(timer); var e = new Error('net'); e.status = 0; throw e; });
+}
+// Weitere Maerkte eines Fussballspiels laden (Pinnacle + Betano). Kostet je geliefertem Markt 1 Abruf.
+function loadExtras(id){
+  if (state.xloading || !apiReady()) return Promise.resolve();
+  var m = (state.feed ? state.feed.matches : []).filter(function(x){ return x.id === id; })[0];
+  if (!m || m.sport !== 'fb' || !m.lkey || hasStarted(m, Date.now())) return Promise.resolve();
+  var a = state.api, key = String(a.key || '').trim();
+  state.xloading = id; if ($('sheet') && !$('overlay').hidden) openFeedEditor(id);
+  return fetchJson(eventOddsUrl(a.base, key, m.lkey, m.id), EXTRA_MARKETS.length, true).then(function(ev){
+    var ex = parseExtras(ev, m.home, m.away, m.ou ? m.ou.line : null, Date.now());
+    ex.kickoff = m.kickoff;
+    state.xloading = null; saveApi();
+    if (!ex.nPin && !ex.nBook){ toast('Für dieses Spiel liefert die Schnittstelle keine weiteren Märkte'); if (!$('overlay').hidden) openFeedEditor(id); return; }
+    state.extras[id] = ex; saveExtras();
+    renderAll(true);
+    if (!$('overlay').hidden) openFeedEditor(id);
+    var nk = ex.pairs.reduce(function(a, pr){ return a + pr.keys.filter(Boolean).length; }, 0);
+    toast(nk + ' Tipps mit Pinnacle-Chance · ' + ex.nBook + ' Betano-Quoten geladen');
+  }, function(e){
+    state.xloading = null; saveApi();
+    toast(e && e.status === 404 ? 'Spiel bei der Schnittstelle nicht gefunden' : (e && (e.status === 401 || e.status === 429) ? apiErrorText(e.status, e.body) : 'Laden fehlgeschlagen. Versuch es gleich noch einmal.'));
+    if (!$('overlay').hidden) openFeedEditor(id);
+  });
 }
 // Laden: 1) aktive Ligen (kostenlos), 2) Spielplan je Liga (kostenlos), 3) Quoten nur fuer Ligen mit Spielen (kostet).
 // opts.only = Ligaschluessel: nur Quoten dieser Liga nachladen. opts.noOdds: nur Spielplan.
@@ -1968,7 +2130,7 @@ function refreshOdds(opts){
         if (od[f.id]) out.push(od[f.id]);
         // fruehere Quoten nur behalten, wenn diese Liga diesmal keine Quoten bekommen hat; Anstoss immer aus dem aktuellen Spielplan
         else if (!fetched && oldById[f.id] && !oldById[f.id].fixture){ out.push(Object.assign(asRaw(oldById[f.id]), { kickoff: f.kickoff, time: f.time })); keptOld++; }
-        else out.push(f);
+        else out.push(fetched ? Object.assign({}, f, { noRef: true }) : f);
       });
     });
     // Beim Nachladen einer einzelnen Liga: alle anderen Ligen unveraendert lassen
@@ -2067,6 +2229,7 @@ document.addEventListener('click', function(e){
       else st.maxLegs = Math.min(6, Math.max(1, st.maxLegs + dir));
       state.slipIdx = 0; state.recOpen = 0; save(); renderSlip(); break;
     }
+    case 'xload': loadExtras(t.getAttribute('data-id')); break;
     case 'pickslip': state.slipIdx = +t.getAttribute('data-i'); renderSlip(); break;
     case 'rec': state.recOpen = +t.getAttribute('data-i'); renderSlip(); break;
     case 'tune': state.tuneOpen = !state.tuneOpen; renderSlip(); break;
