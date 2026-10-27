@@ -215,6 +215,7 @@ button.card.rec{display:flex;align-items:center;justify-content:space-between;ga
 .refl b{color:var(--fg);font-weight:600}
 .pinb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--good-bg);color:var(--good)}
 input.o.auto{color:var(--muted)}
+.label.sub{margin-top:6px;font-size:11px}
 .cell.est b{font-weight:600}
 .estnote{margin:8px 0 0;font-size:13px;color:var(--warn);line-height:1.4}
 .xload{display:flex;flex-direction:column;gap:6px;margin:4px 0 10px}
@@ -439,15 +440,16 @@ function selectionsFor(m, method){
   var out = [];
   var sport = m.sport && SPORTS[m.sport] ? m.sport : 'fb';
   var sp = SPORTS[sport];
-  var base = { mid: m.id, game: m.home + ' – ' + m.away, league: m.league, lkey: m.lkey || '', kickoff: m.kickoff || null, sport: sport, sample: !!m.sample };
+  var prov = m.bookName || 'Betano';
+  var base = { mid: m.id, game: m.home + ' – ' + m.away, league: m.league, lkey: m.lkey || '', kickoff: m.kickoff || null, sport: sport, sample: !!m.sample, prov: prov };
   var ref = m.ref || {}, book = m.book || {};
   var push = function(market, key, label, p, b, line){
     var tag = market + '.' + key;
-    var src = (m.ovf && m.ovf[tag]) ? 'Betano' : ((m.bsrc && m.bsrc[tag]) || '');
+    var src = (m.ovf && m.ovf[tag]) ? prov : ((m.bsrc && m.bsrc[tag]) || prov);
     out.push(Object.assign({}, base, { market: market, key: key, label: label, p: p, fairOdds: 1 / p, book: b, ev: p * b - 1, src: src, line: line == null ? null : line }));
   };
   var est = sport === 'fb' ? bookEstimates(m, method) : null;
-  var pushEst = function(market, key, label, p, b, line){ push(market, key, label, p, b, line); var o = out[out.length - 1]; o.est = true; o.src = 'Betano geschätzt'; };
+  var pushEst = function(market, key, label, p, b, line){ push(market, key, label, p, b, line); var o = out[out.length - 1]; o.est = true; o.src = prov + ' geschätzt'; };
   // Ergebnis-Markt
   if (ref.h > 1 && ref.a > 1){
     var three = ref.d > 1;
@@ -614,13 +616,14 @@ function enumCombos(legs, score, keep, poolSize){
     var a = legs[i];
     for (var j = i + 1; j < n; j++){
       var b = legs[j];
-      if (b.mid === a.mid) continue;
+      // eine Kombi setzt du bei einem Anbieter: alle Tipps muessen vom selben Anbieter sein
+      if (b.mid === a.mid || b.prov !== a.prov) continue;
       var p2 = a.p * b.p, o2 = a.book * b.book;
       if (RULE.minLegs <= 2) add([a, b], p2, o2);
       if (RULE.maxLegs < 3) continue;
       for (var k = j + 1; k < n; k++){
         var c = legs[k];
-        if (c.mid === a.mid || c.mid === b.mid) continue;
+        if (c.mid === a.mid || c.mid === b.mid || c.prov !== a.prov) continue;
         add([a, b, c], p2 * c.p, o2 * c.book);
       }
     }
@@ -1012,8 +1015,8 @@ function convertEvents(events, league, nowMs){
 }
 function buildFeed(matches, nowMs, leagueCount){
   var notes = 'Referenz ist ausschließlich Pinnacle (' + matches.length + ' Spiele mit Pinnacle-Quoten, ' + leagueCount + (leagueCount === 1 ? ' Liga' : ' Ligen') + ' abgefragt). ' +
-    'Die Betano-Quoten trägst du selbst ein. ' +
-    'Doppelte Chance, Beide treffen, Tore und Team-Tore: Chance aus Pinnacle 1X2 und Über/Unter berechnet (kein zusätzlicher Abruf), Betano-Quote aus deinen 1X2-Quoten geschätzt.';
+    'Die Quoten deines Anbieters (Betano oder bet365) trägst du selbst ein. ' +
+    'Doppelte Chance, Beide treffen, Tore und Team-Tore: Chance aus Pinnacle 1X2 und Über/Unter berechnet (kein zusätzlicher Abruf), die Quote deines Anbieters aus deinen 1X2-Quoten geschätzt.';
   var date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(new Date(nowMs));
   return { date: date, fetchedAt: new Date(nowMs).toISOString(), notes: notes, matches: matches };
 }
@@ -1108,7 +1111,9 @@ function sampleMatches(){
 }
 
 var KEY = 'valueslip.v2';
-var DEFAULTS = { bankroll: 500, kelly: 0.25, minEdge: 0.02, devig: 'power', mode: 'balanced', target: 5, maxLegs: 4, sport: 'all', market: 'all' };
+var BOOKS = ['Betano', 'bet365'];
+var DEFAULT_BOOKS = { fb: 'Betano', bb: 'Betano', ih: 'bet365' };
+var DEFAULTS = { books: DEFAULT_BOOKS, bankroll: 500, kelly: 0.25, minEdge: 0.02, devig: 'power', mode: 'balanced', target: 5, maxLegs: 4, sport: 'all', market: 'all' };
 var state = { matches: sampleMatches(), settings: Object.assign({}, DEFAULTS), tab: 'slip', slipIdx: 0,
               calc: { mode: 'ref', book: '2,10', tip: '2,00', opp: '1,90', draw: '', prob: '48' }, editing: null, editSport: 'fb', confirmDel: false,
               feed: null, ov: {}, startedCount: -1 };
@@ -1118,6 +1123,7 @@ try {
     var saved = JSON.parse(raw);
     if (saved && Array.isArray(saved.matches)) state.matches = saved.matches.map(function(m){ return Object.assign({ sport: 'fb', ou: null }, m); });
     if (saved && saved.settings) state.settings = Object.assign({}, DEFAULTS, saved.settings);
+    state.settings.books = Object.assign({}, DEFAULT_BOOKS, (saved && saved.settings && saved.settings.books) || {});
     if (saved && saved.ov && typeof saved.ov === 'object') state.ov = saved.ov;
   }
 } catch (e) {}
@@ -1160,14 +1166,17 @@ function interested(lkey, now){
 function apiReady(){ return !!(String(state.api.key || '').trim() || String(state.api.base || '').trim()); }
 function selectedLeagues(){ return LEAGUES.filter(function(l){ return state.api.leagues[l.key]; }); }
 
+// Dein Anbieter je Sportart (Betano oder bet365)
+function bookFor(sport){ var b = (state.settings.books || {})[sport || 'fb']; return BOOKS.indexOf(b) >= 0 ? b : DEFAULT_BOOKS[sport || 'fb'] || 'Betano'; }
+function booksLine(){ var b = state.settings.books || {}; return 'Fußball ' + bookFor('fb') + ', Basketball ' + bookFor('bb') + ', Eishockey ' + bookFor('ih'); }
 function feedMatches(){
   if (!state.feed) return [];
-  return state.feed.matches.map(function(m){ return applyOverride(m, state.ov[m.id]); });
+  return state.feed.matches.map(function(m){ return Object.assign(applyOverride(m, state.ov[m.id]), { bookName: bookFor(m.sport) }); });
 }
 function hasFeed(){ return !!(state.feed && state.feed.matches.length); }
 function viewMatches(){
   var own = hasFeed() ? state.matches.filter(function(m){ return !m.sample; }) : state.matches;
-  return feedMatches().concat(own);
+  return feedMatches().concat(own.map(function(m){ return Object.assign({}, m, { bookName: bookFor(m.sport) }); }));
 }
 function activeMatches(){
   var now = Date.now();
@@ -1202,7 +1211,7 @@ function recommendations(active, st){
   var r = bestBets(active, st);
   var names = ['Beste Wette', 'Alternative', 'Alternative'];
   var recs = r.slips.map(function(sl, i){
-    return { title: names[i], sub: 'Jeder Tipp mit Value', slip: sl, also: [], rank: i + 1 };
+    return { title: names[i], sub: 'Bei ' + (sl.legs[0].prov || 'Betano') + ' · jeder Tipp mit Value', slip: sl, also: [], rank: i + 1 };
   });
   if (!recs.length && r.safe) recs.push({ title: 'Heute ohne Value', sub: 'Sicherste Kombi ohne Value: auf Dauer leicht im Minus', slip: r.safe, also: [], rank: 0, noValue: true });
   return { recs: recs, approx: r.capped, singlesValue: r.singles, singlesHit: r.safeSingles, valueLegs: r.valueLegs };
@@ -1220,7 +1229,7 @@ function ticketHtml(rec, st){
       '<div><dt>Auszahlung bei Treffer</dt><dd>' + (stake > 0 ? eur(stake * sl.odds) : '–') + '</dd></div>' +
     '</dl>' +
     (sl.ev < 0 ? '<p class="neg">Kein Value: Pro 10 € Einsatz verlierst du im Schnitt ' + eur(-sl.ev * 10) + '. Kelly empfiehlt deshalb keinen Einsatz.</p>' : '') +
-    (sl.legs.some(function(l){ return l.est; }) ? '<p class="estnote">≈ Geschätzte Betano-Quote: aus deinen 1X2-Quoten berechnet. Prüf sie in der Betano-App, bevor du setzt, und trag sie ein, wenn sie abweicht.</p>' : '') +
+    (sl.legs.some(function(l){ return l.est; }) ? '<p class="estnote">≈ Geschätzte Quote: aus deinen 1X2-Quoten berechnet. Prüf sie in der ' + esc(sl.legs[0].prov || 'Betano') + '-App, bevor du setzt, und trag sie ein, wenn sie abweicht.</p>' : '') +
     '<div class="sep"></div>' +
     '<ol class="legs">' + sl.legs.map(legRow).join('') + '</ol>' +
     '<div class="t-foot"><button class="btn ghost block" data-act="copy">Kopieren</button><button class="btn block" data-act="logslip">Gespielt: ins Tagebuch</button></div>' +
@@ -1248,7 +1257,7 @@ function renderSlip(){
     h += '<div class="card tune"><div class="filters" style="margin-top:0">' +
       '<span class="label">Sportart</span>' + seg('sportf', [['all', 'Alle'], ['fb', 'Fußball'], ['bb', 'Basketball'], ['ih', 'Eishockey']], st.sport, null, 'sm') +
       '<span class="label">Markt</span>' + seg('marketf', [['all', 'Alle'], ['res', '1X2'], ['dc', 'DC'], ['ou', 'Ü/U'], ['hc', 'HC'], ['x', 'Mehr']], st.market, null, 'sm') +
-      (st.market === 'x' ? '<p class="hint" style="margin:0">„Mehr“ sind weitere Fußballmärkte wie Beide treffen oder Tore. Sie fließen ein, sobald du eine Betano-Quote dafür einträgst.</p>' : '') +
+      (st.market === 'x' ? '<p class="hint" style="margin:0">„Mehr“ sind weitere Fußballmärkte wie Beide treffen oder Tore. Sie fließen ein, sobald du deine 1X2-Quoten oder eine Quote dafür einträgst.</p>' : '') +
       (st.market === 'dc' && st.sport !== 'all' && st.sport !== 'fb' ? '<p class="hint" style="margin:0">Doppelte Chance gibt es nur beim Fußball.</p>' : '') +
       (st.market === 'hc' && st.sport === 'fb' ? '<p class="hint" style="margin:0">Handicap gibt es hier nur bei Basketball und Eishockey.</p>' : '') +
       '</div></div>';
@@ -1261,7 +1270,7 @@ function renderSlip(){
     if (!usable && hasFeed() && active.length) h += '<p>Für die offenen Spiele fehlen noch Quoten. Lade sie unter „Spiele“ oder trag sie ein.</p><button class="btn" data-act="tab" data-tab="games">Spiele öffnen</button>';
     else if (!usable && hasFeed()) h += '<p>Alle geladenen Spiele haben schon begonnen. Tippe auf „Aktualisieren“, um neue zu holen.</p><button class="btn" data-act="refresh">Aktualisieren</button>';
     else if (!usable) h += '<p>Es fehlen Spiele mit Referenzquoten. Lade Spiele oder trag sie unter „Spiele“ ein.</p><button class="btn" data-act="tab" data-tab="games">Spiele öffnen</button>';
-    else h += '<p>Gerade gibt es keine 2er- oder 3er-Kombi, die die Regel erfüllt. ' + (R.valueLegs ? 'Es gibt nur einzelne Tipps mit Value, siehe unten.' : 'Trag Betano-Quoten ein oder schau kurz vor Anpfiff wieder rein.') + '</p>';
+    else h += '<p>Gerade gibt es keine 2er- oder 3er-Kombi, die die Regel erfüllt. ' + (R.valueLegs ? 'Es gibt nur einzelne Tipps mit Value, siehe unten.' : 'Trag deine Quoten ein (' + booksLine() + ') oder schau kurz vor Anpfiff wieder rein.') + '</p>';
     h += '</div>';
   } else {
     if (R.approx) h += '<div class="banner"><span>Sehr viele Tipps mit Value: die App hat die 150 stärksten kombiniert.</span></div>';
@@ -1306,7 +1315,7 @@ function feedStatus(active){
   var missing = open.filter(function(m){ return !m.fixture && missingBook(m); }).length;
   if (fx && !a.stale) h += '<div class="banner"><span>Für ' + fx + (fx === 1 ? ' Spiel sind' : ' Spiele sind') + ' noch keine Quoten geladen. Lade sie je Liga unter „Spiele“.</span><button data-act="tab" data-tab="games">Spiele</button></div>';
   if (a.stale) h += '<div class="banner"><span>Diese Daten sind nicht von heute. Tippe auf „Aktualisieren“.</span></div>';
-  else if (missing && missing === open.filter(function(m){ return !m.fixture; }).length) h += '<div class="banner"><span>Trag bei den Spielen, die dich interessieren, deine Betano-Quoten für 1, X und 2 ein. Daraus berechnet die App auch Doppelte Chance, Über/Unter, Beide treffen und Tore.</span><button data-act="tab" data-tab="games">Eintragen</button></div>';
+  else if (missing && missing === open.filter(function(m){ return !m.fixture; }).length) h += '<div class="banner"><span>Trag bei den Spielen, die dich interessieren, deine Quoten ein (' + booksLine() + '), im Fußball 1, X und 2. Daraus berechnet die App auch Doppelte Chance, Über/Unter, Beide treffen und Tore.</span><button data-act="tab" data-tab="games">Eintragen</button></div>';
   return h;
 }
 function pickName(l){ return l.market === 'res' && l.key !== 'd' ? l.label + ' siegt' : l.label; }
@@ -1377,7 +1386,7 @@ function gameCard(m, now){
   var right = started ? '<span class="pill">Begonnen</span>' : '<span>' + esc(m.time || '') + '</span>';
   var foot = '';
   if (!started && m.fixture) foot = '<div class="g-foot">Referenzquoten eintragen</div>';
-  else if (!started && m.feed && missingBook(m)) foot = '<div class="g-foot">Betano-Quote eintragen</div>';
+  else if (!started && m.feed && missingBook(m)) foot = '<div class="g-foot">' + esc(bookFor(m.sport)) + '-Quote eintragen</div>';
   if (!started && Object.keys(fair.x).length) foot += '<div class="g-foot muted-foot">+ ' + Object.keys(fair.x).length + ' weitere Märkte im Tab „Chancen“</div>';
   var act = started ? '' : (m.feed ? ' data-act="fedit"' : ' data-act="edit"');
   return '<button class="gcard' + (started ? ' done' : '') + '"' + act + ' data-id="' + esc(m.id) + '"' + (started ? ' disabled' : '') + '>' +
@@ -1399,7 +1408,7 @@ function renderGames(){
     var a = feedAge();
     h += apiBar();
     if (state.feed.notes) h += '<details class="notes"><summary>Quellen und Hinweise</summary><p>' + esc(state.feed.notes) + '</p></details>';
-    h += '<p class="muted small" style="margin:0">Vergleiche mit der Betano-App: „ab“ ist die Quote, ab der ein Tipp deinen Mindest-Value erreicht. Liegt Betano darüber, tippe das Spiel an und trag die Quote ein.</p>';
+    h += '<p class="muted small" style="margin:0">Vergleiche mit der App deines Anbieters (' + booksLine() + '): „ab“ ist die Quote, ab der ein Tipp deinen Mindest-Value erreicht. Liegt dein Anbieter darüber, tippe das Spiel an und trag die Quote ein.</p>';
     var order = [], groups = {}, names = {};
     feed.forEach(function(m){ var k = m.lkey || m.league || 'Weitere'; if (!groups[k]){ groups[k] = []; order.push(k); names[k] = m.league || 'Weitere'; } groups[k].push(m); });
     var upcomingFirst = function(x, y){ return (hasStarted(x, now) - hasStarted(y, now)) || ((x.kickoff || 0) - (y.kickoff || 0)); };
@@ -1441,7 +1450,7 @@ function renderOdds(){
     '<span class="label">Mindestchance</span>' + seg('ominp', [[0, 'Alle'], [0.6, '60 %'], [0.7, '70 %'], [0.8, '80 %'], [0.9, '90 %']], of.minP, null, 'sm') +
     '<span class="label">Zeigen</span>' + seg('oonly', [['all', 'Alle Tipps'], ['odds', 'Nur mit Quote']], of.only, null, 'sm') +
     '</div>' +
-    '<p class="muted small" style="margin:0">Chance laut Pinnacle ohne Marge; „Modell“ heißt aus Pinnacle 1X2 und Über/Unter berechnet und vorsichtig abgerundet. „≈“ ist eine aus deinen Betano-1X2-Quoten geschätzte Quote. Hohe Chance heißt niedrige Quote und noch keinen Gewinn: entscheidend ist, ob die Quote über „fair“ liegt. Tippe an, um eine Betano-Quote einzutragen.</p>';
+    '<p class="muted small" style="margin:0">Chance laut Pinnacle ohne Marge; „Modell“ heißt aus Pinnacle 1X2 und Über/Unter berechnet und vorsichtig abgerundet. „≈“ ist eine aus deinen eingetragenen 1X2-Quoten geschätzte Quote. Hohe Chance heißt niedrige Quote und noch keinen Gewinn: entscheidend ist, ob die Quote über „fair“ liegt. Tippe an, um eine Betano-Quote einzutragen.</p>';
   if (!rows.length) h += '<div class="card empty"><h2>Keine Tipps</h2><p>' + (hasFeed() ? 'Senke die Mindestchance oder lade neue Spiele.' : 'Lade zuerst Spiele oder trag eigene ein.') + '</p></div>';
   else h += '<div class="olist">' + rows.map(function(x){
     var right = x.book > 1
@@ -1488,7 +1497,8 @@ function openFeedEditor(id){
   var b = m.book || {};
   var ownOv = state.ov[m.id] || {};
   var needRef = !(raw.ref && raw.ref.h > 1 && raw.ref.a > 1);
-  var h = '<div class="grab"></div><h2>Betano-Quoten</h2>' +
+  var bk = bookFor(m.sport);
+  var h = '<div class="grab"></div><h2>' + esc(bk) + '-Quoten</h2>' +
     '<p class="sub"><b>' + esc(m.home) + ' – ' + esc(m.away) + '</b><br><span class="muted small">' + esc(m.league) + ' · ' + esc(m.time) + '</span></p>' + refLineHtml(m, Date.now());
   if (needRef){
     var rv = function(o, k){ return o && o[k] > 1 ? vo(o[k]) : ''; };
@@ -1502,7 +1512,7 @@ function openFeedEditor(id){
       '</div>';
   }
   if ((m.ref.h > 1 && m.ref.a > 1) || m.fixture){
-    h += '<div class="group"><div class="label">' + (m.sport === 'fb' ? 'Ergebnis (90 Minuten)' : 'Ergebnis') + (m.fixture ? ': Betano' : '') + '</div><div class="fields ' + (three ? 'c3' : '') + '">' +
+    h += '<div class="group"><div class="label">' + (m.sport === 'fb' ? 'Ergebnis (90 Minuten)' : 'Ergebnis') + (m.fixture ? ': ' + esc(bk) : '') + '</div><div class="fields ' + (three ? 'c3' : '') + '">' +
       oddField('b-h', '1', 'res.h', b.h, m.ref.h, fair.res.h) + (three ? oddField('b-d', 'X', 'res.d', b.d, m.ref.d, fair.res.d) : '') + oddField('b-a', '2', 'res.a', b.a, m.ref.a, fair.res.a) +
       '</div></div>';
   }
@@ -1544,7 +1554,7 @@ function openFeedEditor(id){
       }).join('') + (anyModel ? '<p class="hint">„Modell“: Chance aus Pinnacle 1X2 und Über/Unter berechnet, vorsichtig gerechnet (' + Math.round(xs.unc * 100) + ' Prozentpunkte abgezogen' +
       (xs.noOu ? ', mehr als sonst, weil für dieses Spiel keine Über/Unter-Quote vorliegt' : (xs.fitErr > 0.02 ? ', mehr als sonst, weil das Modell hier nur ungenau zu den Marktquoten passt' : '')) + '). „Pinnacle“: direkt aus Pinnacle-Quoten ohne Marge.</p>' : '') + '</details>';
   }
-  h += '<p class="hint">Trag die Quoten ein, die du gerade in deiner Betano-App siehst. ' + (est.margin != null ? 'Graue Zahlen hat die App aus deinen Betano-Quoten für 1X2' + (est.ownOu ? ' und Über/Unter' : '') + ' geschätzt. Prüf sie in der Betano-App und überschreib sie, wenn sie abweichen.' : 'Trag zuerst 1, X und 2 ein: Daraus schätzt die App die Betano-Quoten aller weiteren Märkte.') + '</p>' +
+  h += '<p class="hint">Trag die Quoten ein, die du gerade in deiner ' + esc(bk) + '-App siehst. ' + (est.margin != null ? 'Graue Zahlen hat die App aus deinen ' + esc(bk) + '-Quoten für 1X2' + (est.ownOu ? ' und Über/Unter' : '') + ' geschätzt. Prüf sie in der ' + esc(bk) + '-App und überschreib sie, wenn sie abweichen.' : 'Trag zuerst 1, X und 2 ein: Daraus schätzt die App die ' + esc(bk) + '-Quoten aller weiteren Märkte.') + '</p>' +
     '<p class="err" id="e-err" hidden></p>' +
     '<div class="actions">' + (state.ov[m.id] ? '<button class="btn danger" data-act="freset">Zurücksetzen</button>' : '') +
     '<button class="btn ghost" data-act="close">Abbrechen</button><button class="btn block" data-act="fsave">Speichern</button></div>';
@@ -1634,8 +1644,8 @@ function openLogSlip(){
   state.logging = sl;
   openSheet('<div class="grab"></div><h2>Ins Tagebuch</h2>' +
     '<p class="sub">' + sl.legs.length + (sl.legs.length === 1 ? ' Tipp' : 'er-Kombi') + ' · Quote ' + f2(sl.odds) + ' · Chance ' + pct(sl.p) + '</p>' +
-    '<div class="fields">' + field('l-stake', 'Einsatz in €', stake > 0 ? String(stake).replace('.', ',') : '', 'o') + field('l-odds', 'Gesamtquote bei Betano', f2(sl.odds), 'o') + '</div>' +
-    '<p class="hint">Weicht die Betano-Quote ab, trag die echte Gesamtquote ein. Die App merkt sich die Quote jedes Tipps und vergleicht sie später mit der Pinnacle-Schlussquote.</p>' +
+    '<div class="fields">' + field('l-stake', 'Einsatz in €', stake > 0 ? String(stake).replace('.', ',') : '', 'o') + field('l-odds', 'Gesamtquote bei ' + esc(sl.legs[0].prov || 'Betano'), f2(sl.odds), 'o') + '</div>' +
+    '<p class="hint">Weicht die Quote bei ' + esc(sl.legs[0].prov || 'Betano') + ' ab, trag die echte Gesamtquote ein. Die App merkt sich die Quote jedes Tipps und vergleicht sie später mit der Pinnacle-Schlussquote.</p>' +
     '<p class="err" id="e-err" hidden></p>' +
     '<div class="actions"><button class="btn ghost" data-act="close">Abbrechen</button><button class="btn block" data-act="savebet">Speichern</button></div>');
 }
@@ -1646,7 +1656,7 @@ function saveBet(){
   if (!(stake > 0)) return fail('Trag einen Einsatz größer 0 ein.');
   if (!(odds > 1)) return fail('Die Gesamtquote muss größer als 1,00 sein.');
   var scale = Math.pow(odds / sl.odds, 1 / sl.legs.length);
-  state.bets.unshift({ id: uid(), at: Date.now(), stake: stake, odds: odds, p: sl.p, status: 'open',
+  state.bets.unshift({ id: uid(), at: Date.now(), stake: stake, odds: odds, p: sl.p, status: 'open', book: sl.legs[0].prov || 'Betano',
     legs: sl.legs.map(function(l){ return { mid: l.mid, lkey: l.lkey, sport: l.sport, game: l.game, label: pickName(l), market: l.market, key: l.key, line: l.line,
       book: Math.round(l.book * scale * 1000) / 1000, p: l.p, fair: l.fairOdds, close: null, kickoff: l.kickoff, state: 'open' }; }) });
   saveBets(); state.logging = null; closeSheet(); renderCalc(); toast('Im Tagebuch gespeichert');
@@ -1740,7 +1750,7 @@ function renderCalc(){
     J += '<div class="bets">' + state.bets.slice(0, 100).map(function(b){
       var cls = b.status === 'won' ? 'good' : (b.status === 'lost' ? 'bad' : '');
       var lbl = { open: 'Offen', won: 'Gewonnen', lost: 'Verloren', void: 'Storniert' }[b.status];
-      return '<div class="card bet"><div class="row"><span class="label">' + new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit' }).format(new Date(b.at)) + ' · ' + eur(b.stake) + ' @ ' + f2(b.odds) + '</span><span class="pill ' + cls + '">' + lbl + '</span></div>' +
+      return '<div class="card bet"><div class="row"><span class="label">' + new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit' }).format(new Date(b.at)) + ' · ' + eur(b.stake) + ' @ ' + f2(b.odds) + (b.book ? ' · ' + esc(b.book) : '') + '</span><span class="pill ' + cls + '">' + lbl + '</span></div>' +
         '<ul class="blegs">' + b.legs.map(function(l, i){
           var lc = l.state === 'won' ? 'good' : (l.state === 'lost' ? 'bad' : '');
           return '<li><span class="bl"><b>' + esc(l.label) + '</b><small>' + esc(l.game) + (l.score ? ' · ' + esc(l.score) : '') + ' · ' + f2(l.book) + (l.close > 1 ? ' · Schluss fair ' + f2(l.close) + ' (' + sgn(l.book / l.close - 1) + ')' : '') + '</small></span>' +
@@ -1915,6 +1925,9 @@ function openSettings(){
   var st = state.settings;
   openSheet('<div class="grab"></div><h2>Einstellungen</h2>' +
     '<div class="fields">' + field('s-bank', 'Bankroll in €', String(st.bankroll).replace('.', ','), 'o') + field('s-edge', 'Mindest-Value in %', String(Math.round(st.minEdge * 1000) / 10).replace('.', ','), 'o') + '</div>' +
+    '<div class="group"><div class="label">Dein Anbieter je Sportart</div>' +
+      ['fb', 'bb', 'ih'].map(function(sp){ return '<span class="label sub">' + SPORTS[sp].name + '</span>' + seg('bookset-' + sp, BOOKS.map(function(b){ return [b, b]; }), bookFor(sp), null, 'sm'); }).join('') +
+      '<p class="hint" style="margin:0">Deine Quoten trägst du von diesem Anbieter ein. Eine Kombi besteht immer nur aus Tipps eines Anbieters, weil du sie dort als einen Schein setzt.</p></div>' +
     '<div class="group"><div class="label">Einsatz nach Kelly</div>' + seg('kelly', [[0.25, '¼ Kelly'], [0.5, '½ Kelly'], [1, 'Voll']], st.kelly) +
     '<p class="hint" style="margin:0">Ein Viertel schwankt am wenigsten und ist für Schätzfehler der sicherste Start.</p></div>' +
     '<div class="group"><div class="label">Marge entfernen</div>' + seg('devig', [['power', 'Potenz'], ['prop', 'Proportional']], st.devig) +
@@ -2151,8 +2164,8 @@ setInterval(function(){
 function slipText(){
   var sl = currentSlip();
   if (!sl) return '';
-  var lines = ['Value Slip · ' + sl.legs.length + ' Tipps · Quote ' + f2(sl.odds)];
-  sl.legs.forEach(function(l, i){ lines.push((i + 1) + ') ' + pickName(l) + ' (' + l.game + ') @ ' + f2(l.book) + (l.src && l.src !== 'Betano' ? ' [' + l.src + ']' : '') + ' · Chance ' + pct(l.p)); });
+  var lines = ['Value Slip · ' + sl.legs.length + ' Tipps · Quote ' + f2(sl.odds) + ' · bei ' + (sl.legs[0].prov || 'Betano')];
+  sl.legs.forEach(function(l, i){ lines.push((i + 1) + ') ' + pickName(l) + ' (' + l.game + ') @ ' + (l.est ? '≈' : '') + f2(l.book) + (l.est ? ' [geschätzt]' : '') + ' · Chance ' + pct(l.p)); });
   lines.push('Trefferchance ' + pct(sl.p) + ' · Value ' + sgn(sl.ev));
   return lines.join('\n');
 }
@@ -2199,6 +2212,8 @@ document.addEventListener('click', function(e){
       save(); closeSheet(); renderAll(); break;
     case 'close': closeSheet(); break;
     case 'settings': openSettings(); break;
+    case 'bookset-fb': case 'bookset-bb': case 'bookset-ih':
+      st.books = Object.assign({}, DEFAULT_BOOKS, st.books || {}); st.books[act.slice(8)] = t.getAttribute('data-v'); state.recOpen = 0; save(); openSettings(); renderAll(); break;
     case 'kelly': st.kelly = +t.getAttribute('data-v'); save(); openSettings(); renderAll(); break;
     case 'devig': st.devig = t.getAttribute('data-v'); save(); openSettings(); renderAll(); break;
     case 'clearsamples': state.matches = state.matches.filter(function(m){ return !m.sample; }); save(); renderAll(); toast('Beispiele entfernt'); break;
