@@ -1,5 +1,5 @@
 // Service Worker: haelt die App offline verfuegbar. Quoten-Abrufe gehen immer direkt ins Netz.
-const CACHE = 'valueslip-v8';
+const CACHE = 'valueslip-v9';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './maskable-512.png', './apple-touch-icon.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 

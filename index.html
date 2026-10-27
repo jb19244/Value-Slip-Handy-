@@ -732,6 +732,13 @@ function applyExtras(m, ex){
     var d = { hx: feedOdd(ex.dc.hx), xa: feedOdd(ex.dc.xa), ha: feedOdd(ex.dc.ha) };
     if (d.hx || d.xa || d.ha){ out.dc = d; ['hx', 'xa', 'ha'].forEach(function(k){ if (d[k]) bsrc['dc.' + k] = ex.bookName || 'Betano'; }); }
   }
+  if (m.ou && ex.ouBook && ex.ouBook.line === m.ou.line){
+    var ob = m.ou.book || {}, no = feedOdd(ex.ouBook.o), nu = feedOdd(ex.ouBook.u);
+    var nb2 = { o: ob.o > 1 ? ob.o : no, u: ob.u > 1 ? ob.u : nu };
+    if (!(ob.o > 1) && no) bsrc['ou.o'] = ex.bookName || 'Betano';
+    if (!(ob.u > 1) && nu) bsrc['ou.u'] = ex.bookName || 'Betano';
+    out.ou = Object.assign({}, m.ou, { book: nb2 });
+  }
   out.bsrc = bsrc; out.xAt = ex.at || null;
   return out;
 }
@@ -963,10 +970,10 @@ function parseExtras(ev, home, away, mainLine, nowMs){
   // Beide treffen
   var btts = function(b){ var o = outs(mkOf(b, 'btts')); var y = o.filter(function(x){ return low(x.name) === 'yes'; }), n = o.filter(function(x){ return low(x.name) === 'no'; }); return y.length === 1 && n.length === 1 ? { y: y[0].price, n: n[0].price } : null; };
   // Tore gesamt je Linie
-  var totals = function(b){
+  var totals = function(b, withMain){
     var res = {};
     outs(mkOf(b, 'alternate_totals')).forEach(function(o){
-      if (typeof o.point !== 'number' || EXTRA_LINES.indexOf(o.point) < 0 || o.point === mainLine) return;
+      if (typeof o.point !== 'number' || (EXTRA_LINES.indexOf(o.point) < 0 && o.point !== mainLine) || (o.point === mainLine && !withMain)) return;
       var side = low(o.name) === 'over' ? 'o' : (low(o.name) === 'under' ? 'u' : null); if (!side) return;
       var r = res[o.point] = res[o.point] || {}; if (r[side]) r.dup = true; r[side] = o.price;
     });
@@ -1001,11 +1008,12 @@ function parseExtras(ev, home, away, mainLine, nowMs){
   var pt = totals(pin); Object.keys(pt).forEach(function(L){ var r = pt[L]; if (!r.dup && r.o && r.u){ pairs.push({ keys: ['o' + lineKey(+L), 'u' + lineKey(+L)], odds: [r.o, r.u] }); n++; } });
   var pm = team(pin); Object.keys(pm).forEach(function(k){ var r = pm[k]; if (!r.dup && r.o && r.u){ pairs.push({ keys: [k, null], odds: [r.o, r.u] }); n++; } });
   var bb = btts(bet); if (bb){ book.btsy = bb.y; book.btsn = bb.n; }
-  var bt = totals(bet); Object.keys(bt).forEach(function(L){ var r = bt[L]; if (r.dup) return; if (r.o) book['o' + lineKey(+L)] = r.o; if (r.u) book['u' + lineKey(+L)] = r.u; });
+  var bt = totals(bet, true), ouBook = null;
+  Object.keys(bt).forEach(function(L){ var r = bt[L]; if (r.dup) return; if (+L === mainLine){ ouBook = { line: mainLine, o: r.o || null, u: r.u || null }; return; } if (r.o) book['o' + lineKey(+L)] = r.o; if (r.u) book['u' + lineKey(+L)] = r.u; });
   var bm = team(bet); Object.keys(bm).forEach(function(k){ var r = bm[k]; if (!r.dup && r.o) book[k] = r.o; });
   var dc = dcOf(bet);
-  var nb = Object.keys(book).length + Object.keys(dc).length;
-  return { at: nowMs, pairs: pairs, book: book, dc: Object.keys(dc).length ? dc : null, bookName: BOOK_NAMES[DE_BOOKS[0]], nPin: n, nBook: nb };
+  var nb = Object.keys(book).length + Object.keys(dc).length + (ouBook ? (ouBook.o ? 1 : 0) + (ouBook.u ? 1 : 0) : 0);
+  return { at: nowMs, pairs: pairs, book: book, dc: Object.keys(dc).length ? dc : null, ouBook: ouBook, bookName: BOOK_NAMES[DE_BOOKS[0]], nPin: n, nBook: nb };
 }
 // Wie viele Spiele einer Antwort haben Pinnacle bzw. Betano-Quoten (zur Anzeige, falls Betano fehlt)
 function bookCoverage(events, nowMs){
@@ -1110,7 +1118,7 @@ function planSmart(infos, budgetLeft, nowMs){
 }
 // Automatisch: weitere Maerkte fuer Fussballspiele, die bald anpfeifen (zuerst Ligen, die dich interessieren),
 // nur im Rahmen des Tagesbudgets. Je Spiel hoechstens 4 Abrufe.
-var XAUTO = { window: 6 * 3600000, soon: 3 * 3600000, freshSoon: 90 * 60000, fresh: 12 * 3600000, maxPerRun: 4, retryEmpty: 6 * 3600000 };
+var XAUTO = { window: 48 * 3600000, soon: 3 * 3600000, freshSoon: 90 * 60000, fresh: 12 * 3600000, maxPerRun: 80, retryEmpty: 6 * 3600000 };
 function planExtras(matches, extras, budgetLeft, nowMs, interestFn){
   var cost = EXTRA_MARKETS.length;
   var cand = (matches || []).filter(function(m){
@@ -1453,6 +1461,19 @@ function betanoNote(){
   return '<div class="banner"><span>' + (some.length ? 'Für ' + esc(none.map(nm).join(', ')) + ' liefert' : 'Für die geladenen Ligen liefert') +
     ' die Schnittstelle gerade keine Betano-Quoten (Betano UK bietet sie dort wohl nicht oder noch nicht an). Dort trägst du die Betano-Quote selbst ein. Stand je Liga: ' + esc(detail) + ' Spiele mit Betano.</span></div>';
 }
+// Wie viele Fussballspiele haben schon alle Maerkte (weitere Maerkte geladen)?
+function extrasNote(){
+  var a = state.api, now = Date.now();
+  if (!apiReady() || a.oddsMode === 'manual' || a.xauto === false) return '';
+  var fb = (state.feed ? state.feed.matches : []).filter(function(m){ return m.sport === 'fb' && !m.fixture && !hasStarted(m, now); });
+  if (!fb.length) return '';
+  var done = fb.filter(function(m){ var e = state.extras[m.id]; return e && !e.empty; }).length;
+  var tried = fb.filter(function(m){ return state.extras[m.id]; }).length;
+  if (tried >= fb.length) return '<p class="muted small" style="margin:0">Alle Märkte geladen: ' + done + ' von ' + fb.length + ' Fußballspielen' + (done < fb.length ? ' (für die übrigen liefert die Schnittstelle keine weiteren Märkte)' : '') + '.</p>';
+  var q = a.quota, small = q && q.remaining != null && (q.remaining + (q.used || 0)) <= 600;
+  return '<div class="banner"><span>Alle Märkte (Doppelte Chance, Beide treffen, Tore, Team-Tore) geladen für ' + done + ' von ' + fb.length + ' Fußballspielen. Die App lädt den Rest automatisch, sobald dein Tagesbudget es erlaubt, zuerst die Spiele, die bald anpfeifen.' +
+    (small ? ' Mit den 500 kostenlosen Abrufen reicht das nur für wenige Spiele am Tag (bis zu 4 Abrufe je Spiel). Für alle Spiele bräuchtest du den 20K-Plan von The Odds API (30 $ im Monat); die App nutzt ihn dann automatisch.' : '') + '</span></div>';
+}
 function renderGames(){
   var st = state.settings;
   var now = Date.now();
@@ -1466,7 +1487,7 @@ function renderGames(){
   if (hasFeed()){
     var a = feedAge();
     h += apiBar();
-    h += betanoNote();
+    h += betanoNote() + extrasNote();
     if (state.feed.notes) h += '<details class="notes"><summary>Quellen und Hinweise</summary><p>' + esc(state.feed.notes) + '</p></details>';
     h += '<p class="muted small" style="margin:0">Vergleiche mit der Betano-App: „ab“ ist die Quote, ab der ein Tipp deinen Mindest-Value erreicht. Liegt Betano darüber, tippe das Spiel an und trag die Quote ein.</p>';
     var order = [], groups = {}, names = {};
@@ -2027,7 +2048,7 @@ function apiSettings(){
     (a.oddsMode === 'auto' ? '<span class="label">Quoten automatisch erneuern</span>' + seg('auto', [[0, 'Aus'], [3, 'ab 3 Std'], [6, 'ab 6 Std'], [12, 'ab 12 Std']], a.autoH, null, 'sm') : '') +
     '<p class="hint" style="margin:0">Lädt neu, wenn die Daten älter sind als gewählt.</p>' +
     (a.oddsMode !== 'manual' ? '<span class="label">Weitere Fußballmärkte automatisch</span>' + seg('xauto', [['on', 'An'], ['off', 'Aus']], a.xauto === false ? 'off' : 'on', null, 'sm') +
-      '<p class="hint" style="margin:0">Holt für bis zu 4 Spiele, die in den nächsten 6 Stunden anpfeifen, Pinnacle-Chancen und Betano-Quoten für Beide treffen, Tore, Team-Tore und Doppelte Chance. Höchstens 4 Abrufe je Spiel' + (a.oddsMode === 'smart' ? ' und höchstens die Hälfte deines Tagesbudgets' : '') + '.</p>' : '') +
+      '<p class="hint" style="margin:0">Holt für alle Fußballspiele im Zeitraum Pinnacle-Chancen und Betano-Quoten für Doppelte Chance, Beide treffen, Tore und Team-Tore, die bald anpfeifenden zuerst. Höchstens 4 Abrufe je Spiel' + (a.oddsMode === 'smart' ? ' und höchstens die Hälfte deines Tagesbudgets' : '') + '.</p>' : '') +
     '<span class="label">Ligen</span>' + lg +
     '<p class="hint" style="margin:0" id="s-cost">Quoten für alle gewählten Ligen kosten bis zu ' + cost + ' Abrufe; Ligen ohne Spiele im Zeitraum kosten nichts. ' + q + '.</p>' + budgetLine() +
     '<button class="btn block" data-act="refresh"' + (state.loading ? ' disabled' : '') + '>Jetzt laden</button></div>';
