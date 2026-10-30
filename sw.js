@@ -1,5 +1,5 @@
 // Service Worker: haelt die App offline verfuegbar. Quoten-Abrufe gehen immer direkt ins Netz.
-const CACHE = 'valueslip-v13';
+const CACHE = 'valueslip-v14';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './maskable-512.png', './apple-touch-icon.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 
@@ -36,4 +36,21 @@ self.addEventListener('fetch', (e) => {
     })));
   }
   // Alles andere (The Odds API, Zwischendienst) laeuft unveraendert ueber das Netz.
+});
+
+// Push-Benachrichtigungen vom eigenen Push-Dienst (Erinnerung vor Anpfiff, Value-Alarm)
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (x) { d = { body: e.data ? e.data.text() : '' }; }
+  const opts = { body: d.body || '', icon: 'icon-192.png', badge: 'icon-192.png', data: { url: d.url || './' } };
+  if (d.tag === 'test') opts.tag = 'test';
+  e.waitUntil(self.registration.showNotification(d.title || 'Value Slip', opts));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || './', self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cs) => {
+    for (const c of cs) { if ('focus' in c) { c.postMessage({ type: 'push-open' }); return c.focus(); } }
+    return self.clients.openWindow(url);
+  }));
 });

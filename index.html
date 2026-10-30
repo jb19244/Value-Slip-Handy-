@@ -158,7 +158,7 @@ h2{margin:0;font-family:var(--font-d);font-weight:600;font-size:22px;letter-spac
 .banner.err-b{background:var(--bad-bg);color:var(--bad)}
 .setup{display:flex;flex-direction:column;gap:8px}
 .setup p{margin:0}
-.group.api{gap:10px}
+.group.api,.group.pushg{gap:10px}
 .keyrow{display:flex;gap:8px}
 .keyrow input{flex:1;min-width:0}
 .btn.sm{min-height:46px;padding:0 12px;font-size:14px}
@@ -213,6 +213,7 @@ button.card.rec{display:flex;align-items:center;justify-content:space-between;ga
 .rule b{color:var(--accent);font-weight:600}
 .refl{font-size:12px;color:var(--muted);margin:2px 0 6px;font-variant-numeric:tabular-nums;line-height:1.4}
 .refl b{color:var(--fg);font-weight:600}
+.fairb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--surface2);color:var(--fg)}
 .pinb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--good-bg);color:var(--good)}
 input.o.auto{color:var(--muted)}
 .label.sub{margin-top:6px;font-size:11px}
@@ -234,6 +235,20 @@ input.o.auto{color:var(--muted)}
 .verdict{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-radius:12px;font-weight:600}
 .verdict.good{background:var(--good-bg);color:var(--good)} .verdict.bad{background:var(--bad-bg);color:var(--bad)} .verdict.warn{background:var(--warn-bg);color:var(--warn)}
 .verdict b{font-family:var(--font-d);font-size:30px;font-variant-numeric:tabular-nums}
+.guide{margin:8px 0 0;padding-left:20px;font-size:14px;line-height:1.5} .guide li{margin:0 0 10px} .guide code{font-size:13px;background:var(--surface2);padding:1px 5px;border-radius:5px;word-break:break-all}
+.plog{list-style:none;margin:0;padding:0;font-size:13px} .plog li{padding:4px 0;border-bottom:1px solid var(--line)}
+.ana h3{margin:0 0 6px;font-size:15px}
+.ana .chart{width:100%;height:auto;display:block;touch-action:pan-y}
+.ana .lgd{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin:6px 0 0}
+.ana .lgd i{display:inline-block;width:16px;height:0;border-top:2px solid var(--accent);vertical-align:middle;margin-right:5px}
+.ana .lgd i.ex{border-top:2px dashed var(--muted)} .ana .lgd i.bd{height:9px;border:0;background:var(--surface2);border-radius:2px}
+.ana .tip{font-size:12px;color:var(--fg);min-height:16px;margin:4px 0 0;font-variant-numeric:tabular-nums}
+.atbl{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;margin-top:10px}
+.atbl th{font-weight:600;color:var(--muted);font-size:12px;text-align:right;padding:4px 4px;border-bottom:1px solid var(--line)}
+.atbl td{text-align:right;padding:6px 4px;border-bottom:1px solid var(--line)}
+.atbl th:first-child,.atbl td:first-child{text-align:left;padding-left:0}
+.atbl td.good{color:var(--good)} .atbl td.bad{color:var(--bad)}
+.ana .verd{font-size:13px;margin:8px 0 0}
 .kv{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px;margin:0}
 .kv dt{font-size:12px;color:var(--muted)} .kv dd{margin:0;font-family:var(--font-d);font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}
 
@@ -842,6 +857,56 @@ function stakeFor(p, o, bank, frac){
   if (!(k > 0) || !(bank > 0)) return 0;
   return Math.round(bank * Math.min(k * frac, 0.03) * 10) / 10;
 }
+// Profi-Auswertung des Tagebuchs: erwarteter gegen tatsaechlichen Gewinn, Schwankungsband, Drawdown, Aufschluesselung.
+// Gewinn eines Scheins ist zweiwertig: +Einsatz*(Quote*Steuer-1) mit Chance p, sonst -Einsatz. Varianz = Einsatz^2 * (Quote*Steuer)^2 * p*(1-p).
+var EDGE_TIERS = [[-Infinity, 0.02, 'unter 2 %'], [0.02, 0.05, '2–5 %'], [0.05, 0.1, '5–10 %'], [0.1, Infinity, 'ab 10 %']];
+function betTax(b){ return b.tax > 0 && b.tax <= 1 ? b.tax : 1; }
+function betEdge(b){ return b.p * b.odds * betTax(b) - 1; }
+function betGroupKey(b, by){
+  var legs = b.legs || [];
+  var one = function(f){ var v = legs.map(f).filter(function(x, i, a){ return a.indexOf(x) === i; }); return v.length === 1 ? v[0] : null; };
+  if (by === 'sport'){ var sp = one(function(l){ return l.sport || 'fb'; }); return sp ? (SPORTS[sp] ? SPORTS[sp].name : sp) : 'Gemischt'; }
+  if (by === 'market'){ var mk = one(function(l){ return l.market; }); return mk ? (MARKETS[mk] || mk) : 'Gemischt'; }
+  if (by === 'book') return b.book || 'Betano';
+  if (by === 'legs') return legs.length <= 1 ? 'Einzelwette' : (legs.length >= 4 ? '4er und mehr' : legs.length + 'er-Kombi');
+  var e = betEdge(b);
+  for (var i = 0; i < EDGE_TIERS.length; i++) if (e >= EDGE_TIERS[i][0] && e < EDGE_TIERS[i][1]) return EDGE_TIERS[i][2];
+  return EDGE_TIERS[0][2];
+}
+function clvStats(vals){
+  var n = vals.length; if (!n) return null;
+  var mean = vals.reduce(function(a, x){ return a + x; }, 0) / n;
+  var sd = n > 1 ? Math.sqrt(vals.reduce(function(a, x){ return a + (x - mean) * (x - mean); }, 0) / (n - 1)) : 0;
+  var se = n > 1 ? sd / Math.sqrt(n) : 0;
+  return { n: n, mean: mean, sd: sd, lo: mean - 1.96 * se, hi: mean + 1.96 * se };
+}
+function legClv(l){ return l.close > 1 && l.book > 1 ? l.book / l.close - 1 : null; }
+function analyzeBets(bets, by){
+  var played = (bets || []).filter(function(b){ return b && b.status !== 'open' && b.status !== 'void' && b.stake > 0 && b.odds > 1 && b.p > 0 && b.p < 1 && slipPayout(b) != null; })
+    .slice().sort(function(a, b){ return (a.at || 0) - (b.at || 0); });
+  var stake = 0, profit = 0, exp = 0, vr = 0, peak = 0, maxDD = 0, curve = [{ act: 0, exp: 0, sd: 0 }];
+  var groups = {};
+  played.forEach(function(b){
+    var eff = b.odds * betTax(b), pr = slipPayout(b) - b.stake, ex = b.stake * (b.p * eff - 1), v = b.stake * b.stake * eff * eff * b.p * (1 - b.p);
+    stake += b.stake; profit += pr; exp += ex; vr += v;
+    if (profit > peak) peak = profit;
+    if (peak - profit > maxDD) maxDD = peak - profit;
+    curve.push({ act: profit, exp: exp, sd: Math.sqrt(vr) });
+    var k = betGroupKey(b, by || 'sport');
+    var g = groups[k] || (groups[k] = { key: k, n: 0, stake: 0, profit: 0, exp: 0, clv: [] });
+    g.n++; g.stake += b.stake; g.profit += pr; g.exp += ex;
+    (b.legs || []).forEach(function(l){ var c = legClv(l); if (c != null) g.clv.push(c); });
+  });
+  var allClv = [];
+  (bets || []).forEach(function(b){ (b.legs || []).forEach(function(l){ var c = legClv(l); if (c != null) allClv.push(c); }); });
+  var sd = Math.sqrt(vr);
+  var list = Object.keys(groups).map(function(k){ var g = groups[k]; return { key: k, n: g.n, stake: g.stake, profit: g.profit, roi: g.stake ? g.profit / g.stake : 0, exp: g.exp, clv: clvStats(g.clv) }; })
+    .sort(function(a, b){ return b.stake - a.stake; });
+  return { n: played.length, stake: stake, profit: profit, exp: exp, sd: sd, z: sd > 0 ? (profit - exp) / sd : 0,
+    roi: stake ? profit / stake : 0, roiExp: stake ? exp / stake : 0,
+    roiLo: stake ? (profit - 1.96 * sd) / stake : 0, roiHi: stake ? (profit + 1.96 * sd) / stake : 0,
+    maxDD: maxDD, curve: curve, groups: list, clv: clvStats(allClv) };
+}
 // END LOGIC
 
 // BEGIN API
@@ -1057,15 +1122,26 @@ function dailyBudget(remaining, spentToday, nowMs){
   return { allow: allow, spent: spent, left: Math.max(0, Math.min(allow - spent, remaining - SMART_RESERVE)) };
 }
 // Welche Ligen jetzt Quoten brauchen (siehe oben); zuerst Anpfiff-nah, dann Ligen, die dich interessieren, dann nach Anstosszeit.
-function planSmart(infos, budgetLeft, nowMs){
+// Schlussquote: Hast du in einer Liga eine offene Wette, deren Spiel in hoechstens 30 Min anpfeift, und sind die Quoten
+// aelter als 15 Min, laedt die App diese Liga zuerst. Das zaehlt nicht gegen den Tagesanteil, nur gegen das Restkontingent (closeLeft).
+var SMART_CLOSE = 30 * 60000, SMART_CLOSE_FRESH = 15 * 60000;
+function closeDue(x, nowMs){
+  var age = x.oddsAt ? nowMs - x.oddsAt : Infinity;
+  return x.close > nowMs && x.close - nowMs <= SMART_CLOSE && age > SMART_CLOSE_FRESH;
+}
+function planSmart(infos, budgetLeft, nowMs, closeLeft){
+  var out = [], cl = closeLeft == null ? Infinity : closeLeft;
+  var closing = (infos || []).filter(function(x){ return closeDue(x, nowMs); }).sort(function(a, b){ return a.close - b.close; });
+  closing.forEach(function(x){ if (x.cost <= cl){ out.push(x.key); cl -= x.cost; } });
   var need = (infos || []).filter(function(x){
+    if (out.indexOf(x.key) >= 0) return false;
     if (!(x.next > nowMs) || x.next - nowMs > SMART_AHEAD) return false;
     var age = x.oddsAt ? nowMs - x.oddsAt : Infinity;
     var soon = x.next - nowMs <= SMART_SOON;
     return age > SMART_FRESH || (soon && age > SMART_FRESH_SOON);
   }).map(function(x){ return Object.assign({}, x, { prio: (x.next - nowMs <= SMART_SOON ? 0 : 2) + (x.interest ? 0 : 1) }); });
   need.sort(function(a, b){ return (a.prio - b.prio) || (a.next - b.next); });
-  var out = [], left = budgetLeft == null ? Infinity : budgetLeft;
+  var left = budgetLeft == null ? Infinity : budgetLeft;
   need.forEach(function(x){ if (x.cost <= left){ out.push(x.key); left -= x.cost; } });
   return out;
 }
@@ -1123,14 +1199,15 @@ try {
     if (saved && saved.ov && typeof saved.ov === 'object') state.ov = saved.ov;
   }
 } catch (e) {}
-function save(){ try { localStorage.setItem(KEY, JSON.stringify({ matches: state.matches, settings: state.settings, ov: state.ov })); } catch (e) {} }
+function save(){ try { localStorage.setItem(KEY, JSON.stringify({ matches: state.matches, settings: state.settings, ov: state.ov })); } catch (e) {} schedulePushSync(); }
 
 // Einstellungen fuer den automatischen Abruf. Der Schluessel bleibt nur auf diesem Geraet.
 var API_KEY_STORE = 'valueslip.api', FEED_STORE = 'valueslip.feed';
 // Weitere Maerkte werden aus den Pinnacle-Quoten berechnet (kein eigener Abruf mehr); alte Zusatzdaten verwerfen
 // Fruehere Zusatzdaten (weitere Maerkte je Spiel) werden nicht mehr gebraucht
 try { localStorage.removeItem('valueslip.extras'); } catch (e) {}
-var API_DEFAULTS = { key: '', base: '', windowH: 24, autoH: 6, oddsMode: 'smart', modeSet: false, leagues: {}, lastFetch: 0, lastAttempt: 0, lastSchedule: 0, quota: null, spent: null, interest: {} };
+var PUSH_DEFAULTS = { url: '', token: '', on: false, active: false, lead: { fb: 55, bb: 25, ih: 45 }, value: true, calls: 6, since: 0, log: [], lastSync: 0, err: '', ver: '' };
+var API_DEFAULTS = { key: '', base: '', windowH: 24, autoH: 6, oddsMode: 'smart', modeSet: false, leagues: {}, lastFetch: 0, lastAttempt: 0, lastSchedule: 0, quota: null, spent: null, interest: {}, push: PUSH_DEFAULTS };
 LEAGUES.forEach(function(l){ API_DEFAULTS.leagues[l.key] = l.on; });
 state.api = JSON.parse(JSON.stringify(API_DEFAULTS));
 state.loading = false; state.apiError = '';
@@ -1142,6 +1219,8 @@ try {
     // Neu: Spar-Modus ist Standard, solange du nicht selbst einen Modus gewaehlt hast
     if (!rawApi.modeSet && (!rawApi.oddsMode || rawApi.oddsMode === 'auto')) state.api.oddsMode = 'smart';
     if (!state.api.interest || typeof state.api.interest !== 'object') state.api.interest = {};
+    var rp = rawApi.push && typeof rawApi.push === 'object' ? rawApi.push : {};
+    state.api.push = Object.assign({}, PUSH_DEFAULTS, rp, { lead: Object.assign({}, PUSH_DEFAULTS.lead, rp.lead || {}), log: Array.isArray(rp.log) ? rp.log : [] });
   }
   // Umstellung auf Pinnacle + Betano: alte Quoten (Tipico/Winamax, Boerse) sofort ersetzen statt erst nach 12 Std
   if (state.api.bookVer !== BOOK_VER){ state.api.lf = {}; state.api.lastFetch = 0; state.api.lastSchedule = 0; state.api.lastAttempt = 0; state.api.bookVer = BOOK_VER; try { localStorage.setItem(API_KEY_STORE, JSON.stringify(state.api)); } catch (e2) {} }
@@ -1159,6 +1238,12 @@ function interested(lkey, now){
   var ids = {}; (state.feed ? state.feed.matches : []).forEach(function(m){ if (m.lkey === lkey) ids[m.id] = 1; });
   if (Object.keys(state.ov).some(function(id){ return ids[id]; })) return true;
   return (state.bets || []).some(function(b){ return b.status === 'open' && b.legs.some(function(l){ return l.lkey === lkey && l.state === 'open'; }); });
+}
+// Fruehester Anpfiff eines offenen Tipps in dieser Liga (fuer die Schlussquote)
+function openBetKickoff(lkey, now){
+  var t = null;
+  (state.bets || []).forEach(function(b){ if (b.status === 'open') b.legs.forEach(function(l){ if (l.lkey === lkey && l.state === 'open' && l.kickoff > now && (t == null || l.kickoff < t)) t = l.kickoff; }); });
+  return t;
 }
 function apiReady(){ return !!(String(state.api.key || '').trim() || String(state.api.base || '').trim()); }
 function selectedLeagues(){ return LEAGUES.filter(function(l){ return state.api.leagues[l.key]; }); }
@@ -1339,10 +1424,18 @@ function stepper(key, label, val){
 }
 
 // Woher die Chancen stammen: Pinnacle-Quoten mit Stand, damit man sie z. B. mit OddsPortal abgleichen kann
+// Faire Quoten (Pinnacle ohne Marge) in derselben Reihenfolge wie die Referenzzeile
+function fairLineHtml(m){
+  var f = fairOddsFor(m, state.settings.devig), parts = [];
+  var r = m.ref || {};
+  if (f.res.h && f.res.a) parts.push((r.d > 1 && f.res.d ? [f.res.h, f.res.d, f.res.a] : [f.res.h, f.res.a]).map(f2).join(' · '));
+  if (m.ou && f.ou.o && f.ou.u) parts.push('Ü/U ' + fmtLine(m.ou.line) + ': ' + f2(f.ou.o) + ' · ' + f2(f.ou.u));
+  if (m.hc && f.hc.h && f.hc.a) parts.push(((m.sport || 'fb') === 'fb' ? 'AH ' : 'HC ') + fmtHc(m.hc.line) + ': ' + f2(f.hc.h) + ' · ' + f2(f.hc.a));
+  return parts.length ? '<br><span class="fairb">Fair</span> ' + parts.join(' · ') : '';
+}
 function refLineHtml(m, now){
   if (m.fixture || m.sample) return '';
-  if (m.ownRef) return '<div class="refl">Referenz: <b>deine Eingabe</b></div>';
-  if (!m.feed) return '<div class="refl">Referenz: <b>deine Eingabe</b></div>';
+  if (m.ownRef || !m.feed) return '<div class="refl">Referenz: <b>deine Eingabe</b>' + fairLineHtml(m) + '</div>';
   var r = m.ref || {}, parts = [];
   if (r.h > 1 && r.a > 1) parts.push((r.d > 1 ? [r.h, r.d, r.a] : [r.h, r.a]).map(f2).join(' · '));
   if (m.ou && m.ou.ref) parts.push((m.sport === 'fb' ? 'Ü/U ' : 'Ü/U ') + fmtLine(m.ou.line) + ': ' + f2(m.ou.ref.o) + ' · ' + f2(m.ou.ref.u));
@@ -1350,7 +1443,7 @@ function refLineHtml(m, now){
   var at = m.refAt || m.oddsAt;
   var age = at ? Math.max(0, Math.round((now - at) / 60000)) : null;
   var when = at ? ' · Stand ' + esc(berlinTime(new Date(at))) + (age != null && age >= 60 ? ' (vor ' + (age >= 120 ? Math.floor(age / 60) + ' Std.' : '1 Std.') + ')' : '') : '';
-  return '<div class="refl"><span class="pinb">Pinnacle</span> ' + parts.join(' · ') + when + '</div>';
+  return '<div class="refl"><span class="pinb">Pinnacle</span> ' + parts.join(' · ') + when + fairLineHtml(m) + '</div>';
 }
 function gameCard(m, now){
   var st = state.settings;
@@ -1628,7 +1721,7 @@ function textField(id, label, val, wide){
 var BETS_STORE = 'valueslip.bets';
 state.bets = [];
 try { var rb = JSON.parse(localStorage.getItem(BETS_STORE) || '[]'); if (Array.isArray(rb)) state.bets = rb; } catch (e) {}
-function saveBets(){ try { localStorage.setItem(BETS_STORE, JSON.stringify(state.bets)); } catch (e) {} }
+function saveBets(){ try { localStorage.setItem(BETS_STORE, JSON.stringify(state.bets)); } catch (e) {} schedulePushSync(); }
 function currentSlip(){ var r = state.recs || []; return r[state.recOpen] ? r[state.recOpen].slip : null; }
 function openLogSlip(){
   var sl = currentSlip(); if (!sl) return;
@@ -1654,17 +1747,21 @@ function saveBet(){
   saveBets(); state.logging = null; closeSheet(); renderCalc(); toast('Im Tagebuch gespeichert');
 }
 // Schlussquote mitschreiben: solange ein Spiel nicht begonnen hat, gilt die zuletzt geladene faire Quote
-function updateClosing(){
-  if (!state.bets.length || !state.feed) return;
-  var now = Date.now(), byId = {}, changed = false;
-  feedMatches().forEach(function(m){ byId[m.id] = m; });
+// Schlussquote = faire Pinnacle-Quote aus den juengsten Quoten vor Anpfiff (auch aus den Abrufen des Push-Dienstes kurz vor Anpfiff)
+function setCloses(ms){
+  var byId = {}, changed = false, now = Date.now();
+  ms.forEach(function(m){ byId[m.id] = m; });
   state.bets.forEach(function(b){ b.legs.forEach(function(l){
     var m = byId[l.mid];
-    if (!m || hasStarted(m, now) || l.state !== 'open' || m.ownRef || !(m.oddsAt > b.at)) return;
+    if (!m || m.ownRef || !(m.oddsAt > b.at) || (m.kickoff != null && m.oddsAt >= m.kickoff) || m.oddsAt < (l.closeOddsAt || 0)) return;
     var pk = allPicks(m, state.settings.devig).filter(function(x){ return x.market === l.market && x.key === l.key && (x.line == null || l.line == null || x.line === l.line); })[0];
-    if (pk && pk.market !== 'x' && Math.abs((l.close || 0) - pk.fairOdds) > 1e-9){ l.close = pk.fairOdds; l.closeAt = now; changed = true; }
+    if (pk && pk.market !== 'x' && (Math.abs((l.close || 0) - pk.fairOdds) > 1e-9 || l.closeOddsAt !== m.oddsAt)){ l.close = pk.fairOdds; l.closeAt = now; l.closeOddsAt = m.oddsAt; changed = true; }
   }); });
-  if (changed) saveBets();
+  return changed;
+}
+function updateClosing(){
+  if (!state.bets.length || !state.feed) return;
+  if (setCloses(feedMatches())) saveBets();
 }
 function recomputeBet(b){
   b.status = slipResult(b.legs.map(function(l){ return l.state; }));
@@ -1717,6 +1814,73 @@ function settleBets(){
     toast(errText ? errText : (settled ? settled + (settled === 1 ? ' Tipp abgerechnet' : ' Tipps abgerechnet') : 'Noch keine Endstände'));
   });
 }
+// Auswertung: Verlauf (dein Gewinn gegen den erwarteten, mit 95-%-Schwankungsband), Glueck/Pech, Drawdown, CLV, Aufschluesselung
+var ANA_BY = [['sport', 'Sportart'], ['market', 'Markt'], ['book', 'Anbieter'], ['legs', 'Tipps'], ['edge', 'Value']];
+function anaChart(a){
+  var W = 320, H = 150, P = 6, c = a.curve, n = c.length - 1;
+  var lo = 0, hi = 0;
+  c.forEach(function(x){ lo = Math.min(lo, x.act, x.exp - 1.96 * x.sd); hi = Math.max(hi, x.act, x.exp + 1.96 * x.sd); });
+  if (hi - lo < 1){ hi += 1; lo -= 1; }
+  var X = function(i){ return P + (W - 2 * P) * (n ? i / n : 0.5); }, Y = function(v){ return P + (H - 2 * P) * (hi - v) / (hi - lo); };
+  var pts = function(f){ return c.map(function(x, i){ return X(i).toFixed(1) + ',' + Y(f(x)).toFixed(1); }).join(' '); };
+  var band = c.map(function(x, i){ return X(i).toFixed(1) + ',' + Y(x.exp + 1.96 * x.sd).toFixed(1); }).concat(c.slice().reverse().map(function(x, j){ return X(n - j).toFixed(1) + ',' + Y(x.exp - 1.96 * x.sd).toFixed(1); })).join(' ');
+  return '<svg class="chart" id="anaChart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Gewinnverlauf: dein Gewinn ' + eur(a.profit) + ', erwartet ' + eur(a.exp) + '" data-n="' + n + '">' +
+    '<polygon points="' + band + '" fill="var(--surface2)"/>' +
+    '<line x1="' + P + '" x2="' + (W - P) + '" y1="' + Y(0).toFixed(1) + '" y2="' + Y(0).toFixed(1) + '" stroke="var(--line)" stroke-width="1"/>' +
+    '<polyline points="' + pts(function(x){ return x.exp; }) + '" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="5 4" stroke-linecap="round"/>' +
+    '<polyline points="' + pts(function(x){ return x.act; }) + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+    '<line id="anaCross" x1="0" x2="0" y1="' + P + '" y2="' + (H - P) + '" stroke="var(--fg)" stroke-width="1" opacity="0"/>' +
+    '<circle id="anaDot" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="2" opacity="0"/></svg>';
+}
+function anaTip(ev){
+  var svg = $('anaChart'); if (!svg || !state.ana) return;
+  var r = svg.getBoundingClientRect(), n = +svg.getAttribute('data-n'); if (!(n > 0) || !r.width) return;
+  var W = 320, H = 150, P = 6, c = state.ana.curve;
+  var i = Math.max(0, Math.min(n, Math.round(((ev.clientX - r.left) / r.width * W - P) / (W - 2 * P) * n)));
+  var lo = 0, hi = 0; c.forEach(function(x){ lo = Math.min(lo, x.act, x.exp - 1.96 * x.sd); hi = Math.max(hi, x.act, x.exp + 1.96 * x.sd); });
+  if (hi - lo < 1){ hi += 1; lo -= 1; }
+  var x = P + (W - 2 * P) * i / n, y = P + (H - 2 * P) * (hi - c[i].act) / (hi - lo);
+  var cr = $('anaCross'), dt = $('anaDot');
+  cr.setAttribute('x1', x); cr.setAttribute('x2', x); cr.setAttribute('opacity', '.35');
+  dt.setAttribute('cx', x); dt.setAttribute('cy', y); dt.setAttribute('opacity', '1');
+  $('anaTipTxt').textContent = i ? 'Nach Wette ' + i + ': Gewinn ' + eur(c[i].act) + ' · erwartet ' + eur(c[i].exp) + ' (normal: ' + eur(c[i].exp - 1.96 * c[i].sd) + ' bis ' + eur(c[i].exp + 1.96 * c[i].sd) + ')' : 'Start';
+}
+function luckText(a){
+  var z = a.z, az = Math.abs(z);
+  if (a.n < 5) return 'Noch zu wenige abgerechnete Wetten für eine Aussage.';
+  if (az < 1) return 'Dein Ergebnis liegt genau im Rahmen der Erwartung.';
+  if (az < 2) return z > 0 ? 'Etwas mehr Glück als erwartet, aber noch im normalen Bereich.' : 'Etwas Pech, aber noch im normalen Bereich. Das gleicht sich bei echtem Value aus.';
+  return z > 0 ? 'Deutlich mehr Glück als erwartet. Rechne nicht damit, dass das so weitergeht.' : 'Deutlich unter der Erwartung. Prüfe die Quote gegen Schluss (CLV): Liegt sie im Minus, hatten deine Quoten wohl keinen echten Value.';
+}
+function clvText(c){
+  if (!c) return 'Noch keine Schlussquoten. Die App schreibt sie mit, wenn kurz vor Anpfiff Pinnacle-Quoten geladen werden (am zuverlässigsten mit dem Push-Dienst).';
+  var r = 'Ø ' + sgn(c.mean) + ' aus ' + c.n + (c.n === 1 ? ' Tipp' : ' Tipps');
+  if (c.n < 20) return r + '. Ab etwa 20 Tipps zeigt die App, ob das mehr als Zufall ist.';
+  r += ' (95 %: ' + sgn(c.lo) + ' bis ' + sgn(c.hi) + '). ';
+  return r + (c.lo > 0 ? 'Du schlägst die Schlussquote nachweisbar: Dein System findet echten Value.' : (c.hi < 0 ? 'Deine Quoten sind nachweisbar schlechter als die Schlussquote. Setz früher oder nur mit mehr Value.' : 'Noch nicht eindeutig, sammle weitere Tipps.'));
+}
+function renderAnalysis(){
+  var by = state.anaBy || 'sport', a = analyzeBets(state.bets, by);
+  state.ana = a;
+  if (!a.n) return '';
+  var rows = a.groups.map(function(g){
+    var cv = g.clv ? sgn(g.clv.mean) : '–';
+    return '<tr><td>' + esc(g.key) + '</td><td>' + g.n + '</td><td class="' + (g.profit >= 0 ? 'good' : 'bad') + '">' + eur(g.profit) + '</td><td>' + sgn(g.roi) + '<br><small class="muted">erw. ' + sgn(g.stake ? g.exp / g.stake : 0) + '</small></td><td class="' + (g.clv ? (g.clv.mean >= 0 ? 'good' : 'bad') : '') + '">' + cv + '</td></tr>';
+  }).join('');
+  return '<div class="card ana"><h3>Auswertung</h3>' + anaChart(a) +
+    '<div class="lgd"><span><i></i>Dein Gewinn</span><span><i class="ex"></i>Erwartet</span><span><i class="bd"></i>Normaler Bereich (95 %)</span></div>' +
+    '<p class="tip" id="anaTipTxt">Tippe auf die Grafik für Werte.</p>' +
+    '<dl class="kv" style="margin-top:10px">' +
+      '<div><dt>Glück / Pech</dt><dd class="' + (a.z >= 0 ? 'good' : 'bad') + '">' + (a.z >= 0 ? '+' : '−') + Math.abs(a.z).toFixed(1).replace('.', ',') + ' σ</dd></div>' +
+      '<div><dt>Größter Rückgang</dt><dd' + (a.maxDD > 0 ? ' class="bad"' : '') + '>' + eur(-a.maxDD) + '</dd></div>' +
+    '</dl>' +
+    '<p class="verd">' + luckText(a) + '</p>' +
+    '<p class="hint" style="margin-top:6px">Rendite ' + sgn(a.roi) + ', erwartet ' + sgn(a.roiExp) + '. Echte Rendite liegt mit 95 % zwischen ' + sgn(a.roiLo) + ' und ' + sgn(a.roiHi) + '. Größter Rückgang: ' + (state.settings.bankroll > 0 ? pct(a.maxDD / state.settings.bankroll) + ' deiner Bankroll' : eur(a.maxDD)) + '.</p>' +
+    '<p class="verd"><b>Quote gegen Schluss:</b> ' + clvText(a.clv) + '</p>' +
+    '<span class="label" style="display:block;margin-top:12px">Aufgeschlüsselt nach</span>' + seg('anaby', ANA_BY, by, null, 'sm') +
+    '<table class="atbl"><thead><tr><th>' + ANA_BY.filter(function(x){ return x[0] === by; })[0][1] + '</th><th>Wetten</th><th>Gewinn</th><th>ROI</th><th>CLV</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<p class="hint">ROI darunter: was die Wetten laut Pinnacle erwarten ließen. CLV: Ø deiner Quote gegen die faire Schlussquote. Bei wenigen Wetten entscheidet vor allem der Zufall; die CLV-Spalte ist schneller aussagekräftig als der Gewinn.</p></div>';
+}
 function renderCalc(){
   var c = state.calc, js = journalStats();
   var openLegs = 0, now = Date.now(), autoLeagues = {};
@@ -1739,6 +1903,7 @@ function renderCalc(){
       (openLegs ? '<button class="btn ghost block" data-act="settle"' + (state.loading ? ' disabled' : '') + '>Ergebnisse prüfen · ' + (Object.keys(autoLeagues).length * 2) + ' Abrufe</button>' : '') +
       (manualLegs ? '<p class="hint" style="margin:0">' + manualLegs + (manualLegs === 1 ? ' Tipp ist' : ' Tipps sind') + ' nur von Hand abrechenbar (Pokalspiel, eigenes Spiel oder älter als 3 Tage): ✓ oder ✗ tippen.</p>' : '') +
       '</div>';
+    J += renderAnalysis();
     J += '<div class="bets">' + state.bets.slice(0, 100).map(function(b){
       var cls = b.status === 'won' ? 'good' : (b.status === 'lost' ? 'bad' : '');
       var lbl = { open: 'Offen', won: 'Gewonnen', lost: 'Verloren', void: 'Storniert', part: 'Teilweise' }[b.status];
@@ -1915,6 +2080,7 @@ function saveGame(){
 
 function openSettings(){
   var st = state.settings;
+  var keepY = !$('overlay').hidden && $('s-bank') ? $('sheet').scrollTop : null;
   openSheet('<div class="grab"></div><h2>Einstellungen</h2>' +
     '<div class="fields">' + field('s-bank', 'Bankroll in €', String(st.bankroll).replace('.', ','), 'o') + field('s-edge', 'Mindest-Value in %', String(Math.round(st.minEdge * 1000) / 10).replace('.', ','), 'o') + '</div>' +
     '<div class="group"><div class="label">Dein Anbieter je Sportart</div>' +
@@ -1926,8 +2092,9 @@ function openSettings(){
     '<p class="hint" style="margin:0">Ein Viertel schwankt am wenigsten und ist für Schätzfehler der sicherste Start.</p></div>' +
     '<div class="group"><div class="label">Marge entfernen</div>' + seg('devig', [['power', 'Potenz'], ['prop', 'Proportional']], st.devig) +
     '<p class="hint" style="margin:0">Potenz gewichtet Außenseiter realistischer. Proportional ist die einfache Variante.</p></div>' +
-    apiSettings() +
+    apiSettings() + pushSettings() +
     '<div class="actions"><button class="btn ghost block" data-act="resetsamples">Beispiele laden</button><button class="btn block" data-act="close">Fertig</button></div>');
+  if (keepY != null) $('sheet').scrollTop = keepY;
 }
 function budgetLine(){
   var q = state.api.quota;
@@ -2050,10 +2217,11 @@ function refreshOdds(opts){
         var lf = a.lf || {};
         var infos = withGames.map(function(l){
           var next = fixtures[l.key].reduce(function(m, f){ var k = Date.parse(f.kickoff); return k > now ? Math.min(m, k) : m; }, Infinity);
-          return { key: l.key, cost: marketsFor(l.sport).length, next: next, oddsAt: lf[l.key] || null, interest: interested(l.key, now) };
+          return { key: l.key, cost: marketsFor(l.sport).length, next: next, oddsAt: lf[l.key] || null, interest: interested(l.key, now), close: openBetKickoff(l.key, now) };
         });
         var bud = dailyBudget(a.quota && a.quota.remaining, spentToday(), now);
-        var plan = planSmart(infos, bud ? bud.left : null, now);
+        var rem = a.quota && a.quota.remaining;
+        var plan = planSmart(infos, bud ? bud.left : null, now, rem == null ? null : Math.max(0, rem - 10));
         smartSkipped = infos.length && !plan.length && bud && bud.left < Math.min.apply(null, infos.map(function(x){ return x.cost; }));
         withGames = withGames.filter(function(l){ return plan.indexOf(l.key) >= 0; });
         plannedOdds = withGames.length;
@@ -2117,6 +2285,205 @@ function refreshOdds(opts){
     done(); renderAll(true);
   });
 }
+// ---------------------------------------------------------------------------------------------------------------
+// Push-Benachrichtigungen ueber den eigenen Push-Dienst (Cloudflare Worker, Code unter dienst/worker.js)
+// Die App schickt dem Dienst: Spiele mit Pinnacle-Quoten, deine eingetragenen Quoten, offene Tipps und Einstellungen.
+// Der Dienst erinnert vor Anpfiff, meldet Value und holt die Schlussquote. Seine Abrufe holt sich die App beim naechsten Oeffnen.
+var PUSH_VER = 'f6bbc54d8e';
+var PUSH_LEADS = {
+  fb: [[0, 'Aus'], [30, '30 Min'], [55, '55 Min'], [90, '90 Min']],
+  bb: [[0, 'Aus'], [25, '25 Min'], [45, '45 Min'], [90, '90 Min']],
+  ih: [[0, 'Aus'], [30, '30 Min'], [45, '45 Min'], [90, '90 Min']]
+};
+function pushUrl(){ var u = String(state.api.push.url || '').trim().replace(/\/+$/, ''); return /^https:\/\/[^\s/]+(\/[^\s]*)?$/.test(u) ? u : ''; }
+function pushSupported(){ return 'serviceWorker' in navigator && typeof window.PushManager !== 'undefined' && typeof window.Notification !== 'undefined'; }
+function isStandalone(){ return window.navigator.standalone === true || !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches); }
+function randHex(n){ var b = new Uint8Array(n / 2); crypto.getRandomValues(b); return Array.prototype.map.call(b, function(x){ return ('0' + x.toString(16)).slice(-2); }).join(''); }
+function b64uBytes(str){ var s2 = String(str).replace(/-/g, '+').replace(/_/g, '/'); var bin = atob(s2 + '==='.slice((s2.length + 3) % 4)); var out = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+function bytesB64u(buf){ var b = new Uint8Array(buf), s2 = ''; for (var i = 0; i < b.length; i++) s2 += String.fromCharCode(b[i]); return btoa(s2).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function pushCfg(){
+  var p = state.api.push, prov = {};
+  ['fb', 'bb', 'ih'].forEach(function(sp){ var b = bookFor(sp); prov[sp] = { book: b, tf: taxFor(b) }; });
+  return { lead: p.lead, prov: prov, value: p.value !== false, calls: p.calls, minEdge: state.settings.minEdge, devig: state.settings.devig, ah: AH_FB, windowH: state.api.windowH };
+}
+function pushPayload(sub){
+  var now = Date.now(), sel = {}, ids = {}, ov = {}, legs = [];
+  selectedLeagues().forEach(function(l){ sel[l.key] = 1; });
+  var games = (state.feed ? state.feed.matches : []).filter(function(m){ return sel[m.lkey] && m.kickoff > now && m.kickoff - now < 36 * 3600000; }).slice(0, 300).map(function(m){
+    ids[m.id] = 1;
+    return { id: m.id, sport: m.sport, league: m.league, lkey: m.lkey, kickoff: new Date(m.kickoff).toISOString(), time: m.time, home: m.home, away: m.away,
+      ref: m.ref, ou: m.ou ? { line: m.ou.line, ref: m.ou.ref } : null, hc: m.hc ? { line: m.hc.line, ref: m.hc.ref } : null, src: m.src, fixture: m.fixture, oddsAt: m.oddsAt, refAt: m.refAt };
+  });
+  Object.keys(state.ov).forEach(function(id){ if (ids[id]) ov[id] = state.ov[id]; });
+  state.bets.forEach(function(b){ if (b.status === 'open') b.legs.forEach(function(l){ if (l.state === 'open' && l.kickoff > now && l.lkey) legs.push({ mid: l.mid, lkey: l.lkey, market: l.market, ko: l.kickoff }); }); });
+  return { token: state.api.push.token, sub: sub, apiKey: String(state.api.key || '').trim(), cfg: pushCfg(), games: games, ov: ov, legs: legs, quota: state.api.quota, since: state.api.push.since || 0 };
+}
+function pushFetch(path, body){
+  var url = pushUrl();
+  if (!url) return Promise.reject({ message: 'Trag zuerst die Adresse deines Push-Dienstes ein.' });
+  var ctl = typeof AbortController === 'function' ? new AbortController() : null, timer = ctl ? setTimeout(function(){ ctl.abort(); }, 20000) : null;
+  var opts = body === undefined ? { headers: { Accept: 'application/json' } } : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  if (ctl) opts.signal = ctl.signal;
+  return fetch(url + path, opts).then(function(r){
+    if (timer) clearTimeout(timer);
+    return r.json().catch(function(){ return {}; }).then(function(j){
+      if (!r.ok) throw { status: r.status, message: j.message || ('Push-Dienst antwortet mit Fehler ' + r.status + '. Prüfe die Adresse und die Einrichtung (Anleitung).') };
+      return j;
+    });
+  }, function(){ if (timer) clearTimeout(timer); throw { status: 0, message: 'Push-Dienst nicht erreichbar. Prüfe die Adresse und ob ALLOWED_ORIGIN genau ' + location.origin + ' ist.' }; });
+}
+function currentSub(){
+  if (!pushSupported()) return Promise.resolve(null);
+  return navigator.serviceWorker.ready.then(function(reg){ return reg.pushManager.getSubscription(); }).then(function(sub){ return sub ? sub.toJSON() : null; }).catch(function(){ return null; });
+}
+function pushSync(loud){
+  var p = state.api.push;
+  if (!p.on || !pushUrl() || !p.token) return Promise.resolve();
+  if (state.pushBusy) return Promise.resolve();
+  state.pushBusy = true;
+  return currentSub().then(function(sub){ return pushFetch('/push/sync', pushPayload(sub)); }).then(function(j){
+    state.pushBusy = false;
+    p.active = !!j.active; p.lastSync = Date.now(); p.err = ''; p.ver = j.ver || '';
+    if (Array.isArray(j.log)) p.log = j.log.slice(-10);
+    if (j.quota && j.quota.remaining != null && (!state.api.quota || (j.quota.at || 0) > (state.api.quota.at || 0))) state.api.quota = j.quota;
+    saveApi();
+    applySnaps(j.snaps);
+    refreshPushUi();
+  }, function(e){
+    state.pushBusy = false;
+    p.err = e && e.message ? e.message : 'Push-Dienst nicht erreichbar.'; saveApi();
+    refreshPushUi();
+    if (loud) throw e;
+  });
+}
+function schedulePushSync(){
+  if (!state.api || !state.api.push || !state.api.push.on) return;
+  clearTimeout(schedulePushSync.h);
+  schedulePushSync.h = setTimeout(function(){ pushSync(); }, 1500);
+}
+// Abrufe des Push-Dienstes uebernehmen: Schlussquoten setzen, frische Pinnacle-Quoten in die Spiele einspielen (kostet keinen Abruf)
+function applySnaps(snaps){
+  if (!Array.isArray(snaps) || !snaps.length) return;
+  var p = state.api.push, a = state.api, now = Date.now(), raw = null, closes = false;
+  var asRaw = function(m){ return Object.assign({}, m, { kickoff: new Date(m.kickoff).toISOString() }); };
+  snaps.filter(function(sn){ return sn && sn.at > 0; }).sort(function(x, y){ return x.at - y.at; }).forEach(function(sn){
+    p.since = Math.max(p.since || 0, sn.at);
+    var lg = leagueByKey(sn.lkey);
+    if (!lg || !Array.isArray(sn.ev)) return;
+    var conv = convertEvents(sn.ev, lg, sn.at);
+    var nf = normalizeFeed({ matches: conv });
+    if (nf && setCloses(nf.matches)) closes = true;
+    if (!sn.full || !state.feed || !(sn.at > ((a.lf || {})[sn.lkey] || 0))) return;
+    var fresh = {};
+    conv.forEach(function(m){ var k = Date.parse(m.kickoff); if (k > now && k - now <= a.windowH * 3600000){ m.time = timeLabel(k, now); fresh[m.id] = m; } });
+    var base = raw ? raw.matches : state.feed.matches.filter(function(m){ return !hasStarted(m, now); }).map(asRaw);
+    var out = base.map(function(m){
+      var f = fresh[m.id];
+      if (!f) return m;
+      delete fresh[m.id];
+      return (m.oddsAt || 0) > sn.at ? m : f;
+    });
+    Object.keys(fresh).forEach(function(id){ out.push(fresh[id]); });
+    raw = { date: berlinDateOf(now), fetchedAt: state.feed.fetchedAt, notes: state.feed.notes, matches: out };
+    a.lf = a.lf || {}; a.lf[sn.lkey] = sn.at;
+  });
+  if (closes) saveBets();
+  saveApi();
+  if (raw) onFeed(raw, true);
+  else if (closes) renderCalc();
+}
+function pushErr(msg){ state.api.push.err = msg; saveApi(); refreshPushUi(); }
+// Einschalten: Erlaubnis zuerst (iPhone verlangt sie direkt beim Tippen), dann Schluessel des Dienstes, Abo, erste Synchronisierung
+function pushEnable(){
+  var p = state.api.push;
+  if (!pushUrl()) return pushErr('Trag zuerst die Adresse deines Push-Dienstes ein (https://…workers.dev).');
+  if (!pushSupported()) return pushErr(isStandalone() ? 'Dieses Gerät kann keine Push-Benachrichtigungen (nötig: iOS 16.4 oder neuer).' : 'Push geht auf dem iPhone nur in der installierten App: In Safari auf „Teilen“, dann „Zum Home-Bildschirm“, und die App über das neue Symbol öffnen.');
+  var perm;
+  try { perm = Notification.requestPermission(); } catch (e) { perm = Promise.resolve(Notification.permission); }
+  state.pushBusy = false; p.err = ''; toast('Push wird eingeschaltet …');
+  Promise.resolve(perm).then(function(r){
+    if (r !== 'granted') throw { message: 'Benachrichtigungen sind nicht erlaubt. Erlaube sie in den iPhone-Einstellungen unter Mitteilungen bei Value Slip.' };
+    return pushFetch('/push/key');
+  }).then(function(j){
+    return navigator.serviceWorker.ready.then(function(reg){
+      return reg.pushManager.getSubscription().then(function(old){
+        var oldKey = old && old.options && old.options.applicationServerKey ? bytesB64u(old.options.applicationServerKey) : '';
+        if (old && oldKey === j.key) return old;
+        return (old ? old.unsubscribe() : Promise.resolve()).then(function(){ return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(j.key) }); });
+      });
+    });
+  }).then(function(){
+    if (!p.token) p.token = randHex(32);
+    p.on = true; saveApi();
+    return pushSync(true);
+  }).then(function(){
+    toast('Benachrichtigungen sind an'); refreshPushUi();
+  }).catch(function(e){
+    if (e && e.status === 403) p.on = false;
+    pushErr(e && e.message ? e.message : 'Einschalten fehlgeschlagen.');
+  });
+}
+function pushTest(){
+  pushFetch('/push/test', { token: state.api.push.token }).then(function(j){
+    if (j.status >= 200 && j.status < 300){ state.api.push.err = ''; toast('Test gesendet, kommt gleich'); }
+    else pushErr(j.status === 404 || j.status === 410 ? 'Dein Push-Abo ist abgelaufen. Schalte Push aus und wieder ein.' : 'Apple hat den Test abgelehnt (' + j.status + (j.body ? ': ' + j.body : '') + ').');
+    saveApi(); refreshPushUi();
+  }, function(e){ pushErr(e.message); });
+}
+function pushOff(){
+  var p = state.api.push;
+  var done = function(){ p.on = false; p.active = false; saveApi(); toast('Benachrichtigungen aus'); refreshPushUi(); };
+  var tok = p.token;
+  (pushSupported() ? navigator.serviceWorker.ready.then(function(reg){ return reg.pushManager.getSubscription(); }).then(function(sub){ return sub && sub.unsubscribe(); }).catch(function(){}) : Promise.resolve())
+    .then(function(){ return pushUrl() && tok ? pushFetch('/push/off', { token: tok }).catch(function(){}) : null; }).then(done, done);
+}
+function refreshPushUi(){
+  var g = $('pushgrp');
+  if (!g || (document.activeElement && document.activeElement.id === 's-push')) return;
+  g.outerHTML = pushSettings();
+}
+function pushSettings(){
+  var p = state.api.push, on = p.on && pushUrl();
+  var ago = p.lastSync ? Math.round((Date.now() - p.lastSync) / 60000) : null;
+  var status = on ? (p.active ? '<span class="pill good">Aktiv</span>' : '<span class="pill warn">Kein Abo</span>') + (ago != null ? ' <span class="muted small">abgeglichen ' + (ago < 1 ? 'gerade eben' : 'vor ' + (ago < 60 ? ago + ' Min' : Math.floor(ago / 60) + ' Std')) + '</span>' : '') : '<span class="pill">Aus</span>';
+  var old = on && p.ver && p.ver !== PUSH_VER;
+  var log = (p.log || []).slice().reverse().slice(0, 5).map(function(x){ return '<li><span class="muted">' + esc(berlinTime(new Date(x.at))) + '</span> ' + esc(x.t) + '</li>'; }).join('');
+  return '<div class="group pushg" id="pushgrp"><div class="label">Benachrichtigungen</div>' +
+    '<div class="row">' + status + '</div>' +
+    '<div class="field wide"><label for="s-push">Adresse deines Push-Dienstes</label><input id="s-push" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(p.url) + '" placeholder="https://value-slip.deinname.workers.dev"></div>' +
+    '<p class="hint" style="margin:0">Dein eigener Dienst bei Cloudflare, kostenlos. Er läuft alle 5 Minuten, auch wenn die App zu ist. <button class="link" data-act="pushguide" type="button">So richtest du ihn ein</button></p>' +
+    (p.err ? '<p class="err" style="margin:0">' + esc(p.err) + '</p>' : '') +
+    (old ? '<p class="hint" style="margin:0"><b>Neue Version des Push-Dienstes:</b> Kopier den Code neu und ersetze ihn bei Cloudflare (Anleitung, Schritt 3).</p>' : '') +
+    (on ? '<div class="actions"><button class="btn ghost" data-act="pushtest">Test senden</button><button class="btn ghost" data-act="pushoff">Ausschalten</button></div>'
+        : '<button class="btn block" data-act="pushon">Benachrichtigungen einschalten</button>') +
+    '<span class="label">Erinnerung vor Anpfiff</span>' +
+    ['fb', 'bb', 'ih'].map(function(sp){ return '<span class="label sub">' + SPORTS[sp].name + '</span>' + seg('pushlead-' + sp, PUSH_LEADS[sp], p.lead[sp], null, 'sm'); }).join('') +
+    '<p class="hint" style="margin:0">Dann ist das Fenster für Value am besten: <b>Fußball 55 Min:</b> Die Aufstellungen kommen etwa 60 Min vor Anpfiff. <b>Basketball 25 Min:</b> Die Startformationen stehen 30 Min vor Tip-off. <b>Eishockey 45 Min:</b> Die Startgoalies sind meist bestätigt. Pinnacle preist solche News in Minuten ein, bet365 und Betano oft erst später. Mehrere Spiele kommen in einer Nachricht.</p>' +
+    '<span class="label">Value-Alarm</span>' + seg('pushval', [['on', 'An'], ['off', 'Aus']], p.value !== false ? 'on' : 'off', null, 'sm') +
+    '<p class="hint" style="margin:0">Hast du für ein Spiel Quoten eingetragen, holt der Dienst zur Erinnerung frische Pinnacle-Quoten und meldet, wenn deine Quote jetzt Value hat (gleiche Regeln wie in der App, mit Wettsteuer).</p>' +
+    '<span class="label">Abrufe für Push pro Tag</span>' + seg('pushcalls', [[0, '0'], [3, '3'], [6, '6'], [10, '10']], p.calls, null, 'sm') +
+    '<p class="hint" style="margin:0">Für frische Pinnacle-Quoten zur Erinnerung (nur wenn die Quoten der App älter als 30 Min sind). Die Schlussquote deiner offenen Wetten kommt immer dazu: 1–2 Abrufe je Liga kurz vor Anpfiff. Der Spar-Modus rechnet das automatisch ein. Die Abrufe des Dienstes landen beim Öffnen kostenlos in der App.</p>' +
+    (log ? '<span class="label">Zuletzt</span><ul class="plog">' + log + '</ul>' : '') +
+    '</div>';
+}
+function openPushGuide(){
+  if (!state.workerCode) fetch('dienst/worker.js', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.text() : ''; }).then(function(t){ state.workerCode = t; var b = $('pg-copy'); if (b) b.disabled = !t; }).catch(function(){});
+  var origin = location.origin;
+  openSheet('<div class="grab"></div><h2>Push-Dienst einrichten</h2>' +
+    '<p class="sub">Einmalig, etwa 10 Minuten, alles im Safari auf dem iPhone. Kostenlos bei Cloudflare.</p>' +
+    '<ol class="guide">' +
+    '<li>Öffne <b>dash.cloudflare.com</b> und leg ein kostenloses Konto an (oder melde dich an).</li>' +
+    '<li><b>Workers &amp; Pages</b> → <b>Create</b> → Worker mit der Vorlage „Hello World“ anlegen, Name z. B. <code>value-slip</code> → <b>Deploy</b>.</li>' +
+    '<li><b>Edit code</b>: Inhalt komplett löschen, den Code einfügen und <b>Deploy</b> tippen.<br><button class="btn ghost sm" id="pg-copy" data-act="pushcode" type="button"' + (state.workerCode ? '' : ' disabled') + '>Code kopieren</button> <a class="link" href="dienst/worker.js" target="_blank" rel="noopener">Code ansehen</a></li>' +
+    '<li><b>Storage &amp; Databases</b> → <b>KV</b> → neuen Speicher anlegen, Name z. B. <code>value-slip</code>.</li>' +
+    '<li>Zurück beim Worker: <b>Settings</b> → <b>Bindings</b> → <b>Add</b> → <b>KV namespace</b>. Variable name genau <code>VS</code>, den Speicher aus Schritt 4 wählen, speichern.</li>' +
+    '<li><b>Settings</b> → <b>Variables and Secrets</b> → <b>Add</b>: Typ Text, Name <code>ALLOWED_ORIGIN</code>, Wert genau <code>' + esc(origin) + '</code></li>' +
+    '<li><b>Settings</b> → <b>Trigger Events</b> → <b>Add</b> → <b>Cron Triggers</b>: <code>*/5 * * * *</code> (alle 5 Minuten).</li>' +
+    '<li>Kopier die Adresse des Workers (endet auf <code>.workers.dev</code>), trag sie in den Einstellungen bei „Adresse deines Push-Dienstes“ ein und tippe <b>Benachrichtigungen einschalten</b>, dann <b>Test senden</b>.</li>' +
+    '</ol>' +
+    '<p class="hint">Push gibt es auf dem iPhone nur in der installierten App (Safari → Teilen → Zum Home-Bildschirm). Die Menüs bei Cloudflare können leicht anders heißen. Deinen API-Schlüssel schickt die App selbst, du musst ihn bei Cloudflare nicht eintragen. Nur dein iPhone kann den Dienst nutzen: Das erste Gerät, das Push einschaltet, wird Besitzer.</p>' +
+    '<div class="actions"><button class="btn block" data-act="settings">Zurück zu den Einstellungen</button></div>');
+}
 function rerenderApi(){
   if (!$('overlay').hidden && !state.editing) openSettings();
   renderSlip(); renderGames();
@@ -2138,10 +2505,13 @@ function startApi(){
     var stored = JSON.parse(localStorage.getItem(FEED_STORE) || 'null');
     if (stored) onFeed(stored, false);
   } catch (e) {}
-  maybeAutoRefresh();
-  document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') maybeAutoRefresh(); });
+  // Zuerst die Abrufe des Push-Dienstes holen (kostenlos), danach entscheidet der Spar-Modus, was noch fehlt
+  var first = state.api.push.on ? pushSync().catch(function(){}) : Promise.resolve();
+  first.then(maybeAutoRefresh);
+  document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible'){ if (state.api.push.on) pushSync().catch(function(){}).then(maybeAutoRefresh); else maybeAutoRefresh(); } });
   // Solange die App offen ist, alle 5 Minuten pruefen (kostet nur, wenn der Spar-Modus etwas laden will)
-  setInterval(function(){ if (document.visibilityState !== 'hidden') maybeAutoRefresh(); }, 5 * 60000);
+  setInterval(function(){ if (document.visibilityState !== 'hidden'){ maybeAutoRefresh(); schedulePushSync(); } }, 5 * 60000);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', function(e){ if (e.data && e.data.type === 'push-open'){ showTab('slip'); pushSync().catch(function(){}); } });
   if ('serviceWorker' in navigator && location.protocol !== 'file:'){
     navigator.serviceWorker.register('sw.js').catch(function(){});
   }
@@ -2165,13 +2535,14 @@ function slipText(){
   lines.push('Trefferchance ' + pct(sl.p) + ' · Value ' + sgn(sl.ev));
   return lines.join('\n');
 }
-function copyText(txt){
-  var ok = function(){ toast('Schein kopiert'); };
+function copyText(txt, msg){
+  msg = msg || 'Schein kopiert';
+  var ok = function(){ toast(msg); };
   var fallback = function(){
     var ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
     document.body.appendChild(ta); ta.select();
     var done = false; try { done = document.execCommand('copy'); } catch (e) {}
-    document.body.removeChild(ta); toast(done ? 'Schein kopiert' : 'Kopieren nicht möglich');
+    document.body.removeChild(ta); toast(done ? msg : 'Kopieren nicht möglich');
   };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, fallback); else fallback();
 }
@@ -2208,7 +2579,7 @@ document.addEventListener('click', function(e){
       save(); closeSheet(); renderAll(); break;
     case 'close': closeSheet(); break;
     case 'settings': openSettings(); break;
-    case 'ahset': state.api.ah = t.getAttribute('data-v') === 'on'; AH_FB = state.api.ah; saveApi(); openSettings(); break;
+    case 'ahset': state.api.ah = t.getAttribute('data-v') === 'on'; AH_FB = state.api.ah; saveApi(); schedulePushSync(); openSettings(); break;
     case 'taxset-Betano': case 'taxset-bet365':
       st.tax = Object.assign({}, DEFAULT_TAX, st.tax || {}); st.tax[act.slice(7)] = t.getAttribute('data-v') === 'on'; state.recOpen = 0; save(); openSettings(); renderAll(); break;
     case 'bookset-fb': case 'bookset-bb': case 'bookset-ih':
@@ -2221,6 +2592,15 @@ document.addEventListener('click', function(e){
     case 'refresh': refreshOdds(state.api.oddsMode === 'smart' ? { smart: true } : undefined); break;
     case 'lodds': refreshOdds({ only: t.getAttribute('data-k') }); break;
     case 'omode': state.api.oddsMode = t.getAttribute('data-v'); state.api.modeSet = true; saveApi(); openSettings(); break;
+    case 'pushon': pushEnable(); break;
+    case 'pushoff': pushOff(); break;
+    case 'pushtest': pushTest(); break;
+    case 'pushguide': openPushGuide(); break;
+    case 'pushcode': if (state.workerCode) copyText(state.workerCode, 'Code kopiert'); break;
+    case 'pushlead-fb': case 'pushlead-bb': case 'pushlead-ih': state.api.push.lead[act.slice(9)] = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
+    case 'pushval': state.api.push.value = t.getAttribute('data-v') === 'on'; saveApi(); schedulePushSync(); openSettings(); break;
+    case 'pushcalls': state.api.push.calls = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
+    case 'anaby': state.anaBy = t.getAttribute('data-v'); renderCalc(); break;
     case 'logslip': openLogSlip(); break;
     case 'savebet': saveBet(); break;
     case 'settle': settleBets(); break;
@@ -2240,7 +2620,7 @@ document.addEventListener('click', function(e){
       if (act === 'osport') st.odds.sport = ov2; else if (act === 'ominp') st.odds.minP = +ov2; else st.odds.only = ov2;
       save(); renderOdds(); break;
     }
-    case 'league': { var lk = t.getAttribute('data-k'); state.api.leagues[lk] = !state.api.leagues[lk]; saveApi(); openSettings(); break; }
+    case 'league': { var lk = t.getAttribute('data-k'); state.api.leagues[lk] = !state.api.leagues[lk]; saveApi(); schedulePushSync(); openSettings(); break; }
     case 'win': state.api.windowH = +t.getAttribute('data-v'); saveApi(); openSettings(); break;
     case 'auto': state.api.autoH = +t.getAttribute('data-v'); saveApi(); openSettings(); break;
     case 'showkey': { var ki = $('s-key'); if (ki){ ki.type = ki.type === 'password' ? 'text' : 'password'; t.textContent = ki.type === 'password' ? 'Zeigen' : 'Verbergen'; } break; }
@@ -2255,8 +2635,11 @@ document.addEventListener('input', function(e){
   if (id === 's-bank'){ var b = parseNum(e.target.value); if (b > 0){ state.settings.bankroll = b; save(); $('bankChip').textContent = eur(b); renderSlip(); updateCalc(); } }
   if (id === 's-key'){ state.api.key = e.target.value.trim(); state.apiError = ''; saveApi(); }
   if (id === 's-base'){ state.api.base = e.target.value.trim(); saveApi(); }
+  if (id === 's-push'){ state.api.push.url = e.target.value.trim(); saveApi(); }
   if (id === 's-edge'){ var d = parseNum(e.target.value); if (d >= 0 && d <= 50){ state.settings.minEdge = d / 100; save(); renderSlip(); renderGames(); updateCalc(); } }
 });
+document.addEventListener('pointerdown', function(e){ if (e.target && e.target.closest && e.target.closest('#anaChart')) anaTip(e); });
+document.addEventListener('pointermove', function(e){ if (e.buttons && e.target && e.target.closest && e.target.closest('#anaChart')) anaTip(e); });
 document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && !$('overlay').hidden) closeSheet(); });
 
 renderAll();
