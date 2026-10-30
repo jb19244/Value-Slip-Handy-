@@ -307,8 +307,11 @@ function isHalfLine(line){
 }
 function fmtLine(line){ return String(line).replace('.', ','); }
 // Handicap-Linie mit Vorzeichen: -5.5 -> "−5,5", 1.5 -> "+1,5"
-function fmtHc(line){ return (line > 0 ? '+' : '−') + fmtLine(Math.abs(line)); }
+function fmtHc(line){ return line === 0 ? '0' : (line > 0 ? '+' : '−') + fmtLine(Math.abs(line)); }
 function isHcLine(line){ return typeof line === 'number' && isHalfLine(Math.abs(line)); }
+// Asiatisches Handicap (Fussball): Viertel-, halbe und ganze Linien bis +-5
+function isAhLine(line){ return typeof line === 'number' && isFinite(line) && Math.abs(line) <= 5 && Math.abs(line * 4 - Math.round(line * 4)) < 1e-9; }
+function hcLineOk(sport, line){ return (sport || 'fb') === 'fb' ? isAhLine(line) : isHcLine(line); }
 
 var MARKETS = { res: 'Ergebnis', dc: 'Doppelte Chance', ou: 'Über/Unter', hc: 'Handicap', x: 'Weitere Märkte' };
 
@@ -414,12 +417,14 @@ function selectionsFor(m, method){
   var sport = m.sport && SPORTS[m.sport] ? m.sport : 'fb';
   var sp = SPORTS[sport];
   var prov = m.bookName || 'Betano';
+  // Wettsteuer des Anbieters: Anteil der Auszahlung, der bei dir ankommt (Betano: 0,947; bet365: 1)
+  var tf = m.taxF > 0 && m.taxF <= 1 ? m.taxF : 1;
   var base = { mid: m.id, game: m.home + ' – ' + m.away, league: m.league, lkey: m.lkey || '', kickoff: m.kickoff || null, sport: sport, sample: !!m.sample, prov: prov };
   var ref = m.ref || {}, book = m.book || {};
   var push = function(market, key, label, p, b, line){
     var tag = market + '.' + key;
     var src = (m.ovf && m.ovf[tag]) ? prov : ((m.bsrc && m.bsrc[tag]) || prov);
-    out.push(Object.assign({}, base, { market: market, key: key, label: label, p: p, fairOdds: 1 / p, book: b, ev: p * b - 1, src: src, line: line == null ? null : line }));
+    out.push(Object.assign({}, base, { market: market, key: key, label: label, p: p, fairOdds: 1 / p, book: b, tf: tf, evRaw: p * b - 1, ev: p * b * tf - 1, src: src, line: line == null ? null : line }));
   };
   // Ergebnis-Markt
   if (ref.h > 1 && ref.a > 1){
@@ -443,10 +448,13 @@ function selectionsFor(m, method){
   }
   // Handicap (Basketball, Eishockey): Linie gilt fuer das Heimteam, nur halbe Linien (kein Push)
   var hc = m.hc;
-  if (sport !== 'fb' && hc && isHcLine(hc.line) && hc.ref && hc.ref.h > 1 && hc.ref.a > 1){
+  // Fussball: asiatisches Handicap auch mit Viertel- und ganzen Linien. Dort ist die "Chance" die faire Chance ohne
+  // Rueckerstattungen (aus Pinnacle ohne Marge); Value = Quote / faire Quote - 1, wie im Markt ueblich.
+  if (hc && hcLineOk(sport, hc.line) && hc.ref && hc.ref.h > 1 && hc.ref.a > 1){
     var fh = fairProbs([hc.ref.h, hc.ref.a], method);
-    if (hc.book && hc.book.h > 1) push('hc', 'h', m.home + ' ' + fmtHc(hc.line), fh[0], hc.book.h, hc.line);
-    if (hc.book && hc.book.a > 1) push('hc', 'a', m.away + ' ' + fmtHc(-hc.line), fh[1], hc.book.a, hc.line);
+    var split = !isHalfLine(Math.abs(hc.line));
+    if (hc.book && hc.book.h > 1){ push('hc', 'h', m.home + ' ' + fmtHc(hc.line), fh[0], hc.book.h, hc.line); out[out.length - 1].split = split; }
+    if (hc.book && hc.book.a > 1){ push('hc', 'a', m.away + ' ' + fmtHc(-hc.line), fh[1], hc.book.a, hc.line); out[out.length - 1].split = split; }
   }
   // Ueber/Unter-Markt
   var ou = m.ou;
@@ -566,13 +574,16 @@ function slipGrowth(p, o, st){
 }
 function legSig(l){ return l.mid + '|' + l.market + '|' + l.key; }
 // Alle 2er- und 3er-Kombis aus den Kandidaten durchgehen; score(p, odds) bewertet, keep(p, odds) filtert.
-function enumCombos(legs, score, keep, poolSize){
+// score(p, effektive Quote); keep(p, Quote); minEv: Mindest-Value des ganzen Scheins nach Steuer
+function enumCombos(legs, score, keep, poolSize, minEv){
   var n = legs.length, pool = [], worst = -Infinity;
   function add(ls, p, o){
     if (!keep(p, o)) return;
-    var sc = score(p, o);
+    var tf = ls[0].tf || 1;
+    if (minEv != null && p * o * tf - 1 < minEv - 1e-12) return;
+    var sc = score(p, o * tf);
     if (pool.length >= poolSize && sc <= worst) return;
-    pool.push({ legs: ls, odds: o, p: p, ev: p * o - 1, score: sc });
+    pool.push({ legs: ls, odds: o, eff: o * (ls[0].tf || 1), p: p, ev: p * o * (ls[0].tf || 1) - 1, score: sc });
     if (pool.length > poolSize * 2){ pool.sort(cmpSlip); pool.length = poolSize; worst = pool[poolSize - 1].score; }
   }
   for (var i = 0; i < n; i++){
@@ -609,22 +620,27 @@ function bestBets(matches, st){
   var all = [];
   matches.forEach(function(m){ selectionsFor(m, st.devig).forEach(function(x){ if (passes(x, st) && x.book >= RULE.minLeg) all.push(x); }); });
   var minEdge = st.minEdge == null ? 0.02 : st.minEdge;
+  // Einzeltipp: Value nach Steuer. In Kombis zieht der Anbieter die Steuer nur einmal ab, daher gilt dort:
+  // jeder Tipp mit Value vor Steuer UND der ganze Schein mit Value nach Steuer.
   var value = all.filter(function(x){ return x.ev >= minEdge; });
-  value.sort(function(a, b){ return slipGrowth(b.p, b.book, st) - slipGrowth(a.p, a.book, st) || b.p - a.p; });
-  var capped = value.length > RULE.maxCands;
-  var vc = value.slice(0, RULE.maxCands);
-  var pool = enumCombos(vc, function(p, o){ return slipGrowth(p, o, st); }, function(p, o){ return o >= RULE.minSlip - 1e-9; }, RULE.pool);
+  var comboLegs = all.filter(function(x){ return (x.evRaw != null ? x.evRaw : x.ev) >= minEdge && !x.split; });
+  value.sort(function(a, b){ return b.ev - a.ev || b.p - a.p; });
+  comboLegs.sort(function(a, b){ return slipGrowth(b.p, b.book, st) - slipGrowth(a.p, a.book, st) || b.p - a.p; });
+  var capped = comboLegs.length > RULE.maxCands;
+  var vc = comboLegs.slice(0, RULE.maxCands);
+  var pool = enumCombos(vc, function(p, o){ return slipGrowth(p, o, st); }, function(p, o){ return o >= RULE.minSlip - 1e-9; }, RULE.pool, minEdge);
   var slips = diverse(pool, RULE.show);
   // Hohe Trefferchance: sichere Tipps mit kleinem, aber nie negativem Value; Scheine, die schon oben stehen, nicht doppelt
-  var sure = all.filter(function(x){ return x.p >= SAFE.minP && x.ev >= SAFE.minEv - 1e-12; });
+  var sure = all.filter(function(x){ return x.p >= SAFE.minP && (x.evRaw != null ? x.evRaw : x.ev) >= SAFE.minEv - 1e-12 && !x.split; });
+  var sureSingles = all.filter(function(x){ return x.p >= SAFE.minP && x.ev >= SAFE.minEv - 1e-12; });
   sure.sort(function(a, b){ return (b.p - a.p) || (b.ev - a.ev); });
   var sigOf = function(sl){ return sl.legs.map(legSig).sort().join(','); };
   var taken = {}; slips.forEach(function(sl){ taken[sigOf(sl)] = true; });
-  var spool = enumCombos(sure.slice(0, RULE.maxCands), function(p, o){ return p + (p * o - 1) * 1e-6; }, function(p, o){ return o >= RULE.minSlip - 1e-9; }, RULE.pool)
+  var spool = enumCombos(sure.slice(0, RULE.maxCands), function(p, o){ return p + (p * o - 1) * 1e-6; }, function(p, o){ return o >= RULE.minSlip - 1e-9; }, RULE.pool, SAFE.minEv)
     .filter(function(sl){ return !taken[sigOf(sl)]; });
   var safeSlips = diverse(spool, SAFE.show);
   var singles = value.slice().sort(function(a, b){ return b.ev - a.ev; });
-  var safeSingles = sure.filter(function(x){ return x.p >= SAFE.singleMinP && x.ev < minEdge; });
+  var safeSingles = sureSingles.filter(function(x){ return x.p >= SAFE.singleMinP && x.ev < minEdge; }).sort(function(a, b){ return (b.p - a.p) || (b.ev - a.ev); });
   return { slips: slips, safeSlips: safeSlips, singles: singles, safeSingles: safeSingles, capped: capped, valueLegs: value.length, sureLegs: sure.length };
 }
 
@@ -664,7 +680,7 @@ function normalizeFeed(raw){
       dc = { hx: feedOdd(r.dc.hx), xa: feedOdd(r.dc.xa), ha: feedOdd(r.dc.ha) };
     }
     var hc = null;
-    if (sport !== 'fb' && r.hc && typeof r.hc === 'object' && isHcLine(r.hc.line)){
+    if (r.hc && typeof r.hc === 'object' && hcLineOk(sport, r.hc.line)){
       var hr = r.hc.ref || {}, hb = r.hc.book || {};
       var href = { h: feedOdd(hr.h), a: feedOdd(hr.a) };
       if (href.h && href.a) hc = { line: r.hc.line, ref: href, book: { h: feedOdd(hb.h), a: feedOdd(hb.a) } };
@@ -736,7 +752,7 @@ function fairOddsFor(m, method){
       out.dc = { hx: 1 / (f[0] + f[1]), xa: 1 / (f[1] + f[2]), ha: 1 / (f[0] + f[2]) };
     }
   }
-  if (m.hc && isHcLine(m.hc.line) && m.hc.ref && m.hc.ref.h > 1 && m.hc.ref.a > 1){
+  if (m.hc && hcLineOk(m.sport, m.hc.line) && m.hc.ref && m.hc.ref.h > 1 && m.hc.ref.a > 1){
     var hf = fairProbs([m.hc.ref.h, m.hc.ref.a], method);
     out.hc = { h: 1 / hf[0], a: 1 / hf[1] };
   }
@@ -775,7 +791,16 @@ function settleLeg(l, hs, as){
       w = k === 'h' ? d > 0 : (k === 'a' ? d < 0 : d === 0); break;
     case 'dc': w = k === 'hx' ? d >= 0 : (k === 'xa' ? d <= 0 : d !== 0); break;
     case 'ou': if (!isHalfLine(l.line)) return null; w = k === 'o' ? t > l.line : t < l.line; break;
-    case 'hc': if (!isHcLine(l.line)) return null; w = k === 'h' ? hs + l.line > as : as - l.line > hs; break;
+    case 'hc': {
+      if (!(isHcLine(l.line) || isAhLine(l.line))) return null;
+      // Marge aus Sicht des Tipps; Viertel-Linien = je halber Einsatz auf die beiden Nachbarlinien
+      var base2 = k === 'h' ? d : -d, L2 = k === 'h' ? l.line : -l.line;
+      var q = Math.abs(L2 * 4 - Math.round(L2 * 4)) < 1e-9 && Math.abs((L2 * 2) - Math.round(L2 * 2)) > 1e-9;
+      var one = function(L){ var mm = base2 + L; return mm > 0 ? 1 : (mm < 0 ? -1 : 0); };
+      if (!q){ var r1 = one(L2); return r1 > 0 ? 'won' : (r1 < 0 ? 'lost' : 'void'); }
+      var a1 = one(L2 - 0.25), a2 = one(L2 + 0.25), sum = a1 + a2;
+      return sum === 2 ? 'won' : (sum === -2 ? 'lost' : (sum === 1 ? 'halfwon' : (sum === -1 ? 'halflost' : 'void')));
+    }
     case 'x': {
       var mo = /^([ou])(\d)(\d)$/.exec(k);
       if (mo){ var L = +(mo[2] + '.' + mo[3]); w = mo[1] === 'o' ? t > L : t < L; break; }
@@ -789,18 +814,26 @@ function settleLeg(l, hs, as){
   }
   return w ? 'won' : 'lost';
 }
+// Zustaende je Tipp: open, won, lost, void (Einsatz zurueck), halfwon, halflost (Viertel-Linien)
 function slipResult(legStates){
   if (legStates.some(function(s){ return s === 'lost'; })) return 'lost';
-  if (legStates.length && legStates.every(function(s){ return s === 'won' || s === 'void'; })) return legStates.every(function(s){ return s === 'void'; }) ? 'void' : 'won';
-  return 'open';
+  if (!legStates.length || legStates.some(function(s){ return s === 'open' || s == null; })) return 'open';
+  if (legStates.every(function(s){ return s === 'void'; })) return 'void';
+  if (legStates.some(function(s){ return s === 'halfwon' || s === 'halflost'; })) return 'part';
+  return 'won';
 }
+function legFactor(l){ return l.state === 'won' ? l.book : (l.state === 'void' ? 1 : (l.state === 'halfwon' ? (l.book + 1) / 2 : (l.state === 'halflost' ? 0.5 : 0))); }
 // Auszahlung eines Scheins: stornierte Tipps zaehlen mit Quote 1
+// Wettsteuer (z. B. Betano) wird von der Auszahlung eines gewonnenen Scheins abgezogen, nicht von Rueckerstattungen
 function slipPayout(bet){
   if (bet.status === 'lost') return 0;
   if (bet.status === 'void') return bet.stake;
-  if (bet.status !== 'won') return null;
-  var o = bet.legs.reduce(function(a, l){ return a * (l.state === 'void' ? 1 : l.book); }, 1);
-  return bet.stake * o;
+  if (bet.status !== 'won' && bet.status !== 'part') return null;
+  // Gesamtquote, wie du sie eingetragen hast; Tipps mit Rueckerstattung oder halbem Ergebnis anteilig herausrechnen
+  var o = bet.odds > 1 ? bet.odds : bet.legs.reduce(function(a, l){ return a * l.book; }, 1);
+  bet.legs.forEach(function(l){ if (l.state !== 'won' && l.book > 1) o *= legFactor(l) / l.book; });
+  var tf = bet.tax > 0 && bet.tax <= 1 ? bet.tax : 1;
+  return bet.stake * o * (o > 1 ? tf : 1);
 }
 
 function kellyFull(p, o){ return o > 1 ? (p * o - 1) / (o - 1) : 0; }
@@ -845,7 +878,9 @@ var LEAGUES = [
   { key: 'icehockey_liiga', name: 'Liiga (Finnland)', sport: 'ih', on: false }
 ];
 function leagueByKey(k){ return LEAGUES.filter(function(l){ return l.key === k; })[0] || null; }
-function marketsFor(sport){ return sport === 'fb' ? ['h2h', 'totals'] : ['h2h', 'spreads', 'totals']; }
+// Asiatisches Handicap im Fussball: 1 Abruf mehr je Liga (in den Einstellungen abschaltbar)
+var AH_FB = true;
+function marketsFor(sport){ return sport === 'fb' ? (AH_FB ? ['h2h', 'totals', 'spreads'] : ['h2h', 'totals']) : ['h2h', 'spreads', 'totals']; }
 // Kosten pro Laden: Anzahl Maerkte je Liga (bis 10 Buchmacher zaehlen wie 1 Region)
 function costFor(leagues){ return leagues.reduce(function(a, l){ return a + marketsFor(l.sport).length; }, 0); }
 function isoNoMs(ms){ return new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z'); }
@@ -895,10 +930,10 @@ function convTotals(mk){
   if (!o || !u || !priceOk(o.price) || !priceOk(u.price) || o.point !== u.point || !isHalfLine(o.point)) return null;
   return { line: o.point, o: o.price, u: u.price };
 }
-function convSpreads(mk, ev){
+function convSpreads(mk, ev, sport){
   var h = findOutcome(mk, ev.home_team), a = findOutcome(mk, ev.away_team);
   if (!h || !a || !priceOk(h.price) || !priceOk(a.price) || typeof h.point !== 'number' || typeof a.point !== 'number') return null;
-  if (Math.abs(h.point + a.point) > 1e-9 || !isHcLine(h.point)) return null;
+  if (Math.abs(h.point + a.point) > 1e-9 || !hcLineOk(sport || 'bb', h.point)) return null;
   return { line: h.point, h: h.price, a: a.price };
 }
 // Erster Referenz-Buchmacher (Pinnacle vor Betfair), dessen Markt vollstaendig und gueltig ist
@@ -946,14 +981,14 @@ function convertEvents(events, league, nowMs){
     var sport = league.sport;
     var r = refMarket(ev, 'h2h', function(mk){ return convH2h(mk, ev, sport); });
     var t = refMarket(ev, 'totals', convTotals);
-    var s = sport === 'fb' ? null : refMarket(ev, 'spreads', function(mk){ return convSpreads(mk, ev); });
+    var s = refMarket(ev, 'spreads', function(mk){ return convSpreads(mk, ev, sport); });
     if (!r && !t && !s) return;
     var used = [r, t, s].filter(Boolean).map(function(x){ return BOOK_NAMES[x.book]; });
     used = used.filter(function(x, i){ return used.indexOf(x) === i; });
     var none = { best: {}, src: {} };
     var dr = r ? deMarket(ev, 'h2h', function(mk){ return convH2h(mk, ev, sport); }, r.v.d == null ? ['h', 'a'] : ['h', 'd', 'a'], null, r.v.d == null) : none;
     var dt = t ? deMarket(ev, 'totals', convTotals, ['o', 'u'], t.v.line) : none;
-    var ds = s ? deMarket(ev, 'spreads', function(mk){ return convSpreads(mk, ev); }, ['h', 'a'], s.v.line) : none;
+    var ds = s ? deMarket(ev, 'spreads', function(mk){ return convSpreads(mk, ev, sport); }, ['h', 'a'], s.v.line) : none;
     var bsrc = {};
     Object.keys(dr.src).forEach(function(k){ bsrc['res.' + k] = dr.src[k]; });
     Object.keys(dt.src).forEach(function(k){ bsrc['ou.' + k] = dt.src[k]; });
@@ -1111,6 +1146,7 @@ try {
   // Umstellung auf Pinnacle + Betano: alte Quoten (Tipico/Winamax, Boerse) sofort ersetzen statt erst nach 12 Std
   if (state.api.bookVer !== BOOK_VER){ state.api.lf = {}; state.api.lastFetch = 0; state.api.lastSchedule = 0; state.api.lastAttempt = 0; state.api.bookVer = BOOK_VER; try { localStorage.setItem(API_KEY_STORE, JSON.stringify(state.api)); } catch (e2) {} }
 } catch (e) {}
+AH_FB = state.api.ah !== false;
 function saveApi(){ try { localStorage.setItem(API_KEY_STORE, JSON.stringify(state.api)); } catch (e) {} }
 function todayKey(){ return berlinDateOf(Date.now()); }
 function berlinDateOf(ms){ try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(new Date(ms)); } catch (e) { return new Date(ms).toISOString().slice(0, 10); } }
@@ -1128,16 +1164,21 @@ function apiReady(){ return !!(String(state.api.key || '').trim() || String(stat
 function selectedLeagues(){ return LEAGUES.filter(function(l){ return state.api.leagues[l.key]; }); }
 
 // Dein Anbieter je Sportart (Betano oder bet365)
+// Wettsteuer je Anbieter: Betano zieht 5,3 % von der Auszahlung ab (abschaltbar), bet365 uebernimmt sie selbst
+var TAX_RATE = 0.053;
+var DEFAULT_TAX = { Betano: true, bet365: false };
+function taxOn(book){ var t = state.settings.tax || {}; return book in t ? !!t[book] : !!DEFAULT_TAX[book]; }
+function taxFor(book){ return taxOn(book) ? 1 - TAX_RATE : 1; }
 function bookFor(sport){ var b = (state.settings.books || {})[sport || 'fb']; return BOOKS.indexOf(b) >= 0 ? b : DEFAULT_BOOKS[sport || 'fb'] || 'Betano'; }
 function booksLine(){ var b = state.settings.books || {}; return 'Fußball ' + bookFor('fb') + ', Basketball ' + bookFor('bb') + ', Eishockey ' + bookFor('ih'); }
 function feedMatches(){
   if (!state.feed) return [];
-  return state.feed.matches.map(function(m){ return Object.assign(applyOverride(m, state.ov[m.id]), { bookName: bookFor(m.sport) }); });
+  return state.feed.matches.map(function(m){ var bk = bookFor(m.sport); return Object.assign(applyOverride(m, state.ov[m.id]), { bookName: bk, taxF: taxFor(bk) }); });
 }
 function hasFeed(){ return !!(state.feed && state.feed.matches.length); }
 function viewMatches(){
   var own = hasFeed() ? state.matches.filter(function(m){ return !m.sample; }) : state.matches;
-  return feedMatches().concat(own.map(function(m){ return Object.assign({}, m, { bookName: bookFor(m.sport) }); }));
+  return feedMatches().concat(own.map(function(m){ var bk = bookFor(m.sport); return Object.assign({}, m, { bookName: bk, taxF: taxFor(bk) }); }));
 }
 function activeMatches(){
   var now = Date.now();
@@ -1180,21 +1221,23 @@ function recommendations(active, st){
   return { recs: recs, approx: r.capped, singlesValue: r.singles, singlesHit: r.safeSingles, valueLegs: r.valueLegs };
 }
 function ticketHtml(rec, st){
-  var sl = rec.slip, stake = stakeFor(sl.p, sl.odds, st.bankroll, st.kelly);
+  var sl = rec.slip, eff = sl.eff || sl.odds, stake = stakeFor(sl.p, eff, st.bankroll, st.kelly);
+  var taxed = eff < sl.odds - 1e-9;
   return '<article class="card ticket rec open">' +
     '<div class="t-head"><span class="rtitle"><b>' + esc(rec.title) + '</b><small>' + esc(rec.sub) + '</small></span>' +
     '<span class="label">' + sl.legs.length + (sl.legs.length === 1 ? ' Tipp' : 'er-Kombi') + '</span></div>' +
-    '<div class="t-odds"><b>' + f2(sl.odds) + '</b><span class="muted small">Gesamtquote</span></div>' +
+    '<div class="t-odds"><b>' + f2(sl.odds) + '</b><span class="muted small">Gesamtquote' + (taxed ? ' · nach Steuer ' + f2(eff) : '') + '</span></div>' +
     '<dl class="stats">' +
       '<div><dt>Trefferchance</dt><dd>' + pct(sl.p) + '</dd></div>' +
       '<div><dt>Erwarteter Wert</dt><dd class="' + (sl.ev >= 0 ? 'good' : 'bad') + '">' + sgn(sl.ev) + '</dd></div>' +
       '<div><dt>Empfohlener Einsatz</dt><dd>' + (stake > 0 ? eur(stake) : '–') + '</dd></div>' +
-      '<div><dt>Auszahlung bei Treffer</dt><dd>' + (stake > 0 ? eur(stake * sl.odds) : '–') + '</dd></div>' +
+      '<div><dt>Auszahlung bei Treffer</dt><dd>' + (stake > 0 ? eur(stake * eff) : '–') + '</dd></div>' +
     '</dl>' +
     (sl.ev < 0 ? '<p class="neg">Kein Value: Pro 10 € Einsatz verlierst du im Schnitt ' + eur(-sl.ev * 10) + '. Kelly empfiehlt deshalb keinen Einsatz.</p>' : '') +
+    (taxed ? '<p class="hint" style="margin:8px 0 0">' + esc(sl.legs[0].prov) + ' zieht ' + pct(TAX_RATE, 1) + ' Wettsteuer von der Auszahlung ab. Ist in Wert, Einsatz und Auszahlung eingerechnet.</p>' : '') +
     (rec.safe ? '<p class="estnote">Hohe Trefferchance, aber nur kleiner Value: auf Dauer etwa ' + sgn(sl.ev) + ' pro Einsatz. Der empfohlene Einsatz ist deshalb klein.</p>' : '') +
     '<div class="sep"></div>' +
-    '<ol class="legs">' + sl.legs.map(legRow).join('') + '</ol>' +
+    '<ol class="legs">' + sl.legs.map(function(l){ return legRow(l, sl.legs.length > 1); }).join('') + '</ol>' +
     '<div class="t-foot"><button class="btn ghost block" data-act="copy">Kopieren</button><button class="btn block" data-act="logslip">Gespielt: ins Tagebuch</button></div>' +
     '</article>';
 }
@@ -1281,10 +1324,13 @@ function feedStatus(active){
   return h;
 }
 function pickName(l){ return l.market === 'res' && l.key !== 'd' ? l.label + ' siegt' : l.label; }
-function legRow(l){
+// In einer Kombi zeigt jeder Tipp seinen Value vor Steuer (die Steuer zieht der Anbieter einmal vom ganzen Schein ab)
+function sameBookCombo(l){ return l.evRaw != null; }
+function legRow(l, inCombo){
   return '<li class="leg"><div class="pick">' + esc(pickName(l)) + '</div><div class="game">' + esc(l.game) + ' · ' + SPORTS[l.sport].name + ' · ' + MARKETS[l.market] + '</div>' +
     '<div class="fair">Chance ' + pct(l.p) + (l.model ? ' (Modell)' : '') + ' · fair ' + f2(l.fairOdds) + (l.src ? ' · Quote ' + esc(l.src) : '') + '</div>' +
-    '<div class="q"><b>' + (l.est ? '≈' : '') + f2(l.book) + '</b>' + edgePill(l.ev, state.settings.minEdge) + '</div></li>';
+    (l.split ? '<div class="fair">Viertel- oder ganze Linie: Teilgewinn oder Einsatz zurück möglich, nur als Einzelwette</div>' : '') +
+    '<div class="q"><b>' + (l.est ? '≈' : '') + f2(l.book) + '</b>' + edgePill(inCombo === true && sameBookCombo(l) ? l.evRaw : l.ev, state.settings.minEdge) + '</div></li>';
 }
 function stepper(key, label, val){
   return '<div class="stepper"><span class="label">' + label + '</span><div class="ctl">' +
@@ -1300,7 +1346,7 @@ function refLineHtml(m, now){
   var r = m.ref || {}, parts = [];
   if (r.h > 1 && r.a > 1) parts.push((r.d > 1 ? [r.h, r.d, r.a] : [r.h, r.a]).map(f2).join(' · '));
   if (m.ou && m.ou.ref) parts.push((m.sport === 'fb' ? 'Ü/U ' : 'Ü/U ') + fmtLine(m.ou.line) + ': ' + f2(m.ou.ref.o) + ' · ' + f2(m.ou.ref.u));
-  if (m.hc && m.hc.ref) parts.push('HC ' + fmtHc(m.hc.line) + ': ' + f2(m.hc.ref.h) + ' · ' + f2(m.hc.ref.a));
+  if (m.hc && m.hc.ref) parts.push(((m.sport || 'fb') === 'fb' ? 'AH ' : 'HC ') + fmtHc(m.hc.line) + ': ' + f2(m.hc.ref.h) + ' · ' + f2(m.hc.ref.a));
   var at = m.refAt || m.oddsAt;
   var age = at ? Math.max(0, Math.round((now - at) / 60000)) : null;
   var when = at ? ' · Stand ' + esc(berlinTime(new Date(at))) + (age != null && age >= 60 ? ' (vor ' + (age >= 120 ? Math.floor(age / 60) + ' Std.' : '1 Std.') + ')' : '') : '';
@@ -1312,10 +1358,11 @@ function gameCard(m, now){
   var sels = selectionsFor(m, st.devig);
   var fair = fairOddsFor(m, st.devig);
   var by = {}; sels.forEach(function(s){ by[s.market + s.key] = s; });
+  var tfm = taxFor(bookFor(m.sport));
   var cell = function(s, name, bo, fo){
     var pr = fo > 1 ? '<span class="pr">' + Math.round(100 / fo) + ' %</span>' : '';
     if (!s){
-      var em = bo > 1 ? 'ohne Ref.' : (fo > 1 ? 'ab ' + f2(fo * (1 + st.minEdge)) : '');
+      var em = bo > 1 ? 'ohne Ref.' : (fo > 1 ? 'ab ' + f2(Math.ceil(fo * (1 + st.minEdge) / tfm * 100) / 100) : '');
       return '<div class="cell' + (bo > 1 ? '' : ' empty-c') + '"><small>' + name + pr + '</small><b>' + (bo > 1 ? f2(bo) : '–') + '</b><em>' + em + '</em></div>';
     }
     var cls = s.ev >= st.minEdge ? 'good' : (s.ev < 0 ? 'bad' : '');
@@ -1337,9 +1384,9 @@ function gameCard(m, now){
     var ln = fmtLine(m.ou.line);
     rows += '<div class="g-odds">' + cell(by.ouo, 'Über ' + ln, m.ou.book && m.ou.book.o, fair.ou.o) + cell(by.ouu, 'Unter ' + ln, m.ou.book && m.ou.book.u, fair.ou.u) + '</div>';
   }
-  if (m.hc && isHcLine(m.hc.line)){
-    var hcb = m.hc.book || {};
-    rows += '<div class="g-odds">' + cell(by.hch, '1 ' + fmtHc(m.hc.line), hcb.h, fair.hc.h) + cell(by.hca, '2 ' + fmtHc(-m.hc.line), hcb.a, fair.hc.a) + '</div>';
+  if (m.hc && hcLineOk(m.sport, m.hc.line)){
+    var hcb = m.hc.book || {}, ahp = (m.sport || 'fb') === 'fb' ? 'AH ' : '';
+    rows += '<div class="g-odds">' + cell(by.hch, ahp + '1 ' + fmtHc(m.hc.line), hcb.h, fair.hc.h) + cell(by.hca, ahp + '2 ' + fmtHc(-m.hc.line), hcb.a, fair.hc.a) + '</div>';
   }
   var tag = m.sample ? ' · <b>Beispiel</b>' : (m.mine ? ' · <b>deine Quoten</b>' : (m.bookSrc ? ' · Quote ' + esc(m.bookSrc) : '')) + (m.ownRef ? ' · <b>eigene Referenz</b>' : '');
   rows = refLineHtml(m, now) + rows;
@@ -1437,7 +1484,8 @@ function openFeedEditor(id){
   var st = state.settings;
   var fair = fairOddsFor(m, st.devig);
   var vo = function(x){ return x > 1 ? x.toFixed(2).replace('.', ',') : ''; };
-  var need = function(fo){ return fo > 1 ? 'Value ab ' + f2(fo * (1 + st.minEdge)) : 'keine Referenz'; };
+  var tfe = taxFor(bookFor(m.sport));
+  var need = function(fo){ return fo > 1 ? 'Value ab ' + f2(Math.ceil(fo * (1 + st.minEdge) / tfe * 100) / 100) : 'keine Referenz'; };
   var refLine = function(r, fo){ return '<span class="refline">Ref. ' + (r > 1 ? f2(r) : '–') + ' · ' + need(fo) + '</span>'; };
   // Feld zeigt deine eigene Quote; fehlt sie, steht die aus deinen Betano-1X2-Quoten geschaetzte Quote grau darin
   var raw = (state.feed ? state.feed.matches : []).filter(function(x){ return x.id === id; })[0] || m;
@@ -1584,7 +1632,7 @@ function saveBets(){ try { localStorage.setItem(BETS_STORE, JSON.stringify(state
 function currentSlip(){ var r = state.recs || []; return r[state.recOpen] ? r[state.recOpen].slip : null; }
 function openLogSlip(){
   var sl = currentSlip(); if (!sl) return;
-  var st = state.settings, stake = stakeFor(sl.p, sl.odds, st.bankroll, st.kelly);
+  var st = state.settings, stake = stakeFor(sl.p, sl.eff || sl.odds, st.bankroll, st.kelly);
   state.logging = sl;
   openSheet('<div class="grab"></div><h2>Ins Tagebuch</h2>' +
     '<p class="sub">' + sl.legs.length + (sl.legs.length === 1 ? ' Tipp' : 'er-Kombi') + ' · Quote ' + f2(sl.odds) + ' · Chance ' + pct(sl.p) + '</p>' +
@@ -1600,7 +1648,7 @@ function saveBet(){
   if (!(stake > 0)) return fail('Trag einen Einsatz größer 0 ein.');
   if (!(odds > 1)) return fail('Die Gesamtquote muss größer als 1,00 sein.');
   var scale = Math.pow(odds / sl.odds, 1 / sl.legs.length);
-  state.bets.unshift({ id: uid(), at: Date.now(), stake: stake, odds: odds, p: sl.p, status: 'open', book: sl.legs[0].prov || 'Betano',
+  state.bets.unshift({ id: uid(), at: Date.now(), stake: stake, odds: odds, p: sl.p, status: 'open', book: sl.legs[0].prov || 'Betano', tax: sl.legs[0].tf || 1,
     legs: sl.legs.map(function(l){ return { mid: l.mid, lkey: l.lkey, sport: l.sport, game: l.game, label: pickName(l), market: l.market, key: l.key, line: l.line,
       book: Math.round(l.book * scale * 1000) / 1000, p: l.p, fair: l.fairOdds, close: null, kickoff: l.kickoff, state: 'open' }; }) });
   saveBets(); state.logging = null; closeSheet(); renderCalc(); toast('Im Tagebuch gespeichert');
@@ -1626,9 +1674,9 @@ function journalStats(){
   var played = done.filter(function(b){ return b.status !== 'void'; });
   var stake = 0, ret = 0, wins = 0, exp = 0, clv = [];
   played.forEach(function(b){
-    var pay = b.status === 'won' ? b.stake * b.odds : 0;
+    var pay = slipPayout(b) || 0;
     stake += b.stake; ret += pay; if (b.status === 'won') wins++;
-    exp += b.stake * (b.p * b.odds - 1);
+    exp += b.stake * (b.p * b.odds * (b.tax > 0 && b.tax <= 1 ? b.tax : 1) - 1);
   });
   state.bets.forEach(function(b){ b.legs.forEach(function(l){ if (l.close > 1) clv.push(l.book / l.close - 1); }); });
   return { n: done.length, open: state.bets.length - done.length, stake: stake, profit: ret - stake, roi: stake ? (ret - stake) / stake : 0, hit: played.length ? wins / played.length : 0, exp: exp,
@@ -1693,7 +1741,7 @@ function renderCalc(){
       '</div>';
     J += '<div class="bets">' + state.bets.slice(0, 100).map(function(b){
       var cls = b.status === 'won' ? 'good' : (b.status === 'lost' ? 'bad' : '');
-      var lbl = { open: 'Offen', won: 'Gewonnen', lost: 'Verloren', void: 'Storniert' }[b.status];
+      var lbl = { open: 'Offen', won: 'Gewonnen', lost: 'Verloren', void: 'Storniert', part: 'Teilweise' }[b.status];
       return '<div class="card bet"><div class="row"><span class="label">' + new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit' }).format(new Date(b.at)) + ' · ' + eur(b.stake) + ' @ ' + f2(b.odds) + (b.book ? ' · ' + esc(b.book) : '') + '</span><span class="pill ' + cls + '">' + lbl + '</span></div>' +
         '<ul class="blegs">' + b.legs.map(function(l, i){
           var lc = l.state === 'won' ? 'good' : (l.state === 'lost' ? 'bad' : '');
@@ -1871,7 +1919,9 @@ function openSettings(){
     '<div class="fields">' + field('s-bank', 'Bankroll in €', String(st.bankroll).replace('.', ','), 'o') + field('s-edge', 'Mindest-Value in %', String(Math.round(st.minEdge * 1000) / 10).replace('.', ','), 'o') + '</div>' +
     '<div class="group"><div class="label">Dein Anbieter je Sportart</div>' +
       ['fb', 'bb', 'ih'].map(function(sp){ return '<span class="label sub">' + SPORTS[sp].name + '</span>' + seg('bookset-' + sp, BOOKS.map(function(b){ return [b, b]; }), bookFor(sp), null, 'sm'); }).join('') +
-      '<p class="hint" style="margin:0">Deine Quoten trägst du von diesem Anbieter ein. Eine Kombi besteht immer nur aus Tipps eines Anbieters, weil du sie dort als einen Schein setzt.</p></div>' +
+      '<p class="hint" style="margin:0">Deine Quoten trägst du von diesem Anbieter ein. Eine Kombi besteht immer nur aus Tipps eines Anbieters, weil du sie dort als einen Schein setzt.</p>' +
+      BOOKS.map(function(b){ return '<span class="label sub">' + b + ' zieht ' + pct(TAX_RATE, 1) + ' Wettsteuer von der Auszahlung ab</span>' + seg('taxset-' + b, [['on', 'Ja'], ['off', 'Nein']], taxOn(b) ? 'on' : 'off', null, 'sm'); }).join('') +
+      '<p class="hint" style="margin:0">Steht in deinem Wettschein beim Anbieter eine Steuer-Zeile, stell „Ja“ ein. Die App rechnet dann mit der Quote nach Steuer. Bei einer Kombi zieht der Anbieter die Steuer nur einmal ab.</p></div>' +
     '<div class="group"><div class="label">Einsatz nach Kelly</div>' + seg('kelly', [[0.25, '¼ Kelly'], [0.5, '½ Kelly'], [1, 'Voll']], st.kelly) +
     '<p class="hint" style="margin:0">Ein Viertel schwankt am wenigsten und ist für Schätzfehler der sicherste Start.</p></div>' +
     '<div class="group"><div class="label">Marge entfernen</div>' + seg('devig', [['power', 'Potenz'], ['prop', 'Proportional']], st.devig) +
@@ -1899,6 +1949,8 @@ function apiSettings(){
     '<div class="field wide"><label for="s-key">API-Schlüssel</label><div class="keyrow"><input id="s-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(a.key) + '" placeholder="Schlüssel von the-odds-api.com"><button class="btn ghost sm" data-act="showkey" type="button">Zeigen</button></div></div>' +
     '<p class="hint" style="margin:0">Bleibt nur auf diesem Gerät gespeichert.</p>' +
     '<div class="field wide"><label for="s-base">Zwischendienst (nur falls nötig)</label><input id="s-base" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(a.base) + '" placeholder="https://….workers.dev"></div>' +
+    '<span class="label">Asiatisches Handicap (Fußball)</span>' + seg('ahset', [['on', 'Laden'], ['off', 'Aus']], a.ah === false ? 'off' : 'on', null, 'sm') +
+    '<p class="hint" style="margin:0">Lädt die Pinnacle-Linie fürs asiatische Handicap mit. Kostet 1 Abruf mehr je Fußball-Liga (3 statt 2).</p>' +
     '<span class="label">Zeitraum</span>' + seg('win', [[12, '12 Std'], [24, '24 Std'], [48, '48 Std']], a.windowH, null, 'sm') +
     '<span class="label">Quoten laden</span>' + seg('omode', [['smart', 'Spar-Modus'], ['auto', 'Immer alle'], ['manual', 'Per Knopf']], a.oddsMode || 'smart', null, 'sm') +
     '<p class="hint" style="margin:0">' + ({
@@ -2156,6 +2208,9 @@ document.addEventListener('click', function(e){
       save(); closeSheet(); renderAll(); break;
     case 'close': closeSheet(); break;
     case 'settings': openSettings(); break;
+    case 'ahset': state.api.ah = t.getAttribute('data-v') === 'on'; AH_FB = state.api.ah; saveApi(); openSettings(); break;
+    case 'taxset-Betano': case 'taxset-bet365':
+      st.tax = Object.assign({}, DEFAULT_TAX, st.tax || {}); st.tax[act.slice(7)] = t.getAttribute('data-v') === 'on'; state.recOpen = 0; save(); openSettings(); renderAll(); break;
     case 'bookset-fb': case 'bookset-bb': case 'bookset-ih':
       st.books = Object.assign({}, DEFAULT_BOOKS, st.books || {}); st.books[act.slice(8)] = t.getAttribute('data-v'); state.recOpen = 0; save(); openSettings(); renderAll(); break;
     case 'kelly': st.kelly = +t.getAttribute('data-v'); save(); openSettings(); renderAll(); break;
