@@ -33,4 +33,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           [ -f dienst/status.json ] || exit 0
           git add dienst/status.json
+          [ -f dienst/diag.json ] && git add dienst/diag.json || true
           git diff --cached --quiet || (git commit -m "Push-Dienst: Status [skip ci]" && git pull --rebase -q && git push)

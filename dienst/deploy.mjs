@@ -96,10 +96,36 @@ export function findToken(env) {
   const shaped = keys.filter((k) => typeof all[k] === 'string' && /^[A-Za-z0-9_-]{35,80}$/.test(all[k].trim()));
   return shaped.length === 1 ? all[shaped[0]].trim() : '';
 }
+// Kurzbericht aus dem Push-Speicher (ohne Schluessel, Abo oder eingetragene Quoten): hilft bei der Fehlersuche
+export async function diag({ token, fetchFn = fetch }) {
+  const H = { Authorization: 'Bearer ' + token };
+  const get = async (path) => { const r = await fetchFn(API + path, { headers: H }); try { return await r.json(); } catch (e) { return null; } };
+  const acc = await get('/accounts?per_page=50'); const id = acc && acc.result && acc.result[0] && acc.result[0].id;
+  if (!id) return { ok: false };
+  const kvs = await get('/accounts/' + id + '/storage/kv/namespaces?per_page=100');
+  const ns = kvs && (kvs.result || []).find((n) => n.title === NAME);
+  if (!ns) return { ok: false };
+  const val = async (k) => { const r = await fetchFn(API + '/accounts/' + id + '/storage/kv/namespaces/' + ns.id + '/values/' + k, { headers: H }); if (!r.ok) return null; try { return JSON.parse(await r.text()); } catch (e) { return null; } };
+  const user = (await val('user')) || {}, st = (await val('state')) || {};
+  const leagues = {};
+  (user.games || []).forEach((g) => {
+    const l = leagues[g.lkey] || (leagues[g.lkey] = { games: 0, withOdds: 0, lastOdds: 0, next: null });
+    l.games++; if (g.ref && g.ref.h > 1) { l.withOdds++; l.lastOdds = Math.max(l.lastOdds, g.oddsAt || 0); }
+    const ko = Date.parse(g.kickoff); if (!l.next || ko < l.next) l.next = ko;
+  });
+  Object.values(leagues).forEach((l) => { l.lastOdds = l.lastOdds ? new Date(l.lastOdds).toISOString() : null; l.next = l.next ? new Date(l.next).toISOString() : null; });
+  const cfg = Object.assign({}, user.cfg || {}); delete cfg.prov;
+  return { ok: true, at: new Date().toISOString(), synced: !!user.games, subscribed: !!(user.sub && user.sub.endpoint), cfg, books: user.cfg && user.cfg.prov,
+    quotaApp: user.quota || null, quotaWorker: st.quota || null, spent: st.spent || null, opSpent: st.opSpent || null,
+    op: user.op ? { tours: Object.keys(user.op.tours || {}), remaining: user.op.remaining, calls: user.op.calls } : null,
+    autoMatched: Object.keys(user.auto || {}).length, ownOdds: Object.keys(user.ov || {}).length, openLegs: (user.legs || []).length,
+    leagues, log: (st.log || []).slice(-15).map((x) => ({ at: new Date(x.at).toISOString(), t: x.t })) };
+}
 if (process.argv[1] && process.argv[1].endsWith('deploy.mjs')) {
   const code = readFileSync(new URL('worker.js', DIR), 'utf8');
   const st = await deploy({ token: findToken(process.env), owner: process.env.GITHUB_REPOSITORY_OWNER, code });
   writeFileSync(new URL('status.json', DIR), JSON.stringify(st, null, 2) + '\n');
+  try { if (st.ok) writeFileSync(new URL('diag.json', DIR), JSON.stringify(await diag({ token: findToken(process.env) }), null, 2) + '\n'); } catch (e) { console.log('diag', e.message); }
   console.log(JSON.stringify(st));
   if (!st.ok) process.exitCode = 1;
 }
