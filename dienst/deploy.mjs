@@ -87,7 +87,7 @@ export async function deploy({ token, owner, code, fetchFn = fetch, sleep = (ms)
 function parse(j) { try { const o = JSON.parse(j || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } }
 function names(j) { return Object.keys(parse(j)).filter((k) => k.toLowerCase() !== 'github_token'); }
 export function findToken(env) {
-  for (const k of ['CLOUDFLARE_API_TOKEN', 'CF_API_TOKEN', 'CLOUDFLARE_TOKEN', 'CLOUDFLARE_API_TOKEN_VAR']) if (env[k] && env[k].trim()) return env[k].trim();
+  for (const k of ['CLOUDFLARE_API_TOKEN', 'CF_API_TOKEN', 'CLOUDFLARE_TOKEN', 'CLOUDFLARE_API_TOKEN_VAR', 'CLOUFLARE_API_TOKEN', 'CLOUFLARE_API_KEY']) if (env[k] && env[k].trim()) return env[k].trim();
   const all = Object.assign({}, parse(env.ALL_VARS), parse(env.ALL_SECRETS));
   delete all.github_token; delete all.GITHUB_TOKEN;
   const keys = Object.keys(all);
