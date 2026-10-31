@@ -1,0 +1,174 @@
+{
+  "ok": true,
+  "at": "2026-10-31T14:23:17.592Z",
+  "synced": true,
+  "subscribed": true,
+  "cfg": {
+    "lead": {
+      "fb": 55,
+      "bb": 25,
+      "ih": 45
+    },
+    "mode": "smart",
+    "value": true,
+    "calls": 10,
+    "minEdge": 0.005,
+    "devig": "power",
+    "btTf": 0.947,
+    "ah": false,
+    "windowH": 12
+  },
+  "books": {
+    "fb": {
+      "book": "bet365",
+      "tf": 1
+    },
+    "bb": {
+      "book": "bet365",
+      "tf": 1
+    },
+    "ih": {
+      "book": "bet365",
+      "tf": 1
+    }
+  },
+  "quotaApp": {
+    "remaining": 207,
+    "used": 293,
+    "at": 1793455600745
+  },
+  "quotaWorker": {
+    "remaining": 226,
+    "used": 274,
+    "at": 1793450139017
+  },
+  "spent": {
+    "day": "2026-10-31",
+    "n": 10
+  },
+  "opSpent": {
+    "day": "2026-10-31",
+    "n": 3
+  },
+  "op": {
+    "tours": [
+      "soccer_germany_bundesliga",
+      "soccer_germany_bundesliga2",
+      "soccer_epl",
+      "soccer_spain_la_liga",
+      "soccer_italy_serie_a",
+      "soccer_france_ligue_one",
+      "soccer_uefa_champs_league",
+      "soccer_germany_dfb_pokal",
+      "soccer_fa_cup",
+      "soccer_england_efl_cup",
+      "soccer_spain_copa_del_rey",
+      "soccer_italy_coppa_italia",
+      "soccer_france_coupe_de_france",
+      "soccer_uefa_europa_league",
+      "soccer_uefa_europa_conference_league",
+      "basketball_nba",
+      "basketball_euroleague",
+      "icehockey_nhl",
+      "icehockey_sweden_hockey_league",
+      "icehockey_liiga"
+    ],
+    "remaining": 230,
+    "calls": 3
+  },
+  "autoMatched": 12,
+  "ownOdds": 6,
+  "openLegs": 0,
+  "leagues": {
+    "soccer_germany_bundesliga": {
+      "games": 6,
+      "withOdds": 6,
+      "lastOdds": "2026-10-31T14:06:39.699Z",
+      "next": "2026-10-31T14:30:00.000Z"
+    },
+    "soccer_epl": {
+      "games": 7,
+      "withOdds": 0,
+      "lastOdds": null,
+      "next": "2026-10-31T15:00:00.000Z"
+    },
+    "soccer_spain_la_liga": {
+      "games": 3,
+      "withOdds": 0,
+      "lastOdds": null,
+      "next": "2026-10-31T15:15:00.000Z"
+    },
+    "soccer_italy_serie_a": {
+      "games": 2,
+      "withOdds": 0,
+      "lastOdds": null,
+      "next": "2026-10-31T17:00:00.000Z"
+    },
+    "icehockey_nhl": {
+      "games": 9,
+      "withOdds": 0,
+      "lastOdds": null,
+      "next": "2026-10-31T17:10:00.000Z"
+    },
+    "basketball_nba": {
+      "games": 7,
+      "withOdds": 0,
+      "lastOdds": null,
+      "next": "2026-10-31T19:10:00.000Z"
+    },
+    "soccer_germany_bundesliga2": {
+      "games": 1,
+      "withOdds": 0,
+      "lastOdds": null,
+      "next": "2026-10-31T19:30:00.000Z"
+    },
+    "soccer_france_ligue_one": {
+      "games": 1,
+      "withOdds": 0,
+      "lastOdds": null,
+      "next": "2026-10-31T19:45:00.000Z"
+    }
+  },
+  "log": [
+    {
+      "at": "2026-10-31T11:05:39.017Z",
+      "t": "⏱ Anpfiff in 54 Min"
+    },
+    {
+      "at": "2026-10-31T11:35:39.017Z",
+      "t": "⏱ Anpfiff in 54 Min"
+    },
+    {
+      "at": "2026-10-31T11:40:39.017Z",
+      "t": "💰 Value bei bet365: 3 Tipps"
+    },
+    {
+      "at": "2026-10-31T12:05:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Levante – Atlético Madrid"
+    },
+    {
+      "at": "2026-10-31T13:05:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Bologna – Monza"
+    },
+    {
+      "at": "2026-10-31T13:35:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Augsburg – SC Freiburg, Bayer Leverkusen – VfB Stuttgart"
+    },
+    {
+      "at": "2026-10-31T13:55:39.017Z",
+      "t": "💰 Value bei bet365: 1 Tipp"
+    },
+    {
+      "at": "2026-10-31T14:05:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Bournemouth – Leeds United, Brentford – Nottingham Forest"
+    },
+    {
+      "at": "2026-10-31T14:10:39.017Z",
+      "t": "💰 Value bei bet365: 1 Tipp"
+    },
+    {
+      "at": "2026-10-31T14:20:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Rayo Vallecano – Celta Vigo"
+    }
+  ]
+}
