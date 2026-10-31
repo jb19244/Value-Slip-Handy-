@@ -1465,7 +1465,7 @@ var API_KEY_STORE = 'valueslip.api', FEED_STORE = 'valueslip.feed';
 // Weitere Maerkte werden aus den Pinnacle-Quoten berechnet (kein eigener Abruf mehr); alte Zusatzdaten verwerfen
 // Fruehere Zusatzdaten (weitere Maerkte je Spiel) werden nicht mehr gebraucht
 try { localStorage.removeItem('valueslip.extras'); } catch (e) {}
-var PUSH_DEFAULTS = { url: '', token: '', on: false, active: false, lead: { fb: 55, bb: 25, ih: 45 }, value: true, calls: 6, opCalls: 3, opSeen: 0, since: 0, log: [], lastSync: 0, err: '', ver: '' };
+var PUSH_DEFAULTS = { url: '', token: '', on: false, active: false, lead: { fb: 55, bb: 25, ih: 45 }, mode: 'smart', value: true, calls: 10, opCalls: 3, opSeen: 0, since: 0, log: [], lastSync: 0, err: '', ver: '' };
 var OP_DEFAULTS = { key: '', setup: null, limit: null, count: null, countAt: 0, spent: null, err: '', via: '', info: null, lastFetch: 0, lastTry: 0 };
 var API_DEFAULTS = { key: '', base: '', windowH: 24, autoH: 6, oddsMode: 'smart', modeSet: false, leagues: {}, lastFetch: 0, lastAttempt: 0, lastSchedule: 0, quota: null, spent: null, interest: {}, push: PUSH_DEFAULTS, op: OP_DEFAULTS };
 LEAGUES.forEach(function(l){ API_DEFAULTS.leagues[l.key] = l.on; });
@@ -1482,6 +1482,7 @@ try {
     var rp = rawApi.push && typeof rawApi.push === 'object' ? rawApi.push : {};
     state.api.op = Object.assign({}, OP_DEFAULTS, rawApi.op && typeof rawApi.op === 'object' ? rawApi.op : {});
     state.api.push = Object.assign({}, PUSH_DEFAULTS, rp, { lead: Object.assign({}, PUSH_DEFAULTS.lead, rp.lead || {}), log: Array.isArray(rp.log) ? rp.log : [] });
+    if ([0, 5, 10, 15].indexOf(state.api.push.calls) < 0) state.api.push.calls = 10;
   }
   // Umstellung auf Pinnacle + Betano: alte Quoten (Tipico/Winamax, Boerse) sofort ersetzen statt erst nach 12 Std
   if (state.api.bookVer !== BOOK_VER){ state.api.lf = {}; state.api.lastFetch = 0; state.api.lastSchedule = 0; state.api.lastAttempt = 0; state.api.bookVer = BOOK_VER; try { localStorage.setItem(API_KEY_STORE, JSON.stringify(state.api)); } catch (e2) {} }
@@ -2814,7 +2815,7 @@ function opSettings(){
 // Push-Benachrichtigungen ueber den eigenen Push-Dienst (Cloudflare Worker, Code unter dienst/worker.js)
 // Die App schickt dem Dienst: Spiele mit Pinnacle-Quoten, deine eingetragenen Quoten, offene Tipps und Einstellungen.
 // Der Dienst erinnert vor Anpfiff, meldet Value und holt die Schlussquote. Seine Abrufe holt sich die App beim naechsten Oeffnen.
-var PUSH_VER = 'ee1da03eee';
+var PUSH_VER = 'd7ffbac230';
 var PUSH_LEADS = {
   fb: [[0, 'Aus'], [30, '30 Min'], [55, '55 Min'], [90, '90 Min']],
   bb: [[0, 'Aus'], [25, '25 Min'], [45, '45 Min'], [90, '90 Min']],
@@ -2829,7 +2830,7 @@ function bytesB64u(buf){ var b = new Uint8Array(buf), s2 = ''; for (var i = 0; i
 function pushCfg(){
   var p = state.api.push, prov = {};
   ['fb', 'bb', 'ih'].forEach(function(sp){ var b = bookFor(sp); prov[sp] = { book: b, tf: taxFor(b) }; });
-  return { lead: p.lead, prov: prov, value: p.value !== false, calls: p.calls, minEdge: state.settings.minEdge, devig: state.settings.devig, ah: AH_FB, windowH: state.api.windowH };
+  return { lead: p.lead, prov: prov, mode: p.mode === 'always' ? 'always' : 'smart', value: p.value !== false, calls: p.calls, minEdge: state.settings.minEdge, devig: state.settings.devig, ah: AH_FB, windowH: state.api.windowH };
 }
 function pushPayload(sub){
   var now = Date.now(), sel = {}, ids = {}, ov = {}, legs = [];
@@ -3016,13 +3017,15 @@ function pushSettings(){
     (old ? '<p class="hint" style="margin:0"><b>Neue Version des Push-Dienstes:</b> ' + (ds && ds.ok ? 'GitHub spielt sie automatisch ein, das dauert ein paar Minuten.' : 'Kopier den Code neu und ersetze ihn bei Cloudflare (Anleitung, „Von Hand“).') + '</p>' : '') +
     (on ? '<div class="actions"><button class="btn ghost" data-act="pushtest">Test senden</button><button class="btn ghost" data-act="pushoff">Ausschalten</button></div>'
         : '<button class="btn block" data-act="pushon">Benachrichtigungen einschalten</button>') +
-    '<span class="label">Erinnerung vor Anpfiff</span>' +
+    '<span class="label">Wann melden</span>' + seg('pushmode', [['smart', 'Nur wenn es sich lohnt'], ['always', 'Vor jedem Anpfiff']], p.mode === 'always' ? 'always' : 'smart', null, 'sm') +
+    '<p class="hint" style="margin:0">' + (p.mode === 'always' ? 'Du bekommst vor jedem Anpfiff eine Erinnerung, dazu Value und starke Quotenbewegungen.' : 'Der Dienst beobachtet die Spiele vor Anpfiff und meldet sich nur, wenn sich ein Blick lohnt: <b>💰 Value</b> bei bet365 (automatisch) oder bei deinen Quoten, oder <b>📈 Pinnacle bewegt sich</b> deutlich (mindestens 3 Prozentpunkte Chance). Dahinter steckt meist eine News, und bet365/Betano ziehen oft erst später nach.') + '</p>' +
+    '<span class="label">Beobachten ab</span>' +
     ['fb', 'bb', 'ih'].map(function(sp){ return '<span class="label sub">' + SPORTS[sp].name + '</span>' + seg('pushlead-' + sp, PUSH_LEADS[sp], p.lead[sp], null, 'sm'); }).join('') +
-    '<p class="hint" style="margin:0">Dann ist das Fenster für Value am besten: <b>Fußball 55 Min:</b> Die Aufstellungen kommen etwa 60 Min vor Anpfiff. <b>Basketball 25 Min:</b> Die Startformationen stehen 30 Min vor Tip-off. <b>Eishockey 45 Min:</b> Die Startgoalies sind meist bestätigt. Pinnacle preist solche News in Minuten ein, bet365 und Betano oft erst später. Mehrere Spiele kommen in einer Nachricht.</p>' +
+    '<p class="hint" style="margin:0">Der Dienst schaut ab 30 Min vor dieser Zeit alle 20 Min auf die Quoten, bis kurz vor Anpfiff. Zur gewählten Zeit ist das Fenster für Value am besten: <b>Fußball 55 Min:</b> Die Aufstellungen kommen etwa 60 Min vor Anpfiff. <b>Basketball 25 Min:</b> Die Startformationen stehen 30 Min vor Tip-off. <b>Eishockey 45 Min:</b> Die Startgoalies sind meist bestätigt. Pinnacle preist solche News in Minuten ein, bet365 und Betano oft erst später. Mehrere Spiele kommen in einer Nachricht.</p>' +
     '<span class="label">Value-Alarm</span>' + seg('pushval', [['on', 'An'], ['off', 'Aus']], p.value !== false ? 'on' : 'off', null, 'sm') +
     '<p class="hint" style="margin:0">Hast du für ein Spiel Quoten eingetragen, holt der Dienst zur Erinnerung frische Pinnacle-Quoten und meldet, wenn deine Quote jetzt Value hat (gleiche Regeln wie in der App, mit Wettsteuer).</p>' +
-    '<span class="label">Abrufe für Push pro Tag</span>' + seg('pushcalls', [[0, '0'], [3, '3'], [6, '6'], [10, '10']], p.calls, null, 'sm') +
-    '<p class="hint" style="margin:0">Für frische Pinnacle-Quoten zur Erinnerung (nur wenn die Quoten der App älter als 30 Min sind). Die Schlussquote deiner offenen Wetten kommt immer dazu: 1–2 Abrufe je Liga kurz vor Anpfiff. Der Spar-Modus rechnet das automatisch ein. Die Abrufe des Dienstes landen beim Öffnen kostenlos in der App.</p>' +
+    '<span class="label">Abrufe für Push pro Tag</span>' + seg('pushcalls', [[0, '0'], [5, '5'], [10, '10'], [15, '15']], p.calls, null, 'sm') +
+    '<p class="hint" style="margin:0">Pinnacle-Abrufe von The Odds API: Ein Blick zwischendurch kostet 1 Abruf (nur 1X2), der Blick zur gewählten Zeit alle Märkte (2–3). Ist das Tageslimit erreicht, schaut der Dienst nur noch mit den Quoten, die schon da sind. Die Schlussquote deiner offenen Wetten kommt immer dazu: 1–2 Abrufe je Liga kurz vor Anpfiff. Der Spar-Modus rechnet das automatisch ein. Die Abrufe des Dienstes landen beim Öffnen kostenlos in der App.</p>' +
     (opOn() ? '<span class="label">bet365-Abrufe für Push pro Tag</span>' + seg('pushopcalls', [[0, '0'], [2, '2'], [3, '3'], [5, '5']], p.opCalls, null, 'sm') +
       '<p class="hint" style="margin:0">Aus deinem OddsPapi-Kontingent: Zur Erinnerung holt der Dienst bet365 für alle fälligen Ligen mit einem Abruf und meldet Value, ohne dass du etwas einträgst. Die App plant diese Abrufe in ihrem Tagesanteil mit ein.</p>' : '') +
     (log ? '<span class="label">Zuletzt</span><ul class="plog">' + log + '</ul>' : '') +
@@ -3176,6 +3179,7 @@ document.addEventListener('click', function(e){
     case 'pushlead-fb': case 'pushlead-bb': case 'pushlead-ih': state.api.push.lead[act.slice(9)] = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
     case 'pushval': state.api.push.value = t.getAttribute('data-v') === 'on'; saveApi(); schedulePushSync(); openSettings(); break;
     case 'pushopcalls': state.api.push.opCalls = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
+    case 'pushmode': state.api.push.mode = t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
     case 'pushcalls': state.api.push.calls = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
     case 'anaby': state.anaBy = t.getAttribute('data-v'); renderCalc(); break;
     case 'logslip': openLogSlip(); break;

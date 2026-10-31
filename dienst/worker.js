@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'ee1da03eee';
+const WORKER_VER = 'd7ffbac230';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -1297,6 +1297,9 @@ const WHY = {
 const DATA_FRESH = 30 * MIN; // juenger: kein neuer Abruf fuer die Erinnerung noetig
 const CLOSE_WINDOW = 12 * MIN; // Schlussquote: Abruf in den letzten 12 Min vor Anpfiff
 const KEEP_SNAPS = 24 * 3600000;
+const WATCH_EXTRA = 30;          // Beobachtung beginnt 30 Min vor dem Vorlauf
+const WATCH_EVERY = 20 * MIN;    // je Liga hoechstens alle 20 Min ein Blick
+const MOVE_P = 0.03;             // Bewegung: faire Chance aendert sich um mindestens 3 Prozentpunkte
 
 function berlinDay(ms) {
   try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(new Date(ms)); } catch (e) { return new Date(ms).toISOString().slice(0, 10); }
@@ -1316,7 +1319,7 @@ function normCfg(c) {
     const p = c.prov && c.prov[sp];
     prov[sp] = { book: p && typeof p.book === 'string' ? p.book.slice(0, 20) : 'bet365', tf: num(p && p.tf, 0.5, 1, 1) };
   }
-  return { lead, prov, value: c.value !== false, calls: num(c.calls, 0, 50, 6), minEdge: num(c.minEdge, 0, 0.5, 0.02),
+  return { lead, prov, mode: c.mode === 'smart' ? 'smart' : 'always', value: c.value !== false, calls: num(c.calls, 0, 50, 6), minEdge: num(c.minEdge, 0, 0.5, 0.02),
     devig: c.devig === 'prop' ? 'prop' : 'power', ah: c.ah !== false, windowH: num(c.windowH, 6, 72, 24) };
 }
 function quotaOf(r) {
@@ -1421,44 +1424,68 @@ async function runCron(env, nowMs) {
     if (snap) ls.forEach((l) => { st.closeDone[l.mid] = nowMs; });
   }
 
-  // 2) Erinnerung vor Anpfiff (alle Spiele, die in diesem Durchlauf faellig werden, in einer Nachricht)
-  const due = games.filter((g) => {
-    const lead = cfg.lead[g.sport] || 0, ms = koOf(g) - nowMs;
-    return lead > 0 && isFinite(ms) && ms <= lead * MIN && ms > 3 * MIN && !st.sent[g.id];
-  });
-  if (due.length) {
+  // 2) Vor Anpfiff beobachten: Fenster von (Vorlauf + 30 Min) bis 8 Min vor Anpfiff, je Liga hoechstens alle 20 Min ein Blick.
+  //    Gemeldet wird, wenn sich ein Blick lohnt: Value (bet365 automatisch oder deine Quoten) oder Pinnacle hat sich deutlich bewegt
+  //    (dann haengen bet365/Betano oft hinterher). Modus "always": zusaetzlich die Erinnerung zum Vorlauf, auch ohne Signal.
+  st.base = st.base || {}; st.valSent = st.valSent || {}; st.chk = st.chk || {};
+  const inWin = (g) => { const lead = cfg.lead[g.sport] || 0, ms = koOf(g) - nowMs; return lead > 0 && isFinite(ms) && ms > 8 * MIN && ms <= (lead + WATCH_EXTRA) * MIN; };
+  const mainDue = (g) => { const ms = koOf(g) - nowMs; return ms <= (cfg.lead[g.sport] || 0) * MIN && ms > 3 * MIN && !st.sent[g.id]; };
+  const watch = games.filter(inWin);
+  const leaguesAll = [...new Set(watch.map((g) => g.lkey))];
+  const checkLeagues = leaguesAll.filter((k) => watch.some((g) => g.lkey === k && mainDue(g)) || nowMs - (st.chk[k] || 0) >= WATCH_EVERY);
+  if (checkLeagues.length) {
     await loadSnaps();
-    const hasOv = (g) => !!(user.ov && user.ov[g.id]);
-    const leagues = [...new Set(due.map((g) => g.lkey))].sort((a, b) =>
-      (due.some((g) => g.lkey === b && hasOv(g)) - due.some((g) => g.lkey === a && hasOv(g))) ||
-      (due.filter((g) => g.lkey === b).length - due.filter((g) => g.lkey === a).length));
-    const fresh = {};
-    for (const lkey of leagues) {
+    const hasOv = (k) => watch.some((g) => g.lkey === k && user.ov && user.ov[g.id]);
+    checkLeagues.sort((a, b) => (watch.some((g) => g.lkey === b && mainDue(g)) - watch.some((g) => g.lkey === a && mainDue(g))) || (hasOv(b) - hasOv(a)) ||
+      (watch.filter((g) => g.lkey === b).length - watch.filter((g) => g.lkey === a).length));
+    // Pinnacle: zum Vorlauf alle Maerkte, dazwischen nur 1X2 (1 Abruf) als Bewegungs-Waechter
+    for (const lkey of checkLeagues) {
       const lg = APP.leagueByKey(lkey);
       if (!lg) continue;
+      st.chk[lkey] = nowMs; dirtyState = true;
       const appAt = Math.max(0, ...games.filter((g) => g.lkey === lkey && typeof g.oddsAt === 'number').map((g) => g.oddsAt));
-      const snapAt = Math.max(0, ...snaps.filter((s) => s.lkey === lkey && s.full).map((s) => s.at));
-      if (nowMs - Math.max(appAt, snapAt) < DATA_FRESH) continue;
-      const snap = await fetchLeague(lkey, APP.marketsFor(lg.sport), nowMs, nowMs + cfg.windowH * 3600000, true, 'remind');
-      if (snap) fresh[lkey] = snap;
+      const snapAt = Math.max(0, ...snaps.filter((s) => s.lkey === lkey && s.ev).map((s) => s.at));
+      if (nowMs - Math.max(appAt, snapAt) < 15 * MIN) continue;
+      const full = watch.some((g) => g.lkey === lkey && mainDue(g));
+      await fetchLeague(lkey, full ? APP.marketsFor(lg.sport) : ['h2h'], nowMs, nowMs + cfg.windowH * 3600000, full, 'remind');
     }
-    // neueste Daten je Spiel: frischer Abruf, sonst juengster gespeicherter, sonst die Quoten aus der App
+    // neueste Pinnacle-Daten je Spiel: 1X2 aus dem juengsten Abruf, Ue/U und Handicap aus dem juengsten vollen Abruf
     const rawById = {};
     games.forEach((g) => { rawById[g.id] = g; });
-    const dueLeagues = new Set(due.map((g) => g.lkey));
-    snaps.filter((s) => s.full && dueLeagues.has(s.lkey)).sort((a, b) => a.at - b.at).forEach((s) => {
+    const wl = new Set(leaguesAll);
+    snaps.filter((s) => s.ev && wl.has(s.lkey)).sort((a, b) => a.at - b.at).forEach((s) => {
       const lg = APP.leagueByKey(s.lkey);
       if (!lg) return;
-      APP.convertEvents(s.ev, lg, s.at).forEach((m) => { const old = rawById[m.id]; if (!old || !(old.oddsAt >= m.oddsAt)) rawById[m.id] = m; });
+      APP.convertEvents(s.ev, lg, s.at).forEach((m) => {
+        const old = rawById[m.id];
+        if (old && old.oddsAt >= m.oddsAt) return;
+        rawById[m.id] = s.full || !old ? m : Object.assign({}, old, { ref: m.ref.h > 1 ? m.ref : old.ref, oddsAt: m.oddsAt, refAt: m.refAt || old.refAt });
+      });
     });
-    // bet365 automatisch (OddsPapi): ein Abruf fuer alle faelligen Ligen, gleicher Zeitpunkt wie Pinnacle
+    // bet365 automatisch (OddsPapi): bei der Erinnerung oder wenn sich Pinnacle bewegt hat
+    const moves = [];
+    watch.forEach((g) => {
+      const m = rawById[g.id];
+      if (!m || !m.ref || !(m.ref.h > 1 && m.ref.a > 1)) return;
+      const f = APP.fairOddsFor(APP.normalizeFeed({ matches: [m] }).matches[0] || {}, cfg.devig);
+      const keys = m.ref.d > 1 ? ['h', 'd', 'a'] : ['h', 'a'];
+      const now = {}; keys.forEach((k) => { now[k] = f.res[k] > 1 ? 1 / f.res[k] : null; });
+      const b0 = st.base[g.id];
+      if (!b0) { st.base[g.id] = { p: now, o: m.ref, at: m.oddsAt || nowMs }; dirtyState = true; return; }
+      if (!((m.oddsAt || 0) > (b0.at || 0))) return;
+      let best = null;
+      keys.forEach((k) => { if (now[k] != null && b0.p[k] != null) { const d = now[k] - b0.p[k]; if (Math.abs(d) >= MOVE_P && (!best || Math.abs(d) > Math.abs(best.d))) best = { k, d }; } });
+      if (best) { moves.push({ g, m, k: best.k, d: best.d, from: b0.o[best.k], to: m.ref[best.k] }); st.base[g.id] = { p: now, o: m.ref, at: m.oddsAt }; dirtyState = true; }
+    });
     const auto = Object.assign({}, user.auto || {});
     const op = user.op;
-    if (op && op.key && op.tours && op.idx) {
+    const wantOp = watch.filter((g) => mainDue(g) || moves.some((x) => x.g.id === g.id));
+    if (op && op.key && op.tours && op.idx && wantOp.length) {
       const opDay = berlinDay(nowMs);
       if (!st.opSpent || st.opSpent.day !== opDay) st.opSpent = { day: opDay, n: 0 };
-      const tids = [...dueLeagues].filter((k) => { const lg = APP.leagueByKey(k); return lg && op.tours[k] && (cfg.prov[lg.sport] || {}).book === APP.OP_BOOK; }).map((k) => op.tours[k]);
-      const haveFresh = due.every((g) => auto[g.id] && nowMs - (auto[g.id].fetched || 0) < DATA_FRESH);
+      const wantL = new Set(wantOp.map((g) => g.lkey));
+      const tids = [...wantL].filter((k) => { const lg = APP.leagueByKey(k); return lg && op.tours[k] && (cfg.prov[lg.sport] || {}).book === APP.OP_BOOK; }).map((k) => op.tours[k]);
+      const haveFresh = wantOp.every((g) => auto[g.id] && nowMs - (auto[g.id].fetched || 0) < 15 * MIN);
       const opLeft = op.remaining == null ? Infinity : op.remaining - (st.opTotal || 0) + (op.seen || 0);
       if (tids.length && !haveFresh && st.opSpent.n < (op.calls == null ? 3 : op.calls) && opLeft > 3) {
         try {
@@ -1470,46 +1497,68 @@ async function runCron(env, nowMs) {
             const tid2l = {};
             Object.keys(op.tours).forEach((k) => { tid2l[op.tours[k]] = k; });
             const parsed = APP.opParse(list, op.idx, tid2l, op.book || APP.OP_BOOK);
-            const hit = APP.opMatch(Object.values(rawById).filter((g) => dueLeagues.has(g.lkey)), parsed);
+            const hit = APP.opMatch(Object.values(rawById).filter((g) => wantL.has(g.lkey)), parsed);
             Object.keys(hit).forEach((id) => { hit[id].fetched = nowMs; auto[id] = hit[id]; });
-            if (Object.keys(hit).length) { (await loadSnaps()).push({ id: 'auto:' + nowMs, kind: 'auto', at: nowMs, auto: hit }); dirtySnaps = true; }
+            if (Object.keys(hit).length) { snaps.push({ id: 'auto:' + nowMs, kind: 'auto', at: nowMs, auto: hit }); dirtySnaps = true; }
             report.fetched.push('bet365 (' + Object.keys(hit).length + ')');
           } else logAdd('OddsPapi Fehler ' + r.status);
         } catch (e) { logAdd('OddsPapi nicht erreichbar'); }
       }
     }
-    const ms = prepMatches(due.map((g) => rawById[g.id] || g), user, cfg, auto, nowMs);
+    // Value: nur neue (oder deutlich gestiegene) Tipps melden
+    const ms = prepMatches(watch.map((g) => rawById[g.id] || g), user, cfg, auto, nowMs);
     const vals = [];
-    ms.forEach((m) => valueLegs(m, cfg).forEach((s) => vals.push({ m, s })));
+    if (cfg.value) ms.forEach((m) => valueLegs(m, cfg).forEach((s) => {
+      const key = m.id + '|' + s.market + '|' + s.key + '|' + (s.line == null ? '' : s.line);
+      const prev = st.valSent[key];
+      if (!prev || s.ev >= prev.ev + 0.02 || nowMs - prev.at > 90 * MIN) vals.push({ m, s, key });
+    }));
     vals.sort((a, b) => b.s.ev - a.s.ev);
-    const mins = Math.round((Math.min(...due.map(koOf)) - nowMs) / MIN);
-    const sports = [...new Set(due.map((g) => g.sport))];
-    const names = ms.slice(0, 3).map(shortGame).join(', ') + (ms.length > 3 ? ' (+' + (ms.length - 3) + ')' : '');
-    let msg;
-    if (cfg.value && vals.length) {
+    const main = watch.filter(mainDue);
+    let msg = null;
+    if (vals.length) {
       const top = vals[0], prov = top.m.bookName;
       const lines = vals.slice(0, 3).map((v) => v.s.label + ' @ ' + f2(v.s.book) + ' (' + pctS(v.s.ev) + ')');
       const at = top.m.refAt || top.m.oddsAt;
       const viaAuto = top.s.src === APP_AUTO_LABEL;
+      const mins = Math.round((top.m.kickoff - nowMs) / MIN);
       msg = { title: '💰 Value bei ' + prov + ': ' + vals.length + (vals.length === 1 ? ' Tipp' : ' Tipps'),
         body: lines.join('\n') + '\n' + (viaAuto ? prov + '-Quoten automatisch von ' + berlinHm(top.m.autoAt) : 'Mit deinen eingetragenen Quoten') + ', Pinnacle ' + (at ? 'von ' + berlinHm(at) : '') + '. Prüf, ob ' + prov + ' sie noch bietet. Anpfiff in ' + mins + ' Min.',
         tag: 'value', url: './' };
-    } else {
-      const one = ms.length === 1 ? fairText(ms[0], cfg) : '';
+      vals.forEach((v) => { st.valSent[v.key] = { ev: v.s.ev, at: nowMs }; });
+    } else if (moves.length) {
+      moves.sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
+      const mv = moves[0], g = mv.g, mins = Math.round((koOf(g) - nowMs) / MIN);
+      const who = mv.k === 'h' ? g.home : (mv.k === 'a' ? g.away : 'Remis');
+      const more = moves.length > 1 ? ' (+' + (moves.length - 1) + ' weitere)' : '';
+      msg = { title: '📈 Pinnacle bewegt sich: ' + shortGame(g),
+        body: who + ' ' + f2(mv.from) + ' → ' + f2(mv.to) + more + '. Meist steckt eine News dahinter (Aufstellung, Ausfall). bet365 und Betano ziehen oft erst später nach: Jetzt lohnt sich ein Blick. Anpfiff in ' + mins + ' Min.',
+        tag: 'move', url: './' };
+    } else if (main.length && cfg.mode === 'always') {
+      const mins = Math.round((Math.min(...main.map(koOf)) - nowMs) / MIN);
+      const mm = prepMatches(main.map((g) => rawById[g.id] || g), user, cfg, auto, nowMs);
+      const sports = [...new Set(main.map((g) => g.sport))];
+      const names = mm.slice(0, 3).map(shortGame).join(', ') + (mm.length > 3 ? ' (+' + (mm.length - 3) + ')' : '');
+      const one = mm.length === 1 ? fairText(mm[0], cfg) : '';
       msg = { title: '⏱ Anpfiff in ' + mins + ' Min', body: names + '\n' + (sports.length === 1 ? WHY[sports[0]] : 'Aufstellungen sind raus, bet365 und Betano ziehen oft erst später nach.') + ' Jetzt Quoten prüfen.' + (one ? '\n' + one : ''), tag: 'kickoff', url: './' };
     }
-    const r = await sendPush(env, user.sub, msg, nowMs, Math.max(60, mins * 60));
-    due.forEach((g) => { st.sent[g.id] = nowMs; });
-    dirtyState = true;
-    if (r.status === 404 || r.status === 410) { user.sub = null; dirtyUser = true; logAdd('Abo abgelaufen: Push in der App neu einschalten'); }
-    else if (r.status >= 200 && r.status < 300) { report.pushed++; logAdd(msg.title); }
-    else logAdd('Push abgelehnt (' + r.status + '): ' + r.body);
+    main.forEach((g) => { st.sent[g.id] = nowMs; });
+    if (main.length) dirtyState = true;
+    if (msg) {
+      const r = await sendPush(env, user.sub, msg, nowMs, 3600);
+      if (r.status === 404 || r.status === 410) { user.sub = null; dirtyUser = true; logAdd('Abo abgelaufen: Push in der App neu einschalten'); }
+      else if (r.status >= 200 && r.status < 300) { report.pushed++; logAdd(msg.title); }
+      else logAdd('Push abgelehnt (' + r.status + '): ' + r.body);
+    } else if (main.length) logAdd('Geprüft, nichts Lohnendes: ' + main.slice(0, 2).map(shortGame).join(', '));
   }
 
   // 3) Aufraeumen
   const old = nowMs - 2 * 86400000;
   for (const k of Object.keys(st.sent)) if (st.sent[k] < old) { delete st.sent[k]; dirtyState = true; }
   for (const k of Object.keys(st.closeDone)) if (st.closeDone[k] < old) { delete st.closeDone[k]; dirtyState = true; }
+  for (const k of Object.keys(st.base || {})) if (!(st.base[k].at > old)) { delete st.base[k]; dirtyState = true; }
+  for (const k of Object.keys(st.valSent || {})) if (st.valSent[k].at < old) { delete st.valSent[k]; dirtyState = true; }
+  for (const k of Object.keys(st.chk || {})) if (st.chk[k] < old) { delete st.chk[k]; dirtyState = true; }
   // alte Schnappschuesse aufraeumen: wenn sie ohnehin geladen sind, sonst alle 6 Stunden
   const cleanDue = !st.cleanAt || nowMs - st.cleanAt > 6 * 3600000;
   if (snaps || cleanDue) {
