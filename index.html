@@ -214,6 +214,8 @@ button.card.rec{display:flex;align-items:center;justify-content:space-between;ga
 .refl{font-size:12px;color:var(--muted);margin:2px 0 6px;font-variant-numeric:tabular-nums;line-height:1.4}
 .refl b{color:var(--fg);font-weight:600}
 .autob{font-weight:600;color:var(--accent)}
+.btl{font-size:11px;font-weight:600;color:var(--muted);margin-top:4px} input.bt{background:var(--surface)} .refline.cmp b{font-weight:700} .refline.cmp b.good{color:var(--good)}
+.bto{display:block;font-style:normal;font-size:11px;line-height:1.25;color:var(--muted);margin-top:3px;text-align:center} .bto.win{color:var(--good);font-weight:700}
 .fairb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--surface2);color:var(--fg)}
 .pinb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--good-bg);color:var(--good)}
 input.o.auto{color:var(--muted)}
@@ -1528,6 +1530,17 @@ function feedMatches(){
 }
 // bet365 automatisch nur fuer Sportarten, bei denen bet365 dein Anbieter ist
 function autoFor(m, now){ var a = state.auto[m.id]; return a && bookFor(m.sport) === OP_BOOK ? withAuto(m, a, now || Date.now(), a.fetched) : m; }
+// Eingetragene Betano-Quoten als eigener Anbieter (Kombis bleiben je Anbieter getrennt, Betano mit Wettsteuer)
+function betanoQuotes(m){
+  var bt = (state.ov[m.id] || {}).bt;
+  if (!bt || bookFor(m.sport) === 'Betano') return null;
+  var g = function(t){ return bt[t] > 1 ? bt[t] : null; };
+  var out = Object.assign({}, m, { book: { h: g('res.h'), d: g('res.d'), a: g('res.a') }, dc: m.sport === 'fb' ? { hx: g('dc.hx'), xa: g('dc.xa'), ha: g('dc.ha') } : null,
+    ou: m.ou ? Object.assign({}, m.ou, { book: bt.ouLine === m.ou.line ? { o: g('ou.o'), u: g('ou.u') } : { o: null, u: null } }) : null,
+    hc: m.hc ? Object.assign({}, m.hc, { book: bt.hcLine === m.hc.line ? { h: g('hc.h'), a: g('hc.a') } : { h: null, a: null } }) : null,
+    bsrc: {}, ovf: {}, bookName: 'Betano', taxF: taxFor('Betano'), btClone: true });
+  return out;
+}
 function hasFeed(){ return !!(state.feed && state.feed.matches.length); }
 function viewMatches(){
   var own = hasFeed() ? state.matches.filter(function(m){ return !m.sample; }) : state.matches;
@@ -1603,6 +1616,7 @@ function recCard(rec, i, st){
 function renderSlip(){
   var st = state.settings;
   var active = activeMatches();
+  active = active.concat(active.map(betanoQuotes).filter(Boolean));
   var R = recommendations(active, st);
   state.recs = R.recs;
   if (!(state.recOpen >= 0) || state.recOpen >= R.recs.length) state.recOpen = 0;
@@ -1720,14 +1734,21 @@ function gameCard(m, now){
   var fair = fairOddsFor(m, st.devig);
   var by = {}; sels.forEach(function(s){ by[s.market + s.key] = s; });
   var tfm = taxFor(bookFor(m.sport));
-  var cell = function(s, name, bo, fo){
+  var btq = betanoQuotes(m), btSel = {};
+  if (btq) selectionsFor(btq, st.devig).forEach(function(s){ btSel[s.market + '.' + s.key] = s; });
+  var btOf = function(tag){ var x = btSel[tag]; return x ? { b: x.book, tf: x.tf } : null; };
+  var cellBt = null;
+  var cell = function(s, name, bo, fo, tag){
+    cellBt = function(){ var bq = tag ? btOf(tag) : null; if (!bq || !(fo > 1)) return ''; var v = bq.b * bq.tf / fo - 1; return '<i class="bto' + (v >= st.minEdge ? ' win' : '') + '">Betano ' + f2(bq.b) + '<br>' + sgn(v) + '</i>'; };
     var pr = fo > 1 ? '<span class="pr">' + Math.round(100 / fo) + ' %</span>' : '';
     if (!s){
       var em = bo > 1 ? 'ohne Ref.' : (fo > 1 ? 'ab ' + f2(Math.ceil(fo * (1 + st.minEdge) / tfm * 100) / 100) : '');
-      return '<div class="cell' + (bo > 1 ? '' : ' empty-c') + '"><small>' + name + pr + '</small><b>' + (bo > 1 ? f2(bo) : '–') + '</b><em>' + em + '</em></div>';
+      return '<div class="cell' + (bo > 1 ? '' : ' empty-c') + '"><small>' + name + pr + '</small><b>' + (bo > 1 ? f2(bo) : '–') + '</b><em>' + em + '</em>' + (cellBt ? cellBt() : '') + '</div>';
     }
     var cls = s.ev >= st.minEdge ? 'good' : (s.ev < 0 ? 'bad' : '');
-    return '<div class="cell ' + cls + (s.est ? ' est' : '') + '"><small>' + name + pr + '</small><b>' + (s.est ? '≈' : '') + f2(s.book) + '</b><em>' + sgn(s.ev) + '</em></div>';
+    var bq = btOf(s.market + '.' + s.key), bline = '';
+    if (bq){ var bev = s.p * bq.b * bq.tf - 1, better = bq.b * bq.tf > s.book * s.tf + 0.004; bline = '<i class="bto' + (better ? ' win' : '') + '">Betano ' + f2(bq.b) + '<br>' + sgn(bev) + (better ? ' ✓' : '') + '</i>'; }
+    return '<div class="cell ' + cls + (s.est ? ' est' : '') + '"><small>' + name + pr + '</small><b>' + (s.est ? '≈' : '') + f2(s.book) + '</b><em>' + sgn(s.ev) + '</em>' + bline + '</div>';
   };
   var rows = '';
   var book = m.book || {};
@@ -1735,19 +1756,19 @@ function gameCard(m, now){
   if (hasRes){
     var keys = m.ref.d > 1 ? ['h', 'd', 'a'] : ['h', 'a'];
     var names = { h: '1', d: 'X', a: '2' };
-    rows += '<div class="g-odds">' + keys.map(function(k){ return cell(by['res' + k], names[k], book[k], fair.res[k]); }).join('') + '</div>';
+    rows += '<div class="g-odds">' + keys.map(function(k){ return cell(by['res' + k], names[k], book[k], fair.res[k], 'res.' + k); }).join('') + '</div>';
   }
   if (fair.dc.hx){
     var dcb = m.dc || {};
-    rows += '<div class="g-odds">' + cell(by.dchx, '1X', dcb.hx, fair.dc.hx) + cell(by.dcxa, 'X2', dcb.xa, fair.dc.xa) + cell(by.dcha, '12', dcb.ha, fair.dc.ha) + '</div>';
+    rows += '<div class="g-odds">' + cell(by.dchx, '1X', dcb.hx, fair.dc.hx, 'dc.hx') + cell(by.dcxa, 'X2', dcb.xa, fair.dc.xa, 'dc.xa') + cell(by.dcha, '12', dcb.ha, fair.dc.ha, 'dc.ha') + '</div>';
   }
   if (m.ou && m.ou.line > 0){
     var ln = fmtLine(m.ou.line);
-    rows += '<div class="g-odds">' + cell(by.ouo, 'Über ' + ln, m.ou.book && m.ou.book.o, fair.ou.o) + cell(by.ouu, 'Unter ' + ln, m.ou.book && m.ou.book.u, fair.ou.u) + '</div>';
+    rows += '<div class="g-odds">' + cell(by.ouo, 'Über ' + ln, m.ou.book && m.ou.book.o, fair.ou.o, 'ou.o') + cell(by.ouu, 'Unter ' + ln, m.ou.book && m.ou.book.u, fair.ou.u, 'ou.u') + '</div>';
   }
   if (m.hc && hcLineOk(m.sport, m.hc.line)){
     var hcb = m.hc.book || {}, ahp = (m.sport || 'fb') === 'fb' ? 'AH ' : '';
-    rows += '<div class="g-odds">' + cell(by.hch, ahp + '1 ' + fmtHc(m.hc.line), hcb.h, fair.hc.h) + cell(by.hca, ahp + '2 ' + fmtHc(-m.hc.line), hcb.a, fair.hc.a) + '</div>';
+    rows += '<div class="g-odds">' + cell(by.hch, ahp + '1 ' + fmtHc(m.hc.line), hcb.h, fair.hc.h, 'hc.h') + cell(by.hca, ahp + '2 ' + fmtHc(-m.hc.line), hcb.a, fair.hc.a, 'hc.a') + '</div>';
   }
   var tag = m.sample ? ' · <b>Beispiel</b>' : (m.mine ? ' · <b>deine Quoten</b>' : (m.bookSrc ? ' · Quote ' + esc(m.bookSrc) : '')) + (m.ownRef ? ' · <b>eigene Referenz</b>' : '');
   rows = refLineHtml(m, now) + rows;
@@ -1858,10 +1879,18 @@ function openFeedEditor(id){
     var bk = mk === 'res' ? raw.book : (mk === 'ou' ? raw.ou && raw.ou.book : (mk === 'hc' ? raw.hc && raw.hc.book : null));
     return bk && bk[k] > 1 ? bk[k] : null;
   };
+  // Vergleich: unter jeder bet365-Quote ein Feld fuer Betano (nur wenn bet365 dein Anbieter ist)
+  var cmpOn = bookFor(m.sport) !== 'Betano', btv = (state.ov[m.id] || {}).bt || {};
+  var btField = function(fid, tag, fo){
+    if (!cmpOn) return '';
+    var v = btv[tag] > 1 ? f2(btv[tag]) : '';
+    return '<label class="btl" for="bt-' + fid + '">Betano</label><input id="bt-' + fid + '" data-cmp="' + fid + '" data-tag="' + tag + '" data-fo="' + (fo > 1 ? fo : '') + '" type="text" inputmode="decimal" autocomplete="off" class="o bt" value="' + v + '" placeholder="–"><span class="refline cmp" id="cmp-' + fid + '"></span>';
+  };
+  state.cmpEdit = { tf365: taxFor(bookFor(m.sport)), tfBt: taxFor('Betano') };
   var oddField = function(fid, label, tag, val, r, fo){
     var au = autoOf(tag);
     var ph = au ? f2(au) : '';
-    return '<div class="field"><label for="' + fid + '">' + label + '</label>' + autoInput(fid, '', ovf[tag] ? val : null, au) + refLine(r, fo) + '</div>';
+    return '<div class="field"><label for="' + fid + '">' + label + '</label>' + autoInput(fid, '', ovf[tag] ? val : null, au) + refLine(r, fo) + btField(fid, tag, fo) + '</div>';
   };
   var three = m.fixture ? m.sport === 'fb' : m.ref.d > 1;
   var b = m.book || {};
@@ -1891,7 +1920,7 @@ function openFeedEditor(id){
     var dcb = m.dc || {};
     var dcField = function(fid, label, val, fo){
       var tg = fid.replace('-', '.'), au = rawDc[tg.split('.')[1]];
-      return '<div class="field"><label for="' + fid + '">' + label + '</label>' + autoInput(fid, '', ovf[tg] ? val : null, au) + '<span class="refline">fair ' + f2(fo) + ' · ' + need(fo) + '</span></div>';
+      return '<div class="field"><label for="' + fid + '">' + label + '</label>' + autoInput(fid, '', ovf[tg] ? val : null, au) + '<span class="refline">fair ' + f2(fo) + ' · ' + need(fo) + '</span>' + btField(fid, tg, fo) + '</div>';
     };
     h += '<div class="group"><div class="label">Doppelte Chance</div><div class="fields c3">' +
       dcField('dc-hx', '1X', dcb.hx, fair.dc.hx) + dcField('dc-xa', 'X2', dcb.xa, fair.dc.xa) + dcField('dc-ha', '12', dcb.ha, fair.dc.ha) +
@@ -1914,7 +1943,20 @@ function openFeedEditor(id){
     '<div class="actions">' + (state.ov[m.id] ? '<button class="btn danger" data-act="freset">Zurücksetzen</button>' : '') +
     '<button class="btn ghost" data-act="close">Abbrechen</button><button class="btn block" data-act="fsave">Speichern</button></div>';
   openSheet(h);
+  Array.prototype.forEach.call(document.querySelectorAll('#sheet input[data-cmp]'), function(el){ updateCmp(el.getAttribute('data-cmp')); });
 }
+// Vergleichszeile bet365 gegen Betano (beide nach Wettsteuer, Value gegen die faire Pinnacle-Quote)
+function cmpText(fid, fo){
+  var a = $(fid), b = $('bt-' + fid), ce = state.cmpEdit || { tf365: 1, tfBt: taxFor('Betano') };
+  var x365 = a ? parseNum(a.value) : NaN, xbt = b ? parseNum(b.value) : NaN;
+  if (!a || !b){ return ''; }
+  if (!(xbt > 1)) return '';
+  var e365 = x365 > 1 ? x365 * ce.tf365 : 0, ebt = xbt * ce.tfBt;
+  var val = fo > 1 ? sgn(ebt / fo - 1) : '';
+  var verdict = !(e365 > 1) ? '' : (Math.abs(ebt - e365) < 0.005 ? ' · gleich' : (ebt > e365 ? ' · <b class="good">Betano besser</b>' : ' · <b>bet365 besser</b>'));
+  return (ce.tfBt < 1 ? 'nach Steuer ' + f2(ebt) : '') + (val ? (ce.tfBt < 1 ? ' · ' : '') + 'Value ' + val : '') + verdict;
+}
+function updateCmp(fid){ var el = $('cmp-' + fid), b = $('bt-' + fid); if (el && b) el.innerHTML = cmpText(fid, parseFloat(b.getAttribute('data-fo'))); }
 function sameAsAuto(el, x){ var au = parseFloat(el.getAttribute('data-auto')); return au > 1 && Math.abs(au - x) < 0.005; }
 function saveFeedOdds(){
   var err = $('e-err');
@@ -1939,6 +1981,13 @@ function saveFeedOdds(){
     if (!(xv > 1)) return fail('Quoten müssen Zahlen größer als 1,00 sein.');
     if (xv >= 1000) return fail('Diese Quote ist zu hoch. Prüfe die Eingabe.');
     if (!sameAsAuto(xin[xi], xv)) xval[xin[xi].getAttribute('data-xkey')] = xv;
+  }
+  var btIn = document.querySelectorAll('#sheet input[data-cmp]'), bt = {}, btN = 0;
+  for (var bi = 0; bi < btIn.length; bi++){
+    var bt0 = btIn[bi].value.trim(); if (bt0 === '') continue;
+    var bx = parseNum(bt0);
+    if (!(bx > 1) || bx >= 1000) return fail('Betano-Quoten müssen Zahlen größer als 1,00 sein.');
+    bt[btIn[bi].getAttribute('data-tag')] = bx; btN++;
   }
   var fm = (state.feed ? state.feed.matches : []).filter(function(x){ return x.id === state.editing; })[0] || {};
   var am = feedMatches().filter(function(x){ return x.id === state.editing; })[0] || fm;
@@ -1966,6 +2015,8 @@ function saveFeedOdds(){
     ou: { o: val['e-bo'], u: val['e-bu'], line: am.ou ? am.ou.line : null },
     dc: { hx: val['dc-hx'], xa: val['dc-xa'], ha: val['dc-ha'] },
     hc: { h: val['hc-bh'], a: val['hc-ba'], line: am.hc ? am.hc.line : null }, x: xval, at: Date.now() };
+  if (btN){ bt.ouLine = am.ou ? am.ou.line : null; bt.hcLine = am.hc ? am.hc.line : null; state.ov[state.editing].bt = bt; }
+  else if (btIn.length === 0 && state.prevOv && state.prevOv.bt) state.ov[state.editing].bt = state.prevOv.bt;
   if (refOv) state.ov[state.editing].ref = refOv;
   if (ouRefOv){
     state.ov[state.editing].ouRef = ouRefOv;
@@ -3155,6 +3206,7 @@ document.addEventListener('click', function(e){
 
 document.addEventListener('input', function(e){
   if (e.target && e.target.classList && e.target.classList.contains('auto')) e.target.classList.remove('auto');
+  if (e.target && e.target.id && $('cmp-' + (e.target.getAttribute('data-cmp') || e.target.id))) updateCmp(e.target.getAttribute('data-cmp') || e.target.id);
   var id = e.target.id;
   var map = { 'c-book': 'book', 'c-tip': 'tip', 'c-opp': 'opp', 'c-draw': 'draw', 'c-prob': 'prob' };
   if (map[id]){ state.calc[map[id]] = e.target.value; updateCalc(); return; }
