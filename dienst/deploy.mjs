@@ -84,7 +84,6 @@ export async function deploy({ token, owner, code, fetchFn = fetch, sleep = (ms)
 }
 
 if (process.argv[1] && process.argv[1].endsWith('deploy.mjs')) {
-  if (!process.env.CLOUDFLARE_API_TOKEN) { console.log('Noch kein Secret CLOUDFLARE_API_TOKEN: nichts zu tun.'); process.exit(0); }
   const code = readFileSync(new URL('worker.js', DIR), 'utf8');
   const st = await deploy({ token: process.env.CLOUDFLARE_API_TOKEN, owner: process.env.GITHUB_REPOSITORY_OWNER, code });
   writeFileSync(new URL('status.json', DIR), JSON.stringify(st, null, 2) + '\n');
