@@ -217,6 +217,11 @@ button.card.rec{display:flex;align-items:center;justify-content:space-between;ga
 .btl{font-size:11px;font-weight:600;color:var(--muted);margin-top:4px} input.bt{background:var(--surface)} .refline.cmp b{font-weight:700} .refline.cmp b.good{color:var(--good)}
 .bto{display:block;font-style:normal;font-size:11px;line-height:1.25;color:var(--muted);margin-top:3px;text-align:center} .bto.win{color:var(--good);font-weight:700}
 .sbrow{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 0;border-bottom:1px solid var(--line)} .sbl{display:flex;flex-direction:column;gap:2px;min-width:0} .sbl small{font-size:12px;color:var(--muted);line-height:1.35} .sbst{font-family:var(--font-d);font-size:20px;font-weight:600;white-space:nowrap} .sblegs{margin:12px 0} .sbleg{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+details.info{margin:2px 0} details.info>summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);padding:4px 0;list-style:none} details.info>summary::-webkit-details-marker{display:none} details.info>summary::before{content:'ⓘ ';font-weight:700} details.info p{margin:6px 0 0}
+details.calcd{margin-top:14px} details.calcd>summary{font-size:15px;color:var(--fg)} details.calcd>summary::before{content:'＋ '} details.calcd[open]>summary::before{content:'－ '}
+details.acc{border:1px solid var(--line);border-radius:12px;background:var(--surface);margin:10px 0} details.acc>summary{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px;cursor:pointer;list-style:none;font-weight:600} details.acc>summary::-webkit-details-marker{display:none}
+details.acc>summary small{color:var(--muted);font-weight:500;font-size:12px;text-align:right} details.acc>summary::after{content:'›';font-size:20px;color:var(--muted);transform:rotate(90deg);transition:transform .15s} details.acc[open]>summary::after{transform:rotate(-90deg)}
+details.acc>.accb{padding:0 14px 14px} details.acc>.accb>.group{border:0;padding:0;margin:0;background:none} details.acc>.accb>.group>.label:first-child{display:none}
 .fairb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--surface2);color:var(--fg)}
 .pinb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--good-bg);color:var(--good)}
 input.o.auto{color:var(--muted)}
@@ -1683,6 +1688,16 @@ function recCard(rec, i, st){
     '<span class="rtitle"><b>' + esc(rec.title) + '</b><small>' + esc(rec.sub) + '</small></span>' +
     '<span class="rnums"><b>' + f2(sl.odds) + '</b><small>' + pct(sl.p, 0) + ' · ' + edgePill(sl.ev, 0) + '</small><small>' + sl.legs.length + (sl.legs.length === 1 ? ' Tipp' : ' Tipps') + '</small></span></button>';
 }
+// Aufklappbare Erklaerung (zu standardmaessig, merkt sich den Zustand)
+state.uiOpen = {};
+try { state.uiOpen = JSON.parse(localStorage.getItem('valueslip.ui') || '{}') || {}; } catch (e) {}
+function isOpen(k){ return !!(window.__vsOpenAll || state.uiOpen[k]); }
+function det(key, summary, body, cls){ return '<details class="info ' + (cls || '') + '" data-ui="' + key + '"' + (isOpen(key) ? ' open' : '') + '><summary>' + summary + '</summary>' + body + '</details>'; }
+document.addEventListener('toggle', function(e){
+  var d = e.target; if (!d || !d.getAttribute) return;
+  var k = d.getAttribute('data-ui'); if (!k) return;
+  state.uiOpen[k] = d.open; try { localStorage.setItem('valueslip.ui', JSON.stringify(state.uiOpen)); } catch (x) {}
+}, true);
 function sbLegLine(l){ return '<b>' + esc(l.book) + '</b> ' + esc(l.label) + ' @ ' + f2(l.odds); }
 function surebetCard(){
   var sbs = state.surebets || [];
@@ -1725,8 +1740,8 @@ function renderSlip(){
   var mkName = { all: 'alle Märkte', res: '1X2', dc: 'Doppelte Chance', ou: 'Über/Unter', hc: 'Handicap', x: 'weitere Märkte' }[st.market] || 'alle Märkte';
   var filt = (st.sport !== 'all' && st.sport ? sportName : '') + (st.market !== 'all' && st.market ? (st.sport !== 'all' && st.sport ? ' · ' : '') + mkName : '');
   var h = '<div class="row"><h2>Beste Wetten</h2><button class="link" data-act="tune" aria-expanded="' + !!state.tuneOpen + '">' + (state.tuneOpen ? 'Fertig' : 'Filter') + '</button></div>' +
-    '<p class="muted small rule" style="margin:0">Beste Wette: 2er- und 3er-Kombis, jeder Tipp mit mindestens ' + pct(st.minEdge, 0) + ' Value und Quote ab ' + f2(RULE.minLeg) + ', sortiert nach dem, was deine Bankroll auf Dauer am stärksten wachsen lässt. Hohe Trefferchance: jeder Tipp ab ' + pct(SAFE.minP, 0) + ' Chance und nicht im Minus, sortiert nach Trefferchance.' +
-    (filt ? ' <b>Filter: ' + esc(filt) + '</b>' : '') + '</p>';
+    (filt ? '<p class="muted small" style="margin:0"><b>Filter: ' + esc(filt) + '</b></p>' : '') +
+    det('rules', 'So wählt die App aus', '<p class="muted small rule">' + 'Beste Wette: 2er- und 3er-Kombis, jeder Tipp mit mindestens ' + pct(st.minEdge, 0) + ' Value und Quote ab ' + f2(RULE.minLeg) + ', sortiert nach dem, was deine Bankroll auf Dauer am stärksten wachsen lässt. Hohe Trefferchance: jeder Tipp ab ' + pct(SAFE.minP, 0) + ' Chance und nicht im Minus, sortiert nach Trefferchance.' + '</p>', 'small');
   if (state.tuneOpen){
     h += '<div class="card tune"><div class="filters" style="margin-top:0">' +
       '<span class="label">Sportart</span>' + seg('sportf', [['all', 'Alle'], ['fb', 'Fußball'], ['bb', 'Basketball'], ['ih', 'Eishockey']], st.sport, null, 'sm') +
@@ -1756,8 +1771,8 @@ function renderSlip(){
   var sh = R.singlesHit.slice(0, 5);
   if (sv.length) h += '<div class="card"><div class="label">Beste Einzelwetten (mit Value)</div><ol class="legs singles top">' + sv.map(legRow).join('') + '</ol></div>';
   if (sh.length) h += '<div class="card"><div class="label">Sichere Einzelwetten (ab ' + pct(SAFE.singleMinP, 0) + ' Chance, wenig Value)</div><ol class="legs singles top">' + sh.map(legRow).join('') + '</ol></div>';
-  h += '<p class="foot">Chancen aus Pinnacle-Quoten ohne Marge, weitere Fußballmärkte aus einem Torverteilungsmodell. Die App prüft jede mögliche Kombination und zeigt nur die besten Scheine; pro Spiel höchstens ein Tipp. Begonnene Spiele fließen nicht ein. Prüfe jede Quote vor dem Setzen in der Betano-App. Einsatz: ' +
-    kellyName(st.kelly) + 'Kelly, höchstens 3 % der Bankroll. Ab 18. Hilfe bei Spielproblemen: check-dein-spiel.de</p>';
+  h += det('slipfoot', 'Hinweise', '<p class="foot">Chancen aus Pinnacle-Quoten ohne Marge, weitere Fußballmärkte aus einem Torverteilungsmodell. Die App prüft jede mögliche Kombination und zeigt nur die besten Scheine; pro Spiel höchstens ein Tipp. Begonnene Spiele fließen nicht ein. Prüfe jede Quote vor dem Setzen in der Betano-App. Einsatz: ' +
+    kellyName(st.kelly) + 'Kelly, höchstens 3 % der Bankroll. Ab 18. Hilfe bei Spielproblemen: check-dein-spiel.de</p>', 'small');
   $('tab-slip').innerHTML = h;
 }
 
@@ -1900,8 +1915,7 @@ function renderGames(){
   if (hasFeed()){
     var a = feedAge();
     h += apiBar();
-    if (state.feed.notes) h += '<details class="notes"><summary>Quellen und Hinweise</summary><p>' + esc(state.feed.notes) + '</p></details>';
-    h += '<p class="muted small" style="margin:0">Vergleiche mit der App deines Anbieters (' + booksLine() + '): „ab“ ist die Quote, ab der ein Tipp deinen Mindest-Value erreicht. Liegt dein Anbieter darüber, tippe das Spiel an und trag die Quote ein.</p>';
+    h += det('gamesinfo', 'Quellen und Hinweise', '<p class="muted small" style="margin:0">Vergleiche mit der App deines Anbieters (' + booksLine() + '): „ab“ ist die Quote, ab der ein Tipp deinen Mindest-Value erreicht. Liegt dein Anbieter darüber, tippe das Spiel an und trag die Quote ein.</p>' + (state.feed.notes ? '<p class="muted small">' + esc(state.feed.notes) + '</p>' : ''), 'notes');
     var order = [], groups = {}, names = {};
     feed.forEach(function(m){ var k = m.lkey || m.league || 'Weitere'; if (!groups[k]){ groups[k] = []; order.push(k); names[k] = m.league || 'Weitere'; } groups[k].push(m); });
     var upcomingFirst = function(x, y){ return (hasStarted(x, now) - hasStarted(y, now)) || ((x.kickoff || 0) - (y.kickoff || 0)); };
@@ -1937,13 +1951,15 @@ function renderOdds(){
   });
   rows.sort(function(a, b){ return (b.p - a.p) || ((b.ev == null ? -9 : b.ev) - (a.ev == null ? -9 : a.ev)); });
   var total = rows.length; rows = rows.slice(0, 200);
-  var h = '<div class="row"><h2>Chancen</h2><span class="muted small">' + total + ' Tipps</span></div>' +
-    '<div class="card filters">' +
+  var ofTxt = ({ all: 'alle Sportarten', fb: 'Fußball', bb: 'Basketball', ih: 'Eishockey' }[of.sport] || '') + ' · ' + (of.minP > 0 ? 'ab ' + pct(of.minP, 0) : 'jede Chance') + (of.only === 'odds' ? ' · nur mit Quote' : '');
+  var h = '<div class="row"><h2>Chancen</h2><button class="link" data-act="otune">' + (state.oddsTune || window.__vsOpenAll ? 'Fertig' : 'Filter') + '</button></div>' +
+    '<p class="muted small" style="margin:0"><span class="ocount">' + total + ' Tipps</span> · ' + esc(ofTxt) + '</p>' +
+    (state.oddsTune || window.__vsOpenAll ? '<div class="card filters">' : '<div class="card filters" hidden>') +
     '<span class="label">Sportart</span>' + seg('osport', [['all', 'Alle'], ['fb', 'Fußball'], ['bb', 'Basketball'], ['ih', 'Eishockey']], of.sport, null, 'sm') +
     '<span class="label">Mindestchance</span>' + seg('ominp', [[0, 'Alle'], [0.6, '60 %'], [0.7, '70 %'], [0.8, '80 %'], [0.9, '90 %']], of.minP, null, 'sm') +
     '<span class="label">Zeigen</span>' + seg('oonly', [['all', 'Alle Tipps'], ['odds', 'Nur mit Quote']], of.only, null, 'sm') +
     '</div>' +
-    '<p class="muted small" style="margin:0">Chance laut Pinnacle ohne Marge; „Modell“ heißt aus Pinnacle 1X2 und Über/Unter berechnet und vorsichtig abgerundet. „≈“ ist eine aus deinen eingetragenen 1X2-Quoten geschätzte Quote. Hohe Chance heißt niedrige Quote und noch keinen Gewinn: entscheidend ist, ob die Quote über „fair“ liegt. Tippe an, um eine Betano-Quote einzutragen.</p>';
+    det('oddsinfo', 'Was bedeuten die Zahlen?', '<p class="muted small" style="margin:0">Chance laut Pinnacle ohne Marge; „Modell“ heißt aus Pinnacle 1X2 und Über/Unter berechnet und vorsichtig abgerundet. „≈“ ist eine aus deinen eingetragenen 1X2-Quoten geschätzte Quote. Hohe Chance heißt niedrige Quote und noch keinen Gewinn: entscheidend ist, ob die Quote über „fair“ liegt. Tippe an, um eine Betano-Quote einzutragen.</p>', 'small') ;
   if (!rows.length) h += '<div class="card empty"><h2>Keine Tipps</h2><p>' + (hasFeed() ? 'Senke die Mindestchance oder lade neue Spiele.' : 'Lade zuerst Spiele oder trag eigene ein.') + '</p></div>';
   else h += '<div class="olist">' + rows.map(function(x){
     var right = x.book > 1
@@ -2347,7 +2363,7 @@ function renderCalc(){
         '<div class="row bact"><span class="muted small">' + (b.status === 'won' ? 'Auszahlung ' + eur(b.stake * b.odds) : (b.status === 'lost' ? 'Verlust ' + eur(b.stake) : 'Chance war ' + pct(b.p))) + '</span><button class="link" data-act="delbet" data-b="' + b.id + '">' + (state.confirmBet === b.id ? 'Wirklich löschen?' : 'Löschen') + '</button></div></div>';
     }).join('') + '</div>';
   }
-  var h = J + '<h2 style="margin-top:8px">Value-Rechner</h2><div class="card">' +
+  var h = J + '<details class="info calcd" data-ui="calc"' + (isOpen('calc') ? ' open' : '') + '><summary>Value-Rechner (von Hand)</summary><div class="card">' +
     '<div class="seg" role="group" aria-label="Quelle der Chance">' +
     '<button data-act="calcmode" data-m="ref" aria-pressed="' + (c.mode === 'ref') + '">Referenzquoten</button>' +
     '<button data-act="calcmode" data-m="own" aria-pressed="' + (c.mode === 'own') + '">Eigene Chance</button></div>' +
@@ -2359,7 +2375,7 @@ function renderCalc(){
     '</div></div>' +
     (c.mode === 'ref' ? '<p class="hint">Für Über/Unter: dein Tipp ist Über oder Unter, die Gegenseite ist das jeweils andere. Remis leer lassen.</p>' : '') +
     '</div><div id="calcOut" class="card result"></div>' +
-    '<p class="foot">Referenzquoten stammen am besten von einem Buchmacher mit niedriger Marge. Die Eingaben sind Beispielwerte.</p>';
+    '<p class="foot">Referenzquoten stammen am besten von einem Buchmacher mit niedriger Marge. Die Eingaben sind Beispielwerte.</p></details>';
   $('tab-calc').innerHTML = h;
   updateCalc();
 }
@@ -2525,7 +2541,38 @@ function openSettings(){
     '<p class="hint" style="margin:0">Potenz gewichtet Außenseiter realistischer. Proportional ist die einfache Variante.</p></div>' +
     apiSettings() + opSettings() + pushSettings() +
     '<div class="actions"><button class="btn ghost block" data-act="resetsamples">Beispiele laden</button><button class="btn block" data-act="close">Fertig</button></div>');
+  accordionSettings();
   if (keepY != null) $('sheet').scrollTop = keepY;
+}
+// Einstellungen als aufklappbare Bereiche (Zustand bleibt gemerkt); die Gruppen selbst bleiben unveraendert
+var SET_TITLES = { books: 'Anbieter und Wettsteuer', kelly: 'Einsatz und Rechnung', api: 'Pinnacle-Quoten (The Odds API)', op: 'bet365 automatisch (OddsPapi)', push: 'Benachrichtigungen' };
+function setStatus(k){
+  if (k === 'books') { var bs = ['fb', 'bb', 'ih'].map(bookFor); return bs.every(function(x){ return x === bs[0]; }) ? 'überall ' + bs[0] : booksLine(); }
+  if (k === 'kelly') return kellyName(state.settings.kelly) + 'Kelly · ' + (state.settings.devig === 'prop' ? 'proportional' : 'Potenz');
+  if (k === 'api') { var q = state.api.quota; return (apiReady() ? 'verbunden' : 'kein Schlüssel') + (q && q.remaining != null ? ' · ' + Math.round(q.remaining) + ' übrig' : ''); }
+  if (k === 'op') { var o = state.api.op; return !opOn() ? 'aus' : (o.err ? 'Fehler' : (o.setup ? 'eingerichtet' + (opRemaining() != null ? ' · ' + opRemaining() + ' übrig' : '') : 'nicht eingerichtet')); }
+  if (k === 'push') { var p = state.api.push; return p.on && pushUrl() ? (p.active ? 'aktiv' : 'kein Abo') : 'aus'; }
+  return '';
+}
+function accordionSettings(){
+  var sheet = $('sheet');
+  var groups = Array.prototype.slice.call(sheet.querySelectorAll('.group'));
+  var keys = [];
+  groups.forEach(function(g){
+    if (g.parentNode !== sheet) return;
+    var k = g.id === 'opgrp' ? 'op' : (g.id === 'pushgrp' ? 'push' : (g.classList.contains('api') ? 'api' : (g.querySelector('[data-act^="bookset"]') ? 'books' : (g.querySelector('[data-act="kelly"],[data-act="devig"]') ? 'kelly' : null))));
+    if (!k) return;
+    var d = keys.indexOf(k) >= 0 ? sheet.querySelector('details[data-ui="set-' + k + '"] .accb') : null;
+    if (!d){
+      var det2 = document.createElement('details');
+      det2.className = 'acc'; det2.setAttribute('data-ui', 'set-' + k);
+      if (isOpen('set-' + k)) det2.open = true;
+      det2.innerHTML = '<summary><span>' + SET_TITLES[k] + '</span><small>' + esc(setStatus(k)) + '</small></summary><div class="accb"></div>';
+      sheet.insertBefore(det2, g);
+      d = det2.querySelector('.accb'); keys.push(k);
+    }
+    d.appendChild(g);
+  });
 }
 function budgetLine(){
   var q = state.api.quota;
@@ -3297,6 +3344,7 @@ document.addEventListener('click', function(e){
       if (state.confirmBet !== idb){ state.confirmBet = idb; renderCalc(); break; }
       state.bets = state.bets.filter(function(x){ return x.id !== idb; }); state.confirmBet = null; saveBets(); renderCalc(); break;
     }
+    case 'otune': state.oddsTune = !state.oddsTune; renderOdds(); break;
     case 'osport': case 'ominp': case 'oonly': {
       st.odds = Object.assign({ sport: 'all', minP: 0.6, only: 'all' }, st.odds || {});
       var ov2 = t.getAttribute('data-v');
