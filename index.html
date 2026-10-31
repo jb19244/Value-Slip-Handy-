@@ -213,6 +213,7 @@ button.card.rec{display:flex;align-items:center;justify-content:space-between;ga
 .rule b{color:var(--accent);font-weight:600}
 .refl{font-size:12px;color:var(--muted);margin:2px 0 6px;font-variant-numeric:tabular-nums;line-height:1.4}
 .refl b{color:var(--fg);font-weight:600}
+.autob{font-weight:600;color:var(--accent)}
 .fairb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--surface2);color:var(--fg)}
 .pinb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--good-bg);color:var(--good)}
 input.o.auto{color:var(--muted)}
@@ -1145,6 +1146,261 @@ function planSmart(infos, budgetLeft, nowMs, closeLeft){
   need.forEach(function(x){ if (x.cost <= left){ out.push(x.key); left -= x.cost; } });
   return out;
 }
+// ---------------------------------------------------------------------------------------------------------------
+// bet365 automatisch ueber OddsPapi (eigener Schluessel, eigenes Kontingent, unabhaengig von The Odds API)
+// Ein Abruf "odds-by-tournaments" liefert bet365 fuer alle gewaehlten Ligen auf einmal (alle Maerkte).
+// Zuordnung zu den Pinnacle-Spielen: gleiche Liga, gleiche Anstosszeit, Namen und vor allem aehnliche Quoten.
+// Jede automatische Quote muss zur Pinnacle-Quote passen (Plausibilitaet), sonst wird sie verworfen.
+var OP_BASE = 'https://api.oddspapi.io';
+var OP_BOOK = 'bet365';
+var AUTO_LABEL = 'bet365 auto';
+var AUTO_MAX_AGE = 2 * 3600000;   // aeltere automatische Quoten zaehlen nicht (bet365 bewegt sich staendig)
+var OP_LEAGUES = {
+  soccer_germany_bundesliga: { cat: ['germany'], names: ['bundesliga', '1 bundesliga'] },
+  soccer_germany_bundesliga2: { cat: ['germany'], names: ['2 bundesliga', 'bundesliga 2', '2nd bundesliga'] },
+  soccer_epl: { cat: ['england'], names: ['premier league'] },
+  soccer_spain_la_liga: { cat: ['spain'], names: ['laliga', 'la liga', 'primera division', 'laliga ea sports'] },
+  soccer_italy_serie_a: { cat: ['italy'], names: ['serie a'] },
+  soccer_france_ligue_one: { cat: ['france'], names: ['ligue 1', 'ligue 1 mcdonald s'] },
+  soccer_uefa_champs_league: { cat: null, names: ['uefa champions league', 'champions league'] },
+  soccer_germany_dfb_pokal: { cat: ['germany'], names: ['dfb pokal', 'dfb cup'] },
+  soccer_fa_cup: { cat: ['england'], names: ['fa cup'] },
+  soccer_england_efl_cup: { cat: ['england'], names: ['efl cup', 'league cup', 'carabao cup'] },
+  soccer_spain_copa_del_rey: { cat: ['spain'], names: ['copa del rey'] },
+  soccer_italy_coppa_italia: { cat: ['italy'], names: ['coppa italia'] },
+  soccer_france_coupe_de_france: { cat: ['france'], names: ['coupe de france'] },
+  soccer_uefa_europa_league: { cat: null, names: ['uefa europa league', 'europa league'] },
+  soccer_uefa_europa_conference_league: { cat: null, names: ['uefa conference league', 'uefa europa conference league', 'conference league'] },
+  basketball_nba: { cat: ['usa'], names: ['nba'] },
+  basketball_euroleague: { cat: null, names: ['euroleague'] },
+  icehockey_nhl: { cat: ['usa'], names: ['nhl'] },
+  icehockey_sweden_hockey_league: { cat: ['sweden'], names: ['shl'] },
+  icehockey_liiga: { cat: ['finland'], names: ['liiga'] }
+};
+function opNorm(s){
+  var t = String(s == null ? '' : s).toLowerCase();
+  try { t = t.normalize('NFD').replace(/[̀-ͯ]/g, ''); } catch (e) {}
+  return t.replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+function opUrl(base, path, params){
+  var b = String(base || '').trim().replace(/\/+$/, '');
+  return (b ? b + '/op' : OP_BASE) + path + '?' + qs(params);
+}
+// Sportarten-IDs aus /v4/sports
+function opSportIds(list){
+  var out = {};
+  (Array.isArray(list) ? list : []).forEach(function(s){
+    if (!s || typeof s.sportId !== 'number') return;
+    var n = opNorm(s.slug) + ' ' + opNorm(s.sportName);
+    if (!out.fb && /\b(soccer|football)\b/.test(n) && !/american|australian/.test(n)) out.fb = s.sportId;
+    else if (!out.bb && /\bbasketball\b/.test(n)) out.bb = s.sportId;
+    else if (!out.ih && /\b(ice hockey|icehockey|ice\-hockey)\b/.test(n.replace(/-/g, ' ')) ) out.ih = s.sportId;
+  });
+  return out;
+}
+// Ligen der App -> OddsPapi-Turnier-IDs (aus /v4/tournaments je Sportart)
+function opMapTournaments(tours, sport){
+  var out = {};
+  LEAGUES.filter(function(l){ return l.sport === sport; }).forEach(function(l){
+    var spec = OP_LEAGUES[l.key];
+    if (!spec) return;
+    var best = null, bestN = -1;
+    (Array.isArray(tours) ? tours : []).forEach(function(t){
+      if (!t || typeof t.tournamentId !== 'number') return;
+      var nm = opNorm(t.tournamentName), slug = opNorm(t.tournamentSlug), cat = opNorm(t.categoryName) + ' ' + opNorm(t.categorySlug);
+      if (spec.names.indexOf(nm) < 0 && spec.names.indexOf(slug) < 0) return;
+      if (spec.cat && !spec.cat.some(function(c){ return (' ' + cat + ' ').indexOf(' ' + c + ' ') >= 0; })) return;
+      var n = (t.upcomingFixtures || 0) + (t.futureFixtures || 0);
+      if (n > bestN){ best = t; bestN = n; }
+    });
+    if (best) out[l.key] = best.tournamentId;
+  });
+  return out;
+}
+// Maerkte aus /v4/markets -> Index je Sportart: { marketId: { kind, line, ot, out: { outcomeId: key } } }
+// kind: res3 (1X2), res2 (Sieger 2-Weg), dc, ou (Ueber/Unter), hc (Handicap; Linie = Heimteam)
+function opOutcomeKey(name){
+  var n = opNorm(name).replace(/\s+/g, '');
+  if (n === '1' || n === 'home' || /^(competitor|team|participant)1$/.test(n)) return 'h';
+  if (n === '2' || n === 'away' || /^(competitor|team|participant)2$/.test(n)) return 'a';
+  if (n === 'x' || n === 'draw') return 'd';
+  if (n === 'over') return 'o';
+  if (n === 'under') return 'u';
+  if (n === '1x' || n === 'homeordraw') return 'hx';
+  if (n === 'x2' || n === 'draworaway') return 'xa';
+  if (n === '12' || n === 'homeoraway') return 'ha';
+  return null;
+}
+function opPeriodOk(p){
+  var n = opNorm(p);
+  if (!n) return { ok: true, ot: false };
+  var ot = /\bincl|\bovertime\b|\bot\b|\bincluding\b/.test(n);
+  if (!ot && /half|quarter|period|inning|set|minute|first|second|third|1st|2nd|3rd|4th|\b1h\b|\b2h\b|\bq\d/.test(n)) return { ok: false };
+  if (ot || /^(fulltime|full time|ft|match|regular time|regulartime|regulation|game|full match|whole match)$/.test(n)) return { ok: true, ot: ot };
+  return { ok: false };
+}
+function opMarketIndex(markets, sportIds){
+  var out = { fb: {}, bb: {}, ih: {} }, bySport = {};
+  Object.keys(sportIds || {}).forEach(function(k){ bySport[sportIds[k]] = k; });
+  (Array.isArray(markets) ? markets : []).forEach(function(mk){
+    if (!mk || mk.playerProp === true) return;
+    var sp = bySport[mk.sportId];
+    if (!sp || !Array.isArray(mk.outcomes)) return;
+    var per = opPeriodOk(mk.period);
+    if (!per.ok) return;
+    var map = {}, keys = [];
+    mk.outcomes.forEach(function(o){ var k = o ? opOutcomeKey(o.outcomeName) : null; if (k && keys.indexOf(k) < 0){ map[String(o.outcomeId)] = k; keys.push(k); } });
+    if (keys.length !== mk.outcomes.length) return;
+    var set = keys.slice().sort().join(','), type = opNorm(mk.marketType) + ' ' + opNorm(mk.marketName);
+    var hcap = typeof mk.handicap === 'number' && isFinite(mk.handicap) ? mk.handicap : 0;
+    var kind = null, line = null;
+    if (/draw no bet|\bdnb\b|corner|card|booking|team total|odd even|exact|margin|race|both teams/.test(type)) return;
+    if (set === 'a,d,h' && hcap === 0 && !/handicap|spread/.test(type)) kind = 'res3';
+    else if (set === 'ha,hx,xa') kind = 'dc';
+    else if (set === 'o,u'){ kind = 'ou'; line = hcap; }
+    else if (set === 'a,h'){
+      if (/handicap|spread|asian|\bline\b|puck|run line/.test(type) && !/moneyline|money line/.test(type)){ kind = 'hc'; line = hcap; }
+      else if (hcap === 0) kind = 'res2';
+    }
+    if (!kind) return;
+    out[sp][String(mk.marketId)] = { kind: kind, line: line, ot: !!per.ot, out: map };
+  });
+  return out;
+}
+function opPrice(o){
+  if (!o || typeof o !== 'object') return null;
+  var pl = o.players && typeof o.players === 'object' ? (o.players['0'] || o.players[Object.keys(o.players)[0]]) : o;
+  if (!pl || pl.active === false) return null;
+  var p = typeof pl.price === 'number' ? pl.price : parseFloat(pl.price);
+  return isFinite(p) && p > 1 && p < 1000 ? Math.round(p * 1000) / 1000 : null;
+}
+// Antwort von odds-by-tournaments -> bet365-Quoten je Spiel
+function opParse(list, idx, tid2lkey, book){
+  var out = [];
+  (Array.isArray(list) ? list : []).forEach(function(f){
+    if (!f || f.fixtureId == null) return;
+    var lkey = tid2lkey[f.tournamentId], lg = lkey ? leagueByKey(lkey) : null;
+    if (!lg) return;
+    var ko = Date.parse(f.startTime);
+    if (!isFinite(ko)) return;
+    var bo = f.bookmakerOdds && f.bookmakerOdds[book || OP_BOOK];
+    if (!bo || bo.bookmakerIsActive === false || !bo.markets || typeof bo.markets !== 'object') return;
+    var defs = idx[lg.sport] || {}, res3 = null, res2 = {}, dc = null, ou = {}, hc = {}, at = 0;
+    Object.keys(bo.markets).forEach(function(mid){
+      var def = defs[mid], mk = bo.markets[mid];
+      if (!def || !mk || !mk.outcomes || typeof mk.outcomes !== 'object') return;
+      var v = {}, n = 0;
+      Object.keys(mk.outcomes).forEach(function(oid){
+        var k = def.out[oid], pr = k ? opPrice(mk.outcomes[oid]) : null;
+        if (!pr) return;
+        v[k] = pr; n++;
+        var pl = mk.outcomes[oid].players && mk.outcomes[oid].players['0'];
+        var ch = pl && Date.parse(pl.changedAt); if (isFinite(ch) && ch > at) at = ch;
+      });
+      if (n !== Object.keys(def.out).length) return;
+      var ot = def.ot ? 'ot' : 'ft';
+      if (def.kind === 'res3') res3 = v;
+      else if (def.kind === 'res2') res2[ot] = v;
+      else if (def.kind === 'dc') dc = v;
+      else if (def.kind === 'ou') (ou[ot] = ou[ot] || {})[String(def.line)] = v;
+      else if (def.kind === 'hc') (hc[ot] = hc[ot] || {})[String(def.line)] = v;
+    });
+    var two = lg.sport !== 'fb';
+    // Basketball/Eishockey: Maerkte inkl. Verlaengerung bevorzugen (wie Pinnacle)
+    var pick = function(o){ return two ? (o.ot || o.ft || null) : (o.ft || null); };
+    var res = two ? pick(res2) : res3;
+    if (!res && !pick(ou) && !pick(hc)) return;
+    out.push({ fid: String(f.fixtureId), lkey: lkey, sport: lg.sport, ko: ko, home: String(f.participant1Name || ''), away: String(f.participant2Name || ''),
+      res: res, dc: two ? null : dc, ou: pick(ou) || {}, hc: pick(hc) || {}, at: at });
+  });
+  return out;
+}
+var OP_STOP = ['fc', 'sc', 'sv', 'cf', 'afc', 'ac', 'as', 'ss', 'us', 'rc', 'fk', 'bk', 'vfb', 'vfl', 'tsg', 'club', 'de', 'la', 'the', 'calcio', 'cd', 'ud', 'sd', 'rcd', 'ogc', 'osc', 'stade', '1', '04', '05', '1899', '1846', '1860', '1909', '1910'];
+var OP_ALIAS = { munchen: 'munich', koln: 'cologne', monchengladbach: 'gladbach', nurnberg: 'nuremberg', hertha: 'hertha', inter: 'internazionale', internazionale: 'internazionale', man: 'manchester', utd: 'united', wolverhampton: 'wolves', spurs: 'tottenham', psg: 'paris' };
+function opTokens(s){
+  return opNorm(s).split(' ').filter(function(t){ return t && OP_STOP.indexOf(t) < 0; }).map(function(t){ return OP_ALIAS[t] || t; });
+}
+function opNameScore(a, b){
+  var x = opTokens(a), y = opTokens(b);
+  if (!x.length || !y.length) return 0;
+  var hit = 0;
+  x.forEach(function(t){ if (y.some(function(u){ return u === t || (t.length >= 4 && u.length >= 4 && (u.indexOf(t) === 0 || t.indexOf(u) === 0)); })) hit++; });
+  return hit / Math.max(x.length, y.length);
+}
+// Abstand der 1X2-/Sieger-Chancen zwischen Pinnacle und bet365 (gleiches Spiel: meist unter 0,04)
+function opOddsDist(ref, res){
+  if (!ref || !res || !(ref.h > 1 && ref.a > 1 && res.h > 1 && res.a > 1)) return null;
+  return Math.abs(1 / ref.h - 1 / res.h) + Math.abs(1 / ref.a - 1 / res.a);
+}
+// Zuordnung: raws = Spiele der App (Rohformat, mit Pinnacle), parsed = opParse-Ergebnis. Liefert { spielId: bet365-Quoten }
+function opMatch(raws, parsed){
+  var out = {}, used = {};
+  (Array.isArray(raws) ? raws : []).forEach(function(m){
+    if (!m || !m.lkey || m.fixture) return;
+    var ko = typeof m.kickoff === 'number' ? m.kickoff : Date.parse(m.kickoff);
+    if (!isFinite(ko)) return;
+    var cands = parsed.filter(function(c){ return c.lkey === m.lkey && !used[c.fid] && Math.abs(c.ko - ko) <= 15 * 60000; }).map(function(c){
+      var ns = (opNameScore(m.home, c.home) + opNameScore(m.away, c.away)) / 2, d = opOddsDist(m.ref, c.res);
+      return { c: c, ns: ns, d: d, s: ns - (d == null ? 0.3 : 4 * d) };
+    }).sort(function(a, b){ return b.s - a.s; });
+    if (!cands.length) return;
+    var top = cands[0], second = cands[1];
+    var oddsOk = top.d != null && top.d <= 0.08;
+    var namesOk = top.ns >= 0.5;
+    // ohne passende Quoten nur bei sehr klaren Namen; mit Quoten muss das zweitbeste Spiel deutlich schlechter sein
+    if (top.d != null && top.d > 0.15) return;
+    if (!(oddsOk || (namesOk && top.d == null))) return;
+    if (second && top.s - second.s < 0.25 && !(namesOk && second.ns < 0.3)) return;
+    used[top.c.fid] = true;
+    out[m.id] = { fid: top.c.fid, res: top.c.res, dc: top.c.dc, ou: top.c.ou, hc: top.c.hc, at: top.c.at };
+  });
+  return out;
+}
+function opSane(b, ref){ return b > 1 && ref > 1 && Math.abs(1 / b - 1 / ref) <= 0.08 && b / ref <= 1.35 && ref / b <= 1.35; }
+function opMargin(arr, lo, hi){ var s = arr.reduce(function(a, x){ return a + 1 / x; }, 0); return s >= lo && s <= hi; }
+// Automatische bet365-Quoten in ein Spiel (Rohformat) einsetzen; nur plausible, nur zur Pinnacle-Linie, nur frische
+function withAuto(m, a, now, at){
+  var t = a && (at || a.fetched || a.at);
+  if (!a || !m || !(t > 0) || now - t > AUTO_MAX_AGE) return m;
+  var out = Object.assign({}, m), bsrc = Object.assign({}, m.bsrc || {}), any = false;
+  var ref = m.ref || {};
+  if (a.res && ref.h > 1 && ref.a > 1){
+    var keys = ref.d > 1 ? ['h', 'd', 'a'] : ['h', 'a'];
+    if (keys.every(function(k){ return a.res[k] > 1; }) && opMargin(keys.map(function(k){ return a.res[k]; }), 1.0, keys.length === 3 ? 1.2 : 1.15)){
+      var bk = Object.assign({}, m.book || {});
+      keys.forEach(function(k){ if (opSane(a.res[k], ref[k])){ bk[k] = a.res[k]; bsrc['res.' + k] = AUTO_LABEL; any = true; } });
+      out.book = bk;
+      if (m.sport === 'fb' && a.dc && ref.d > 1){
+        var fp = fairProbs([ref.h, ref.d, ref.a], 'power'), pdc = { hx: fp[0] + fp[1], xa: fp[1] + fp[2], ha: fp[0] + fp[2] }, dc = Object.assign({}, m.dc || {});
+        DC_KEYS.forEach(function(k){ var b = a.dc[k]; if (b > 1 && Math.abs(1 / b - pdc[k]) <= 0.08 && 1 / b >= pdc[k] - 0.06){ dc[k] = b; bsrc['dc.' + k] = AUTO_LABEL; any = true; } });
+        out.dc = dc;
+      }
+    }
+  }
+  if (m.ou && m.ou.ref && a.ou){
+    var o = a.ou[String(m.ou.line)];
+    if (o && o.o > 1 && o.u > 1 && opMargin([o.o, o.u], 1.0, 1.15) && opSane(o.o, m.ou.ref.o) && opSane(o.u, m.ou.ref.u)){
+      out.ou = Object.assign({}, m.ou, { book: { o: o.o, u: o.u } }); bsrc['ou.o'] = bsrc['ou.u'] = AUTO_LABEL; any = true;
+    }
+  }
+  if (m.hc && m.hc.ref && a.hc){
+    var hh = a.hc[String(m.hc.line)];
+    if (hh && hh.h > 1 && hh.a > 1 && opMargin([hh.h, hh.a], 1.0, 1.15) && opSane(hh.h, m.hc.ref.h) && opSane(hh.a, m.hc.ref.a)){
+      out.hc = Object.assign({}, m.hc, { book: { h: hh.h, a: hh.a } }); bsrc['hc.h'] = bsrc['hc.a'] = AUTO_LABEL; any = true;
+    }
+  }
+  if (!any) return m;
+  out.bsrc = bsrc; out.autoAt = t;
+  return out;
+}
+// Tagesanteil am OddsPapi-Kontingent (nach Wochentag gewichtet); reservePerDay bleibt fuer den Push-Dienst
+function opBudget(remaining, spentToday, nowMs, reservePerDay){
+  if (remaining == null || !isFinite(remaining)) return null;
+  var spent = Math.max(0, spentToday || 0), start = remaining + spent;
+  var res = Math.max(0, reservePerDay || 0) * daysLeftInMonth(nowMs);
+  var allow = Math.floor(Math.max(0, start - 3 - res) * DAY_WEIGHT[berlinDay(nowMs)] / weightLeft(nowMs));
+  return { allow: allow, spent: spent, left: Math.max(0, Math.min(allow - spent, remaining - 3)) };
+}
 // END API
 
 var f2 = function(n){ return n.toFixed(2).replace('.', ','); };
@@ -1206,8 +1462,9 @@ var API_KEY_STORE = 'valueslip.api', FEED_STORE = 'valueslip.feed';
 // Weitere Maerkte werden aus den Pinnacle-Quoten berechnet (kein eigener Abruf mehr); alte Zusatzdaten verwerfen
 // Fruehere Zusatzdaten (weitere Maerkte je Spiel) werden nicht mehr gebraucht
 try { localStorage.removeItem('valueslip.extras'); } catch (e) {}
-var PUSH_DEFAULTS = { url: '', token: '', on: false, active: false, lead: { fb: 55, bb: 25, ih: 45 }, value: true, calls: 6, since: 0, log: [], lastSync: 0, err: '', ver: '' };
-var API_DEFAULTS = { key: '', base: '', windowH: 24, autoH: 6, oddsMode: 'smart', modeSet: false, leagues: {}, lastFetch: 0, lastAttempt: 0, lastSchedule: 0, quota: null, spent: null, interest: {}, push: PUSH_DEFAULTS };
+var PUSH_DEFAULTS = { url: '', token: '', on: false, active: false, lead: { fb: 55, bb: 25, ih: 45 }, value: true, calls: 6, opCalls: 3, opSeen: 0, since: 0, log: [], lastSync: 0, err: '', ver: '' };
+var OP_DEFAULTS = { key: '', setup: null, limit: null, count: null, countAt: 0, spent: null, err: '', via: '', info: null, lastFetch: 0, lastTry: 0 };
+var API_DEFAULTS = { key: '', base: '', windowH: 24, autoH: 6, oddsMode: 'smart', modeSet: false, leagues: {}, lastFetch: 0, lastAttempt: 0, lastSchedule: 0, quota: null, spent: null, interest: {}, push: PUSH_DEFAULTS, op: OP_DEFAULTS };
 LEAGUES.forEach(function(l){ API_DEFAULTS.leagues[l.key] = l.on; });
 state.api = JSON.parse(JSON.stringify(API_DEFAULTS));
 state.loading = false; state.apiError = '';
@@ -1220,6 +1477,7 @@ try {
     if (!rawApi.modeSet && (!rawApi.oddsMode || rawApi.oddsMode === 'auto')) state.api.oddsMode = 'smart';
     if (!state.api.interest || typeof state.api.interest !== 'object') state.api.interest = {};
     var rp = rawApi.push && typeof rawApi.push === 'object' ? rawApi.push : {};
+    state.api.op = Object.assign({}, OP_DEFAULTS, rawApi.op && typeof rawApi.op === 'object' ? rawApi.op : {});
     state.api.push = Object.assign({}, PUSH_DEFAULTS, rp, { lead: Object.assign({}, PUSH_DEFAULTS.lead, rp.lead || {}), log: Array.isArray(rp.log) ? rp.log : [] });
   }
   // Umstellung auf Pinnacle + Betano: alte Quoten (Tipico/Winamax, Boerse) sofort ersetzen statt erst nach 12 Std
@@ -1227,6 +1485,11 @@ try {
 } catch (e) {}
 AH_FB = state.api.ah !== false;
 function saveApi(){ try { localStorage.setItem(API_KEY_STORE, JSON.stringify(state.api)); } catch (e) {} }
+// Automatische bet365-Quoten je Spiel (eigener Speicher, Spiele aelter als 1 Tag fliegen raus)
+var AUTO_STORE = 'valueslip.auto';
+state.auto = {};
+try { var ra = JSON.parse(localStorage.getItem(AUTO_STORE) || '{}'); if (ra && typeof ra === 'object') state.auto = ra; } catch (e) {}
+function saveAuto(){ var now = Date.now(); Object.keys(state.auto).forEach(function(id){ var a = state.auto[id]; if (!a || now - (a.fetched || 0) > 86400000) delete state.auto[id]; }); try { localStorage.setItem(AUTO_STORE, JSON.stringify(state.auto)); } catch (e) {} }
 function todayKey(){ return berlinDateOf(Date.now()); }
 function berlinDateOf(ms){ try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(new Date(ms)); } catch (e) { return new Date(ms).toISOString().slice(0, 10); } }
 function spentToday(){ var s = state.api.spent; return s && s.day === todayKey() ? s.n : 0; }
@@ -1245,6 +1508,7 @@ function openBetKickoff(lkey, now){
   (state.bets || []).forEach(function(b){ if (b.status === 'open') b.legs.forEach(function(l){ if (l.lkey === lkey && l.state === 'open' && l.kickoff > now && (t == null || l.kickoff < t)) t = l.kickoff; }); });
   return t;
 }
+function keyLooksWrong(){ var k = String(state.api.key || '').trim(); return !!k && !/^[a-f0-9]{32}$/i.test(k); }
 function apiReady(){ return !!(String(state.api.key || '').trim() || String(state.api.base || '').trim()); }
 function selectedLeagues(){ return LEAGUES.filter(function(l){ return state.api.leagues[l.key]; }); }
 
@@ -1258,8 +1522,11 @@ function bookFor(sport){ var b = (state.settings.books || {})[sport || 'fb']; re
 function booksLine(){ var b = state.settings.books || {}; return 'Fußball ' + bookFor('fb') + ', Basketball ' + bookFor('bb') + ', Eishockey ' + bookFor('ih'); }
 function feedMatches(){
   if (!state.feed) return [];
-  return state.feed.matches.map(function(m){ var bk = bookFor(m.sport); return Object.assign(applyOverride(m, state.ov[m.id]), { bookName: bk, taxF: taxFor(bk) }); });
+  var now = Date.now();
+  return state.feed.matches.map(function(m){ var bk = bookFor(m.sport); return Object.assign(applyOverride(autoFor(m, now), state.ov[m.id]), { bookName: bk, taxF: taxFor(bk) }); });
 }
+// bet365 automatisch nur fuer Sportarten, bei denen bet365 dein Anbieter ist
+function autoFor(m, now){ var a = state.auto[m.id]; return a && bookFor(m.sport) === OP_BOOK ? withAuto(m, a, now || Date.now(), a.fetched) : m; }
 function hasFeed(){ return !!(state.feed && state.feed.matches.length); }
 function viewMatches(){
   var own = hasFeed() ? state.matches.filter(function(m){ return !m.sample; }) : state.matches;
@@ -1484,6 +1751,7 @@ function gameCard(m, now){
   var tag = m.sample ? ' · <b>Beispiel</b>' : (m.mine ? ' · <b>deine Quoten</b>' : (m.bookSrc ? ' · Quote ' + esc(m.bookSrc) : '')) + (m.ownRef ? ' · <b>eigene Referenz</b>' : '');
   rows = refLineHtml(m, now) + rows;
   if (!m.fixture && m.oddsAt && now - m.oddsAt > 3 * 3600000) tag += ' · Quoten von ' + esc(berlinTime(new Date(m.oddsAt)));
+  if (m.autoAt) tag += ' · <span class="autob">bet365 auto ' + esc(berlinTime(new Date(m.autoAt))) + '</span>';
   if (m.fixture) rows = m.noRef ? '<div class="nofx">Pinnacle hat für dieses Spiel noch keine Quote. Ohne Pinnacle rechnet die App hier nichts. Schau später wieder rein oder trag die Pinnacle-Quoten selbst ein.</div>' : (state.api.oddsMode === 'smart' && m.kickoff && m.kickoff - now > SMART_AHEAD ? '<div class="nofx">Quoten kommen automatisch ab ' + esc(berlinTime(new Date(m.kickoff - SMART_AHEAD))) + ' Uhr (6 Std vor Anpfiff, spart Abrufe). Sofort: „Quoten laden“ oben bei der Liga.</div>' : '<div class="nofx">Noch keine Quoten. Lade die Quoten der Liga oder trag Referenzquoten selbst ein (z. B. Pinnacle von OddsPortal).</div>');
   var right = started ? '<span class="pill">Begonnen</span>' : '<span>' + esc(m.time || '') + '</span>';
   var foot = '';
@@ -1581,7 +1849,8 @@ function openFeedEditor(id){
   var need = function(fo){ return fo > 1 ? 'Value ab ' + f2(Math.ceil(fo * (1 + st.minEdge) / tfe * 100) / 100) : 'keine Referenz'; };
   var refLine = function(r, fo){ return '<span class="refline">Ref. ' + (r > 1 ? f2(r) : '–') + ' · ' + need(fo) + '</span>'; };
   // Feld zeigt deine eigene Quote; fehlt sie, steht die aus deinen Betano-1X2-Quoten geschaetzte Quote grau darin
-  var raw = (state.feed ? state.feed.matches : []).filter(function(x){ return x.id === id; })[0] || m;
+  var raw0 = (state.feed ? state.feed.matches : []).filter(function(x){ return x.id === id; })[0];
+  var raw = raw0 ? autoFor(raw0) : m;
   var ovf = m.ovf || {}, rs = raw.bsrc || {};
   var autoOf = function(tag){
     var parts = tag.split('.'), mk = parts[0], k = parts[1];
@@ -1616,7 +1885,7 @@ function openFeedEditor(id){
       oddField('b-h', '1', 'res.h', b.h, m.ref.h, fair.res.h) + (three ? oddField('b-d', 'X', 'res.d', b.d, m.ref.d, fair.res.d) : '') + oddField('b-a', '2', 'res.a', b.a, m.ref.a, fair.res.a) +
       '</div></div>';
   }
-  var rawDc = {};
+  var rawDc = raw.bsrc && raw.dc ? raw.dc : {};
   if (fair.dc.hx){
     var dcb = m.dc || {};
     var dcField = function(fid, label, val, fo){
@@ -1639,7 +1908,7 @@ function openFeedEditor(id){
       oddField('hc-bh', esc(m.home) + ' ' + fmtHc(m.hc.line), 'hc.h', hb.h, m.hc.ref.h, fair.hc.h) + oddField('hc-ba', esc(m.away) + ' ' + fmtHc(-m.hc.line), 'hc.a', hb.a, m.hc.ref.a, fair.hc.a) +
       '</div></div>';
   }
-  h += '<p class="hint">Trag die Quoten ein, die du gerade in deiner ' + esc(bk) + '-App siehst. Leere Felder zählen nicht.</p>' +
+  h += (raw.autoAt ? '<p class="hint">Graue Werte: bet365 automatisch, Stand ' + esc(berlinTime(new Date(raw.autoAt))) + ' Uhr. Weicht deine bet365-App ab, trag die echte Quote ein.</p>' : '<p class="hint">Trag die Quoten ein, die du gerade in deiner ' + esc(bk) + '-App siehst. Leere Felder zählen nicht.</p>') +
     '<p class="err" id="e-err" hidden></p>' +
     '<div class="actions">' + (state.ov[m.id] ? '<button class="btn danger" data-act="freset">Zurücksetzen</button>' : '') +
     '<button class="btn ghost" data-act="close">Abbrechen</button><button class="btn block" data-act="fsave">Speichern</button></div>';
@@ -1785,7 +2054,15 @@ function settleable(l, now){
   var lg = leagueByKey(l.lkey);
   return l.state === 'open' && !!lg && !(lg.cup && lg.sport === 'fb') && !!l.kickoff && now - l.kickoff > 3 * 3600000 && now - l.kickoff < 70 * 3600000;
 }
-function settleBets(){
+// Automatisch abrechnen: beim Oeffnen hoechstens alle 6 Std, nur wenn etwas faellig ist (2 Abrufe je Liga)
+function autoSettle(){
+  var now = Date.now();
+  if (state.loading || !apiReady() || now - (state.api.lastSettle || 0) < 6 * 3600000) return;
+  if (!state.bets.some(function(b){ return b.legs.some(function(l){ return settleable(l, now); }); })) return;
+  state.api.lastSettle = now; saveApi();
+  settleBets(true);
+}
+function settleBets(silent){
   if (state.loading || !apiReady()) return;
   var now = Date.now(), need = {};
   state.bets.forEach(function(b){ b.legs.forEach(function(l){
@@ -1793,7 +2070,7 @@ function settleBets(){
     if (settleable(l, now)) (need[l.lkey] = need[l.lkey] || {})[l.mid] = true;
   }); });
   var keys = Object.keys(need);
-  if (!keys.length){ toast('Keine Spiele zum Abrechnen'); return; }
+  if (!keys.length){ if (!silent) toast('Keine Spiele zum Abrechnen'); return; }
   var a = state.api; state.loading = true; renderCalc();
   var settled = 0, chain = Promise.resolve(), errText = '', stop = false;
   keys.forEach(function(k){
@@ -1811,7 +2088,7 @@ function settleBets(){
   });
   return chain.then(function(){
     state.loading = false; saveBets(); saveApi(); renderCalc();
-    toast(errText ? errText : (settled ? settled + (settled === 1 ? ' Tipp abgerechnet' : ' Tipps abgerechnet') : 'Noch keine Endstände'));
+    if (!silent || settled) toast(errText && !silent ? errText : (settled ? settled + (settled === 1 ? ' Tipp automatisch abgerechnet' : ' Tipps automatisch abgerechnet').replace(' automatisch', silent ? ' automatisch' : '') : 'Noch keine Endstände'));
   });
 }
 // Auswertung: Verlauf (dein Gewinn gegen den erwarteten, mit 95-%-Schwankungsband), Glueck/Pech, Drawdown, CLV, Aufschluesselung
@@ -2092,7 +2369,7 @@ function openSettings(){
     '<p class="hint" style="margin:0">Ein Viertel schwankt am wenigsten und ist für Schätzfehler der sicherste Start.</p></div>' +
     '<div class="group"><div class="label">Marge entfernen</div>' + seg('devig', [['power', 'Potenz'], ['prop', 'Proportional']], st.devig) +
     '<p class="hint" style="margin:0">Potenz gewichtet Außenseiter realistischer. Proportional ist die einfache Variante.</p></div>' +
-    apiSettings() + pushSettings() +
+    apiSettings() + opSettings() + pushSettings() +
     '<div class="actions"><button class="btn ghost block" data-act="resetsamples">Beispiele laden</button><button class="btn block" data-act="close">Fertig</button></div>');
   if (keepY != null) $('sheet').scrollTop = keepY;
 }
@@ -2115,6 +2392,7 @@ function apiSettings(){
   return '<div class="group api"><div class="label">Quoten automatisch laden (The Odds API)</div>' +
     '<div class="field wide"><label for="s-key">API-Schlüssel</label><div class="keyrow"><input id="s-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(a.key) + '" placeholder="Schlüssel von the-odds-api.com"><button class="btn ghost sm" data-act="showkey" type="button">Zeigen</button></div></div>' +
     '<p class="hint" style="margin:0">Bleibt nur auf diesem Gerät gespeichert.</p>' +
+    (keyLooksWrong() ? '<p class="err" style="margin:0">Das sieht nicht nach einem Schlüssel von The Odds API aus (32 Zeichen, 0–9 und a–f). Ist das dein OddsPapi-Schlüssel? <button class="link" data-act="opmove" type="button">Ins OddsPapi-Feld verschieben</button></p>' : '') +
     '<div class="field wide"><label for="s-base">Zwischendienst (nur falls nötig)</label><input id="s-base" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(a.base) + '" placeholder="https://….workers.dev"></div>' +
     '<span class="label">Asiatisches Handicap (Fußball)</span>' + seg('ahset', [['on', 'Laden'], ['off', 'Aus']], a.ah === false ? 'off' : 'on', null, 'sm') +
     '<p class="hint" style="margin:0">Lädt die Pinnacle-Linie fürs asiatische Handicap mit. Kostet 1 Abruf mehr je Fußball-Liga (3 statt 2).</p>' +
@@ -2278,6 +2556,7 @@ function refreshOdds(opts){
     state.smartNote = opts.smart && smartSkipped ? 'Spar-Modus: Das Tagesbudget ist aufgebraucht. Neue Quoten gibt es morgen, oder du lädst eine Liga gezielt per Knopf.' : '';
     done();
     onFeed(feed, true);
+    if (oddsAsked && !fatal) setTimeout(function(){ opMaybe(true); }, 300);
     if (opts.smart && !fatal){ if (oddsAsked) toast('Spar-Modus: Quoten für ' + oddsAsked + (oddsAsked === 1 ? ' Liga' : ' Ligen') + ' aktualisiert'); }
     else if (!fatal && !skippedBudget) toast(out.length ? out.length + ' Spiele' + (oddsAsked ? ', Quoten für ' + oddsAsked + (oddsAsked === 1 ? ' Liga' : ' Ligen') : '') : 'Im Zeitraum keine Spiele gefunden');
   }).catch(function(e){
@@ -2286,10 +2565,204 @@ function refreshOdds(opts){
   });
 }
 // ---------------------------------------------------------------------------------------------------------------
+// bet365 automatisch: Abrufe bei OddsPapi (Schluessel nur auf diesem Geraet, beim Push-Dienst nur fuer dessen Abrufe)
+var OP_FRESH = 45 * 60000, OP_PAIR = 15 * 60000, OP_SETUP_DAYS = 14;
+function opOn(){ return !!String(state.api.op.key || '').trim(); }
+function opNeeded(){ return ['fb', 'bb', 'ih'].some(function(sp){ return bookFor(sp) === OP_BOOK; }); }
+function opSpentToday(){ var s = state.api.op.spent; return s && s.day === todayKey() ? s.n : 0; }
+function opRemaining(){ var o = state.api.op; return o.limit != null && o.count != null ? Math.max(0, o.limit - o.count) : null; }
+function opCount(n){
+  var o = state.api.op, d = todayKey();
+  if (!o.spent || o.spent.day !== d) o.spent = { day: d, n: 0 };
+  o.spent.n += n; if (o.count != null) o.count += n;
+}
+function opErrText(status, j){
+  var code = (j && (j.code || (j.error && j.error.code))) || '', msg = (j && (j.message || (j.error && j.error.message))) || '';
+  if (status === 0) return 'OddsPapi nicht erreichbar.' + (pushUrl() ? '' : ' Blockiert der Browser den Abruf, hilft der Push-Dienst als Zwischenstation (Einstellungen › Benachrichtigungen).');
+  if (status === 401) return 'Der OddsPapi-Schlüssel wird nicht akzeptiert. Prüfe ihn (ohne Leerzeichen).';
+  if (status === 403) return 'Dein OddsPapi-Plan erlaubt das nicht' + (msg ? ': ' + msg : '') + '.';
+  if (status === 429 && code !== 'RATE_LIMITED') return 'Dein OddsPapi-Kontingent für diesen Monat ist aufgebraucht. Es füllt sich am 1. wieder auf.';
+  if (status === 429) return 'OddsPapi: zu schnell hintereinander. Versuch es gleich noch einmal.';
+  return 'OddsPapi antwortet mit Fehler ' + status + (msg ? ' (' + msg + ')' : '') + '.';
+}
+// Abruf mit Abstand (OddsPapi erlaubt je Endpunkt hoechstens 1 Abruf pro Sekunde), Ersatzweg ueber den Push-Dienst
+var opQueue = Promise.resolve(), opLast = 0;
+function opGet(path, params, billable){
+  var o = state.api.op;
+  var run = function(){
+    var wait = Math.max(0, opLast + 1150 - Date.now());
+    return new Promise(function(r){ setTimeout(r, wait); }).then(function(){
+      var tryVia = function(via, retried){
+        opLast = Date.now();
+        var url = opUrl(via, path, Object.assign({ apiKey: String(o.key || '').trim() }, params || {}));
+        var ctl = typeof AbortController === 'function' ? new AbortController() : null, timer = ctl ? setTimeout(function(){ ctl.abort(); }, 25000) : null;
+        return fetch(url, { signal: ctl ? ctl.signal : undefined, headers: { Accept: 'application/json' } }).then(function(r){
+          if (timer) clearTimeout(timer);
+          return r.json().catch(function(){ return null; }).then(function(j){
+            if (r.status === 429 && j && (j.code === 'RATE_LIMITED' || (j.error && j.error.code === 'RATE_LIMITED')) && !retried){
+              var ms = Math.min(5000, +(j.retryMs || (j.error && j.error.retryMs)) || 1200);
+              return new Promise(function(res){ setTimeout(res, ms); }).then(function(){ return tryVia(via, true); });
+            }
+            if (billable && r.status !== 401 && !(r.status === 429)) opCount(1);
+            if (!r.ok) throw { status: r.status, body: j };
+            if (j == null) throw { status: -1, body: null };
+            return j;
+          });
+        }, function(){
+          if (timer) clearTimeout(timer);
+          // Browser blockiert (CORS) oder Netz weg: einmal ueber den Push-Dienst versuchen
+          if (!via && pushUrl()){ return tryVia(pushUrl(), retried).then(function(j){ o.via = pushUrl(); return j; }); }
+          throw { status: 0, body: null };
+        });
+      };
+      return tryVia(o.via && pushUrl() ? pushUrl() : '', false);
+    });
+  };
+  var p = opQueue.then(run, run);
+  opQueue = p.catch(function(){});
+  return p;
+}
+function opPlanBooks(acc){
+  var subs = acc && Array.isArray(acc.subscriptions) ? acc.subscriptions : [];
+  var sub = subs.filter(function(x){ return x && x.subscription_id === acc.current_subscription_id; })[0] || subs.filter(function(x){ return x && x.is_active; })[0] || subs[0];
+  if (!sub) return null;
+  var b = sub.bookmakers, list = Array.isArray(b) ? b.map(function(x){ return typeof x === 'string' ? x : (x && (x.slug || x.bookmaker)); }) : (b && typeof b === 'object' ? Object.keys(b) : null);
+  return { sub: sub, books: list ? list.filter(Boolean) : null, limit: typeof sub.request_limit === 'number' ? sub.request_limit : null, count: typeof sub.request_count === 'number' ? sub.request_count : null };
+}
+// Einrichten: Kontingent, Sportarten, bet365-Kennung, Ligen, Maerkte (zusammen etwa 7 Abrufe, danach 14 Tage gespeichert)
+function opSetup(){
+  var o = state.api.op;
+  if (!opOn()) return Promise.reject({ msg: 'Trag zuerst deinen OddsPapi-Schlüssel ein.' });
+  o.err = ''; state.opBusy = 'Einrichten …'; refreshOpUi();
+  var setup = { at: Date.now(), sports: null, book: OP_BOOK, tours: {}, idx: null, plan: null };
+  return opGet('/v4/account', {}, true).then(function(acc){
+    var pl = opPlanBooks(acc);
+    if (pl){ if (pl.limit != null){ o.limit = pl.limit; o.count = pl.count; o.countAt = Date.now(); } setup.plan = pl.books; }
+    if (pl && pl.books && pl.books.length && !pl.books.some(function(x){ return String(x).toLowerCase().indexOf('bet365') === 0; }))
+      throw { msg: 'bet365 ist in deinem OddsPapi-Plan nicht enthalten (Plan: ' + pl.books.slice(0, 8).join(', ') + ').' };
+    return opGet('/v4/sports', {}, true);
+  }).then(function(sp){
+    setup.sports = opSportIds(sp);
+    if (!setup.sports.fb && !setup.sports.bb && !setup.sports.ih) throw { msg: 'OddsPapi hat keine passenden Sportarten geliefert.' };
+    return opGet('/v4/bookmakers', {}, true);
+  }).then(function(bks){
+    var slugs = (Array.isArray(bks) ? bks : []).map(function(b){ return b && b.slug; }).filter(Boolean);
+    var bk = slugs.indexOf('bet365') >= 0 ? 'bet365' : slugs.filter(function(x){ return /^bet365/.test(x); })[0];
+    if (!bk) throw { msg: 'OddsPapi führt bet365 nicht in der Liste der Buchmacher.' };
+    setup.book = bk;
+    var chain = Promise.resolve();
+    ['fb', 'bb', 'ih'].forEach(function(sp){
+      if (!setup.sports[sp]) return;
+      chain = chain.then(function(){ return opGet('/v4/tournaments', { sportId: setup.sports[sp] }, true).then(function(t){ Object.assign(setup.tours, opMapTournaments(t, sp)); }); });
+    });
+    return chain;
+  }).then(function(){
+    return opGet('/v4/markets', {}, true);
+  }).then(function(mk){
+    setup.idx = opMarketIndex(mk, setup.sports);
+    var n = function(sp){ return Object.keys(setup.idx[sp] || {}).length; };
+    if (!n('fb') && !n('bb') && !n('ih')) throw { msg: 'OddsPapi hat keine passenden Märkte geliefert (1X2, Über/Unter, Handicap).' };
+    o.setup = setup; o.err = ''; state.opBusy = ''; saveApi(); refreshOpUi();
+    return setup;
+  }).catch(function(e){
+    state.opBusy = '';
+    o.err = e && e.msg ? e.msg : opErrText(e && e.status != null ? e.status : -1, e && e.body);
+    saveApi(); refreshOpUi();
+    throw e;
+  });
+}
+// Mit bet365 automatisch: bet365 ist in allen Sportarten dein Anbieter (abaenderbar unter „Dein Anbieter je Sportart“)
+function useBet365(){
+  var st = state.settings, b = Object.assign({}, DEFAULT_BOOKS, st.books || {}), ch = false;
+  ['fb', 'bb', 'ih'].forEach(function(sp){ if (b[sp] !== OP_BOOK){ b[sp] = OP_BOOK; ch = true; } });
+  if (ch){ st.books = b; save(); if ($('opgrp')) openSettings(); renderAll(true); }
+}
+function opSetupOk(){ var s = state.api.op.setup; return !!(s && s.idx && s.tours && Date.now() - (s.at || 0) < OP_SETUP_DAYS * 86400000); }
+// Ligen, fuer die bet365 jetzt geladen wird: gewaehlt, bet365 ist dein Anbieter, Spiele im Zeitraum
+function opLeagues(now){
+  var s = state.api.op.setup, games = {};
+  (state.feed ? state.feed.matches : []).forEach(function(m){ if (m.kickoff > now && !m.fixture) games[m.lkey] = Math.min(games[m.lkey] || Infinity, m.kickoff); });
+  return selectedLeagues().filter(function(l){ return bookFor(l.sport) === OP_BOOK && s && s.tours[l.key] && games[l.key]; }).map(function(l){ return { key: l.key, tid: s.tours[l.key], next: games[l.key] }; });
+}
+function opLoad(opts){
+  opts = opts || {};
+  var o = state.api.op, now = Date.now();
+  if (!opOn() || state.opBusy) return Promise.resolve();
+  o.lastTry = now;
+  var start = opSetupOk() ? Promise.resolve(o.setup) : opSetup();
+  return start.then(function(setup){
+    var lg = opLeagues(Date.now());
+    if (!lg.length){ if (opts.manual) toast('Keine Spiele mit Pinnacle-Quoten in Ligen, für die bet365 dein Anbieter ist'); return; }
+    state.opBusy = 'bet365 lädt …'; o.lastTry = Date.now(); refreshOpUi();
+    var tids = lg.map(function(x){ return x.tid; }).filter(function(x, i, a){ return a.indexOf(x) === i; });
+    var chunks = []; for (var i = 0; i < tids.length; i += 10) chunks.push(tids.slice(i, i + 10));
+    var all = [], chain = Promise.resolve();
+    chunks.forEach(function(c){ chain = chain.then(function(){ return opGet('/v4/odds-by-tournaments', { bookmaker: setup.book, tournamentIds: c.join(','), oddsFormat: 'decimal' }, true).then(function(j){ all = all.concat(Array.isArray(j) ? j : []); }); }); });
+    return chain.then(function(){
+      var t = Date.now(), tid2l = {};
+      Object.keys(setup.tours).forEach(function(k){ tid2l[setup.tours[k]] = k; });
+      var parsed = opParse(all, setup.idx, tid2l, setup.book);
+      var raws = (state.feed ? state.feed.matches : []).filter(function(m){ return lg.some(function(x){ return x.key === m.lkey; }); });
+      var hit = opMatch(raws, parsed), n = 0;
+      Object.keys(hit).forEach(function(id){ hit[id].fetched = t; state.auto[id] = hit[id]; n++; });
+      o.info = { at: t, fixtures: parsed.length, raw: all.length, games: raws.filter(function(m){ return !m.fixture && m.kickoff > t; }).length, matched: n, leagues: lg.map(function(x){ return x.key; }) };
+      o.lastFetch = t; o.err = ''; state.opBusy = '';
+      saveAuto(); saveApi(); refreshOpUi(); renderAll(true); schedulePushSync();
+      if (opts.manual) toast('bet365: ' + n + (n === 1 ? ' Spiel' : ' Spiele') + ' zugeordnet');
+    });
+  }).catch(function(e){
+    state.opBusy = '';
+    if (e && !e.msg) o.err = opErrText(e.status != null ? e.status : -1, e.body);
+    if (e && e.status === 401) o.setup = null;
+    saveApi(); refreshOpUi();
+  });
+}
+// Automatik: bet365 frisch halten, wenn bald Spiele sind, und zusammen mit jedem Pinnacle-Abruf (gleicher Zeitpunkt)
+function opMaybe(paired){
+  var o = state.api.op, now = Date.now();
+  if (!opOn() || !opNeeded() || state.opBusy || state.loading) return;
+  if (now - (o.lastTry || 0) < (o.err ? 6 * 3600000 : 5 * 60000)) return;
+  // nur wenn Spiele mit Pinnacle-Quoten bald anpfeifen, in Ligen, fuer die bet365 dein Anbieter ist
+  var soon = (state.feed ? state.feed.matches : []).some(function(m){
+    var l = leagueByKey(m.lkey);
+    return l && state.api.leagues[l.key] && bookFor(l.sport) === OP_BOOK && !m.fixture && m.kickoff > now && m.kickoff - now <= SMART_AHEAD && (!opSetupOk() || (o.setup.tours || {})[l.key]);
+  });
+  if (!soon) return;
+  var age = now - (o.lastFetch || 0);
+  if (!(paired ? age > OP_PAIR : age > OP_FRESH)) return;
+  var bud = opBudget(opRemaining(), opSpentToday(), now, state.api.push.on ? (state.api.push.opCalls || 0) : 0);
+  var need = opSetupOk() ? 1 : 8;
+  if (bud && bud.left < need) return;
+  opLoad();
+}
+function refreshOpUi(){
+  var g = $('opgrp');
+  if (!g || (document.activeElement && document.activeElement.id === 's-opkey')) return;
+  g.outerHTML = opSettings();
+}
+function opSettings(){
+  var o = state.api.op, s = o.setup, rem = opRemaining();
+  var names = s ? Object.keys(s.tours || {}).map(function(k){ var l = leagueByKey(k); return l ? l.name : k; }) : [];
+  var missing = s ? selectedLeagues().filter(function(l){ return bookFor(l.sport) === OP_BOOK && !(s.tours || {})[l.key]; }).map(function(l){ return l.name; }) : [];
+  var inf = o.info;
+  var bud = opBudget(rem, opSpentToday(), Date.now(), state.api.push.on ? (state.api.push.opCalls || 0) : 0);
+  return '<div class="group pushg" id="opgrp"><div class="label">bet365 automatisch (OddsPapi)</div>' +
+    '<div class="field wide"><label for="s-opkey">OddsPapi-Schlüssel</label><div class="keyrow"><input id="s-opkey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(o.key) + '" placeholder="Schlüssel von oddspapi.io"><button class="btn ghost sm" data-act="showopkey" type="button">Zeigen</button></div></div>' +
+    '<p class="hint" style="margin:0">Bleibt auf diesem Gerät. Eigenes Kontingent, die 500 Abrufe von The Odds API bleiben für Pinnacle.</p>' +
+    (state.opBusy ? '<p class="hint" style="margin:0"><b>' + esc(state.opBusy) + '</b></p>' : '') +
+    (o.err ? '<p class="err" style="margin:0">' + esc(o.err) + '</p>' : '') +
+    (s ? '<p class="hint" style="margin:0">Eingerichtet: ' + (names.length ? esc(names.join(', ')) : 'keine Liga gefunden') + '.' + (missing.length ? ' Bei OddsPapi nicht gefunden: ' + esc(missing.join(', ')) + '.' : '') + '</p>' : '') +
+    (inf ? '<p class="hint" style="margin:0" id="s-opinfo">Zuletzt ' + esc(berlinTime(new Date(inf.at))) + ' Uhr: ' + inf.matched + ' von ' + inf.games + ' Spielen mit Pinnacle-Quoten zugeordnet (' + inf.fixtures + ' bet365-Spiele geliefert).</p>' : '') +
+    (rem != null ? '<p class="hint" style="margin:0" id="s-opquota">Kontingent: ' + rem + ' von ' + o.limit + ' übrig' + (bud ? ', heute ' + bud.spent + ' von ' + bud.allow + ' genutzt' : '') + '.</p>' : '') +
+    '<div class="actions"><button class="btn ghost" data-act="opsetup"' + (opOn() && !state.opBusy ? '' : ' disabled') + '>' + (s ? 'Neu prüfen' : 'Einrichten') + '</button><button class="btn" data-act="opload"' + (opOn() && !state.opBusy ? '' : ' disabled') + '>bet365 jetzt laden</button></div>' +
+    '<p class="hint" style="margin:0">Automatisch: wenn in den nächsten 6 Stunden Spiele sind, höchstens alle 45 Minuten und zusammen mit jedem Pinnacle-Abruf, im Rahmen des Tagesanteils. Ein Abruf holt bet365 für alle Ligen. Jede automatische Quote wird mit Pinnacle abgeglichen; passt sie nicht, verwirft die App sie. Älter als 2 Stunden zählt sie nicht. Vor dem Setzen kurz in der bet365-App vergleichen: bet365.de kann leicht abweichen.</p>' +
+    '</div>';
+}
+// ---------------------------------------------------------------------------------------------------------------
 // Push-Benachrichtigungen ueber den eigenen Push-Dienst (Cloudflare Worker, Code unter dienst/worker.js)
 // Die App schickt dem Dienst: Spiele mit Pinnacle-Quoten, deine eingetragenen Quoten, offene Tipps und Einstellungen.
 // Der Dienst erinnert vor Anpfiff, meldet Value und holt die Schlussquote. Seine Abrufe holt sich die App beim naechsten Oeffnen.
-var PUSH_VER = 'f6bbc54d8e';
+var PUSH_VER = 'ee1da03eee';
 var PUSH_LEADS = {
   fb: [[0, 'Aus'], [30, '30 Min'], [55, '55 Min'], [90, '90 Min']],
   bb: [[0, 'Aus'], [25, '25 Min'], [45, '45 Min'], [90, '90 Min']],
@@ -2316,7 +2789,14 @@ function pushPayload(sub){
   });
   Object.keys(state.ov).forEach(function(id){ if (ids[id]) ov[id] = state.ov[id]; });
   state.bets.forEach(function(b){ if (b.status === 'open') b.legs.forEach(function(l){ if (l.state === 'open' && l.kickoff > now && l.lkey) legs.push({ mid: l.mid, lkey: l.lkey, market: l.market, ko: l.kickoff }); }); });
-  return { token: state.api.push.token, sub: sub, apiKey: String(state.api.key || '').trim(), cfg: pushCfg(), games: games, ov: ov, legs: legs, quota: state.api.quota, since: state.api.push.since || 0 };
+  var o = state.api.op, opx = null, auto = {};
+  if (opOn() && o.setup && o.setup.idx){
+    var idx = {};
+    ['fb', 'bb', 'ih'].forEach(function(sp){ if (bookFor(sp) === OP_BOOK) idx[sp] = o.setup.idx[sp] || {}; });
+    opx = { key: String(o.key).trim(), book: o.setup.book, tours: o.setup.tours, idx: idx, calls: state.api.push.opCalls, remaining: opRemaining(), seen: state.api.push.opSeen || 0 };
+    Object.keys(state.auto).forEach(function(id){ if (ids[id]) auto[id] = state.auto[id]; });
+  }
+  return { token: state.api.push.token, sub: sub, apiKey: String(state.api.key || '').trim(), cfg: pushCfg(), games: games, ov: ov, legs: legs, quota: state.api.quota, since: state.api.push.since || 0, op: opx, auto: auto };
 }
 function pushFetch(path, body){
   var url = pushUrl();
@@ -2345,6 +2825,7 @@ function pushSync(loud){
     state.pushBusy = false;
     p.active = !!j.active; p.lastSync = Date.now(); p.err = ''; p.ver = j.ver || '';
     if (Array.isArray(j.log)) p.log = j.log.slice(-10);
+    if (typeof j.opTotal === 'number'){ var dOp = j.opTotal - (p.opSeen || 0); if (dOp > 0 && dOp < 100) opCount(dOp); p.opSeen = j.opTotal; }
     if (j.quota && j.quota.remaining != null && (!state.api.quota || (j.quota.at || 0) > (state.api.quota.at || 0))) state.api.quota = j.quota;
     saveApi();
     applySnaps(j.snaps);
@@ -2364,10 +2845,15 @@ function schedulePushSync(){
 // Abrufe des Push-Dienstes uebernehmen: Schlussquoten setzen, frische Pinnacle-Quoten in die Spiele einspielen (kostet keinen Abruf)
 function applySnaps(snaps){
   if (!Array.isArray(snaps) || !snaps.length) return;
-  var p = state.api.push, a = state.api, now = Date.now(), raw = null, closes = false;
+  var p = state.api.push, a = state.api, now = Date.now(), raw = null, closes = false, autoNew = false;
   var asRaw = function(m){ return Object.assign({}, m, { kickoff: new Date(m.kickoff).toISOString() }); };
   snaps.filter(function(sn){ return sn && sn.at > 0; }).sort(function(x, y){ return x.at - y.at; }).forEach(function(sn){
     p.since = Math.max(p.since || 0, sn.at);
+    if (sn.kind === 'auto' && sn.auto && typeof sn.auto === 'object'){
+      Object.keys(sn.auto).forEach(function(id){ var e = sn.auto[id], cur = state.auto[id]; if (e && (!cur || (cur.fetched || 0) < (e.fetched || 0))) state.auto[id] = e; });
+      if (sn.at > (state.api.op.lastFetch || 0)) state.api.op.lastFetch = sn.at;
+      autoNew = true; return;
+    }
     var lg = leagueByKey(sn.lkey);
     if (!lg || !Array.isArray(sn.ev)) return;
     var conv = convertEvents(sn.ev, lg, sn.at);
@@ -2388,8 +2874,10 @@ function applySnaps(snaps){
     a.lf = a.lf || {}; a.lf[sn.lkey] = sn.at;
   });
   if (closes) saveBets();
+  if (autoNew) saveAuto();
   saveApi();
   if (raw) onFeed(raw, true);
+  else if (autoNew) renderAll(true);
   else if (closes) renderCalc();
 }
 function pushErr(msg){ state.api.push.err = msg; saveApi(); refreshPushUi(); }
@@ -2463,6 +2951,8 @@ function pushSettings(){
     '<p class="hint" style="margin:0">Hast du für ein Spiel Quoten eingetragen, holt der Dienst zur Erinnerung frische Pinnacle-Quoten und meldet, wenn deine Quote jetzt Value hat (gleiche Regeln wie in der App, mit Wettsteuer).</p>' +
     '<span class="label">Abrufe für Push pro Tag</span>' + seg('pushcalls', [[0, '0'], [3, '3'], [6, '6'], [10, '10']], p.calls, null, 'sm') +
     '<p class="hint" style="margin:0">Für frische Pinnacle-Quoten zur Erinnerung (nur wenn die Quoten der App älter als 30 Min sind). Die Schlussquote deiner offenen Wetten kommt immer dazu: 1–2 Abrufe je Liga kurz vor Anpfiff. Der Spar-Modus rechnet das automatisch ein. Die Abrufe des Dienstes landen beim Öffnen kostenlos in der App.</p>' +
+    (opOn() ? '<span class="label">bet365-Abrufe für Push pro Tag</span>' + seg('pushopcalls', [[0, '0'], [2, '2'], [3, '3'], [5, '5']], p.opCalls, null, 'sm') +
+      '<p class="hint" style="margin:0">Aus deinem OddsPapi-Kontingent: Zur Erinnerung holt der Dienst bet365 für alle fälligen Ligen mit einem Abruf und meldet Value, ohne dass du etwas einträgst. Die App plant diese Abrufe in ihrem Tagesanteil mit ein.</p>' : '') +
     (log ? '<span class="label">Zuletzt</span><ul class="plog">' + log + '</ul>' : '') +
     '</div>';
 }
@@ -2490,6 +2980,7 @@ function rerenderApi(){
 }
 function maybeAutoRefresh(){
   var a = state.api;
+  setTimeout(function(){ opMaybe(false); autoSettle(); }, 1500);
   if (!apiReady() || state.loading) return;
   // Nach einem Fehlschlag fruehestens nach 30 Minuten automatisch neu versuchen (spart Abrufe)
   if (Date.now() - (a.lastAttempt || 0) < 30 * 60000) return;
@@ -2592,6 +3083,10 @@ document.addEventListener('click', function(e){
     case 'refresh': refreshOdds(state.api.oddsMode === 'smart' ? { smart: true } : undefined); break;
     case 'lodds': refreshOdds({ only: t.getAttribute('data-k') }); break;
     case 'omode': state.api.oddsMode = t.getAttribute('data-v'); state.api.modeSet = true; saveApi(); openSettings(); break;
+    case 'opsetup': opSetup().then(function(){ useBet365(); toast('OddsPapi eingerichtet'); return opLoad({ manual: true }); }, function(){}); break;
+    case 'opload': opLoad({ manual: true }); break;
+    case 'showopkey': { var ko = $('s-opkey'); if (ko){ ko.type = ko.type === 'password' ? 'text' : 'password'; t.textContent = ko.type === 'password' ? 'Zeigen' : 'Verbergen'; } break; }
+    case 'opmove': state.api.op.key = String(state.api.key || '').trim(); state.api.key = ''; state.api.op.setup = null; saveApi(); openSettings(); toast('Schlüssel verschoben. Trag oben deinen Schlüssel von The Odds API ein.'); break;
     case 'pushon': pushEnable(); break;
     case 'pushoff': pushOff(); break;
     case 'pushtest': pushTest(); break;
@@ -2599,11 +3094,12 @@ document.addEventListener('click', function(e){
     case 'pushcode': if (state.workerCode) copyText(state.workerCode, 'Code kopiert'); break;
     case 'pushlead-fb': case 'pushlead-bb': case 'pushlead-ih': state.api.push.lead[act.slice(9)] = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
     case 'pushval': state.api.push.value = t.getAttribute('data-v') === 'on'; saveApi(); schedulePushSync(); openSettings(); break;
+    case 'pushopcalls': state.api.push.opCalls = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
     case 'pushcalls': state.api.push.calls = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
     case 'anaby': state.anaBy = t.getAttribute('data-v'); renderCalc(); break;
     case 'logslip': openLogSlip(); break;
     case 'savebet': saveBet(); break;
-    case 'settle': settleBets(); break;
+    case 'settle': settleBets(false); break;
     case 'legset': {
       var bt = state.bets.filter(function(x){ return x.id === t.getAttribute('data-b'); })[0];
       if (bt){ var lg2 = bt.legs[+t.getAttribute('data-i')], v2 = t.getAttribute('data-v'); lg2.state = lg2.state === v2 ? 'open' : v2; recomputeBet(bt); saveBets(); renderCalc(); }
@@ -2636,6 +3132,7 @@ document.addEventListener('input', function(e){
   if (id === 's-key'){ state.api.key = e.target.value.trim(); state.apiError = ''; saveApi(); }
   if (id === 's-base'){ state.api.base = e.target.value.trim(); saveApi(); }
   if (id === 's-push'){ state.api.push.url = e.target.value.trim(); saveApi(); }
+  if (id === 's-opkey'){ var nk = e.target.value.trim(); if (nk !== state.api.op.key){ state.api.op.key = nk; state.api.op.setup = null; state.api.op.err = ''; state.api.op.via = ''; saveApi(); } }
   if (id === 's-edge'){ var d = parseNum(e.target.value); if (d >= 0 && d <= 50){ state.settings.minEdge = d / 100; save(); renderSlip(); renderGames(); updateCalc(); } }
 });
 document.addEventListener('pointerdown', function(e){ if (e.target && e.target.closest && e.target.closest('#anaChart')) anaTip(e); });

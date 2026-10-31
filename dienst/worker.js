@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'f6bbc54d8e';
+const WORKER_VER = 'ee1da03eee';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -36,6 +36,26 @@ const jsonData = (data, headers) => new Response(JSON.stringify(data), { status:
 const listOk = (v, allowed) => v.split(',').every((x) => allowed.includes(x)) && v.split(',').length <= allowed.length;
 const originOf = (env) => (env.ALLOWED_ORIGIN || '').trim().replace(/\/+$/, '');
 
+// OddsPapi weiterleiten (falls der Browser den direkten Abruf blockiert); nur Lese-Endpunkte, Schluessel kommt von der App
+const OP_PATHS = ['account', 'sports', 'bookmakers', 'tournaments', 'markets', 'odds-by-tournaments'];
+const OP_PARAMS = ['apiKey', 'sportId', 'bookmaker', 'tournamentIds', 'oddsFormat', 'language'];
+async function opProxy(request, headers) {
+  if (request.method !== 'GET') return json(405, 'Method not allowed', headers);
+  const url = new URL(request.url);
+  const m = /^\/op\/v4\/([a-z-]+)$/.exec(url.pathname);
+  if (!m || !OP_PATHS.includes(m[1])) return json(404, 'Not found', headers);
+  const target = new URL('https://api.oddspapi.io/v4/' + m[1]);
+  for (const [k, v] of url.searchParams) {
+    if (!OP_PARAMS.includes(k)) return json(400, 'Parameter not allowed: ' + k, headers);
+    target.searchParams.set(k, v);
+  }
+  if (!target.searchParams.get('apiKey')) return json(401, 'Missing API key', headers);
+  const upstream = await fetch(target.toString(), { headers: { Accept: 'application/json' } });
+  const out = new Headers(headers);
+  out.set('Content-Type', upstream.headers.get('Content-Type') || 'application/json');
+  out.set('Cache-Control', 'no-store');
+  return new Response(upstream.body, { status: upstream.status, headers: out });
+}
 async function proxy(request, headers, env) {
   if (request.method !== 'GET') return json(405, 'Method not allowed', headers);
   const url = new URL(request.url);
@@ -921,7 +941,263 @@ function planSmart(infos, budgetLeft, nowMs, closeLeft){
   need.forEach(function(x){ if (x.cost <= left){ out.push(x.key); left -= x.cost; } });
   return out;
 }
+// ---------------------------------------------------------------------------------------------------------------
+// bet365 automatisch ueber OddsPapi (eigener Schluessel, eigenes Kontingent, unabhaengig von The Odds API)
+// Ein Abruf "odds-by-tournaments" liefert bet365 fuer alle gewaehlten Ligen auf einmal (alle Maerkte).
+// Zuordnung zu den Pinnacle-Spielen: gleiche Liga, gleiche Anstosszeit, Namen und vor allem aehnliche Quoten.
+// Jede automatische Quote muss zur Pinnacle-Quote passen (Plausibilitaet), sonst wird sie verworfen.
+var OP_BASE = 'https://api.oddspapi.io';
+var OP_BOOK = 'bet365';
+var AUTO_LABEL = 'bet365 auto';
+var AUTO_MAX_AGE = 2 * 3600000;   // aeltere automatische Quoten zaehlen nicht (bet365 bewegt sich staendig)
+var OP_LEAGUES = {
+  soccer_germany_bundesliga: { cat: ['germany'], names: ['bundesliga', '1 bundesliga'] },
+  soccer_germany_bundesliga2: { cat: ['germany'], names: ['2 bundesliga', 'bundesliga 2', '2nd bundesliga'] },
+  soccer_epl: { cat: ['england'], names: ['premier league'] },
+  soccer_spain_la_liga: { cat: ['spain'], names: ['laliga', 'la liga', 'primera division', 'laliga ea sports'] },
+  soccer_italy_serie_a: { cat: ['italy'], names: ['serie a'] },
+  soccer_france_ligue_one: { cat: ['france'], names: ['ligue 1', 'ligue 1 mcdonald s'] },
+  soccer_uefa_champs_league: { cat: null, names: ['uefa champions league', 'champions league'] },
+  soccer_germany_dfb_pokal: { cat: ['germany'], names: ['dfb pokal', 'dfb cup'] },
+  soccer_fa_cup: { cat: ['england'], names: ['fa cup'] },
+  soccer_england_efl_cup: { cat: ['england'], names: ['efl cup', 'league cup', 'carabao cup'] },
+  soccer_spain_copa_del_rey: { cat: ['spain'], names: ['copa del rey'] },
+  soccer_italy_coppa_italia: { cat: ['italy'], names: ['coppa italia'] },
+  soccer_france_coupe_de_france: { cat: ['france'], names: ['coupe de france'] },
+  soccer_uefa_europa_league: { cat: null, names: ['uefa europa league', 'europa league'] },
+  soccer_uefa_europa_conference_league: { cat: null, names: ['uefa conference league', 'uefa europa conference league', 'conference league'] },
+  basketball_nba: { cat: ['usa'], names: ['nba'] },
+  basketball_euroleague: { cat: null, names: ['euroleague'] },
+  icehockey_nhl: { cat: ['usa'], names: ['nhl'] },
+  icehockey_sweden_hockey_league: { cat: ['sweden'], names: ['shl'] },
+  icehockey_liiga: { cat: ['finland'], names: ['liiga'] }
+};
+function opNorm(s){
+  var t = String(s == null ? '' : s).toLowerCase();
+  try { t = t.normalize('NFD').replace(/[̀-ͯ]/g, ''); } catch (e) {}
+  return t.replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+function opUrl(base, path, params){
+  var b = String(base || '').trim().replace(/\/+$/, '');
+  return (b ? b + '/op' : OP_BASE) + path + '?' + qs(params);
+}
+// Sportarten-IDs aus /v4/sports
+function opSportIds(list){
+  var out = {};
+  (Array.isArray(list) ? list : []).forEach(function(s){
+    if (!s || typeof s.sportId !== 'number') return;
+    var n = opNorm(s.slug) + ' ' + opNorm(s.sportName);
+    if (!out.fb && /\b(soccer|football)\b/.test(n) && !/american|australian/.test(n)) out.fb = s.sportId;
+    else if (!out.bb && /\bbasketball\b/.test(n)) out.bb = s.sportId;
+    else if (!out.ih && /\b(ice hockey|icehockey|ice\-hockey)\b/.test(n.replace(/-/g, ' ')) ) out.ih = s.sportId;
+  });
+  return out;
+}
+// Ligen der App -> OddsPapi-Turnier-IDs (aus /v4/tournaments je Sportart)
+function opMapTournaments(tours, sport){
+  var out = {};
+  LEAGUES.filter(function(l){ return l.sport === sport; }).forEach(function(l){
+    var spec = OP_LEAGUES[l.key];
+    if (!spec) return;
+    var best = null, bestN = -1;
+    (Array.isArray(tours) ? tours : []).forEach(function(t){
+      if (!t || typeof t.tournamentId !== 'number') return;
+      var nm = opNorm(t.tournamentName), slug = opNorm(t.tournamentSlug), cat = opNorm(t.categoryName) + ' ' + opNorm(t.categorySlug);
+      if (spec.names.indexOf(nm) < 0 && spec.names.indexOf(slug) < 0) return;
+      if (spec.cat && !spec.cat.some(function(c){ return (' ' + cat + ' ').indexOf(' ' + c + ' ') >= 0; })) return;
+      var n = (t.upcomingFixtures || 0) + (t.futureFixtures || 0);
+      if (n > bestN){ best = t; bestN = n; }
+    });
+    if (best) out[l.key] = best.tournamentId;
+  });
+  return out;
+}
+// Maerkte aus /v4/markets -> Index je Sportart: { marketId: { kind, line, ot, out: { outcomeId: key } } }
+// kind: res3 (1X2), res2 (Sieger 2-Weg), dc, ou (Ueber/Unter), hc (Handicap; Linie = Heimteam)
+function opOutcomeKey(name){
+  var n = opNorm(name).replace(/\s+/g, '');
+  if (n === '1' || n === 'home' || /^(competitor|team|participant)1$/.test(n)) return 'h';
+  if (n === '2' || n === 'away' || /^(competitor|team|participant)2$/.test(n)) return 'a';
+  if (n === 'x' || n === 'draw') return 'd';
+  if (n === 'over') return 'o';
+  if (n === 'under') return 'u';
+  if (n === '1x' || n === 'homeordraw') return 'hx';
+  if (n === 'x2' || n === 'draworaway') return 'xa';
+  if (n === '12' || n === 'homeoraway') return 'ha';
+  return null;
+}
+function opPeriodOk(p){
+  var n = opNorm(p);
+  if (!n) return { ok: true, ot: false };
+  var ot = /\bincl|\bovertime\b|\bot\b|\bincluding\b/.test(n);
+  if (!ot && /half|quarter|period|inning|set|minute|first|second|third|1st|2nd|3rd|4th|\b1h\b|\b2h\b|\bq\d/.test(n)) return { ok: false };
+  if (ot || /^(fulltime|full time|ft|match|regular time|regulartime|regulation|game|full match|whole match)$/.test(n)) return { ok: true, ot: ot };
+  return { ok: false };
+}
+function opMarketIndex(markets, sportIds){
+  var out = { fb: {}, bb: {}, ih: {} }, bySport = {};
+  Object.keys(sportIds || {}).forEach(function(k){ bySport[sportIds[k]] = k; });
+  (Array.isArray(markets) ? markets : []).forEach(function(mk){
+    if (!mk || mk.playerProp === true) return;
+    var sp = bySport[mk.sportId];
+    if (!sp || !Array.isArray(mk.outcomes)) return;
+    var per = opPeriodOk(mk.period);
+    if (!per.ok) return;
+    var map = {}, keys = [];
+    mk.outcomes.forEach(function(o){ var k = o ? opOutcomeKey(o.outcomeName) : null; if (k && keys.indexOf(k) < 0){ map[String(o.outcomeId)] = k; keys.push(k); } });
+    if (keys.length !== mk.outcomes.length) return;
+    var set = keys.slice().sort().join(','), type = opNorm(mk.marketType) + ' ' + opNorm(mk.marketName);
+    var hcap = typeof mk.handicap === 'number' && isFinite(mk.handicap) ? mk.handicap : 0;
+    var kind = null, line = null;
+    if (/draw no bet|\bdnb\b|corner|card|booking|team total|odd even|exact|margin|race|both teams/.test(type)) return;
+    if (set === 'a,d,h' && hcap === 0 && !/handicap|spread/.test(type)) kind = 'res3';
+    else if (set === 'ha,hx,xa') kind = 'dc';
+    else if (set === 'o,u'){ kind = 'ou'; line = hcap; }
+    else if (set === 'a,h'){
+      if (/handicap|spread|asian|\bline\b|puck|run line/.test(type) && !/moneyline|money line/.test(type)){ kind = 'hc'; line = hcap; }
+      else if (hcap === 0) kind = 'res2';
+    }
+    if (!kind) return;
+    out[sp][String(mk.marketId)] = { kind: kind, line: line, ot: !!per.ot, out: map };
+  });
+  return out;
+}
+function opPrice(o){
+  if (!o || typeof o !== 'object') return null;
+  var pl = o.players && typeof o.players === 'object' ? (o.players['0'] || o.players[Object.keys(o.players)[0]]) : o;
+  if (!pl || pl.active === false) return null;
+  var p = typeof pl.price === 'number' ? pl.price : parseFloat(pl.price);
+  return isFinite(p) && p > 1 && p < 1000 ? Math.round(p * 1000) / 1000 : null;
+}
+// Antwort von odds-by-tournaments -> bet365-Quoten je Spiel
+function opParse(list, idx, tid2lkey, book){
+  var out = [];
+  (Array.isArray(list) ? list : []).forEach(function(f){
+    if (!f || f.fixtureId == null) return;
+    var lkey = tid2lkey[f.tournamentId], lg = lkey ? leagueByKey(lkey) : null;
+    if (!lg) return;
+    var ko = Date.parse(f.startTime);
+    if (!isFinite(ko)) return;
+    var bo = f.bookmakerOdds && f.bookmakerOdds[book || OP_BOOK];
+    if (!bo || bo.bookmakerIsActive === false || !bo.markets || typeof bo.markets !== 'object') return;
+    var defs = idx[lg.sport] || {}, res3 = null, res2 = {}, dc = null, ou = {}, hc = {}, at = 0;
+    Object.keys(bo.markets).forEach(function(mid){
+      var def = defs[mid], mk = bo.markets[mid];
+      if (!def || !mk || !mk.outcomes || typeof mk.outcomes !== 'object') return;
+      var v = {}, n = 0;
+      Object.keys(mk.outcomes).forEach(function(oid){
+        var k = def.out[oid], pr = k ? opPrice(mk.outcomes[oid]) : null;
+        if (!pr) return;
+        v[k] = pr; n++;
+        var pl = mk.outcomes[oid].players && mk.outcomes[oid].players['0'];
+        var ch = pl && Date.parse(pl.changedAt); if (isFinite(ch) && ch > at) at = ch;
+      });
+      if (n !== Object.keys(def.out).length) return;
+      var ot = def.ot ? 'ot' : 'ft';
+      if (def.kind === 'res3') res3 = v;
+      else if (def.kind === 'res2') res2[ot] = v;
+      else if (def.kind === 'dc') dc = v;
+      else if (def.kind === 'ou') (ou[ot] = ou[ot] || {})[String(def.line)] = v;
+      else if (def.kind === 'hc') (hc[ot] = hc[ot] || {})[String(def.line)] = v;
+    });
+    var two = lg.sport !== 'fb';
+    // Basketball/Eishockey: Maerkte inkl. Verlaengerung bevorzugen (wie Pinnacle)
+    var pick = function(o){ return two ? (o.ot || o.ft || null) : (o.ft || null); };
+    var res = two ? pick(res2) : res3;
+    if (!res && !pick(ou) && !pick(hc)) return;
+    out.push({ fid: String(f.fixtureId), lkey: lkey, sport: lg.sport, ko: ko, home: String(f.participant1Name || ''), away: String(f.participant2Name || ''),
+      res: res, dc: two ? null : dc, ou: pick(ou) || {}, hc: pick(hc) || {}, at: at });
+  });
+  return out;
+}
+var OP_STOP = ['fc', 'sc', 'sv', 'cf', 'afc', 'ac', 'as', 'ss', 'us', 'rc', 'fk', 'bk', 'vfb', 'vfl', 'tsg', 'club', 'de', 'la', 'the', 'calcio', 'cd', 'ud', 'sd', 'rcd', 'ogc', 'osc', 'stade', '1', '04', '05', '1899', '1846', '1860', '1909', '1910'];
+var OP_ALIAS = { munchen: 'munich', koln: 'cologne', monchengladbach: 'gladbach', nurnberg: 'nuremberg', hertha: 'hertha', inter: 'internazionale', internazionale: 'internazionale', man: 'manchester', utd: 'united', wolverhampton: 'wolves', spurs: 'tottenham', psg: 'paris' };
+function opTokens(s){
+  return opNorm(s).split(' ').filter(function(t){ return t && OP_STOP.indexOf(t) < 0; }).map(function(t){ return OP_ALIAS[t] || t; });
+}
+function opNameScore(a, b){
+  var x = opTokens(a), y = opTokens(b);
+  if (!x.length || !y.length) return 0;
+  var hit = 0;
+  x.forEach(function(t){ if (y.some(function(u){ return u === t || (t.length >= 4 && u.length >= 4 && (u.indexOf(t) === 0 || t.indexOf(u) === 0)); })) hit++; });
+  return hit / Math.max(x.length, y.length);
+}
+// Abstand der 1X2-/Sieger-Chancen zwischen Pinnacle und bet365 (gleiches Spiel: meist unter 0,04)
+function opOddsDist(ref, res){
+  if (!ref || !res || !(ref.h > 1 && ref.a > 1 && res.h > 1 && res.a > 1)) return null;
+  return Math.abs(1 / ref.h - 1 / res.h) + Math.abs(1 / ref.a - 1 / res.a);
+}
+// Zuordnung: raws = Spiele der App (Rohformat, mit Pinnacle), parsed = opParse-Ergebnis. Liefert { spielId: bet365-Quoten }
+function opMatch(raws, parsed){
+  var out = {}, used = {};
+  (Array.isArray(raws) ? raws : []).forEach(function(m){
+    if (!m || !m.lkey || m.fixture) return;
+    var ko = typeof m.kickoff === 'number' ? m.kickoff : Date.parse(m.kickoff);
+    if (!isFinite(ko)) return;
+    var cands = parsed.filter(function(c){ return c.lkey === m.lkey && !used[c.fid] && Math.abs(c.ko - ko) <= 15 * 60000; }).map(function(c){
+      var ns = (opNameScore(m.home, c.home) + opNameScore(m.away, c.away)) / 2, d = opOddsDist(m.ref, c.res);
+      return { c: c, ns: ns, d: d, s: ns - (d == null ? 0.3 : 4 * d) };
+    }).sort(function(a, b){ return b.s - a.s; });
+    if (!cands.length) return;
+    var top = cands[0], second = cands[1];
+    var oddsOk = top.d != null && top.d <= 0.08;
+    var namesOk = top.ns >= 0.5;
+    // ohne passende Quoten nur bei sehr klaren Namen; mit Quoten muss das zweitbeste Spiel deutlich schlechter sein
+    if (top.d != null && top.d > 0.15) return;
+    if (!(oddsOk || (namesOk && top.d == null))) return;
+    if (second && top.s - second.s < 0.25 && !(namesOk && second.ns < 0.3)) return;
+    used[top.c.fid] = true;
+    out[m.id] = { fid: top.c.fid, res: top.c.res, dc: top.c.dc, ou: top.c.ou, hc: top.c.hc, at: top.c.at };
+  });
+  return out;
+}
+function opSane(b, ref){ return b > 1 && ref > 1 && Math.abs(1 / b - 1 / ref) <= 0.08 && b / ref <= 1.35 && ref / b <= 1.35; }
+function opMargin(arr, lo, hi){ var s = arr.reduce(function(a, x){ return a + 1 / x; }, 0); return s >= lo && s <= hi; }
+// Automatische bet365-Quoten in ein Spiel (Rohformat) einsetzen; nur plausible, nur zur Pinnacle-Linie, nur frische
+function withAuto(m, a, now, at){
+  var t = a && (at || a.fetched || a.at);
+  if (!a || !m || !(t > 0) || now - t > AUTO_MAX_AGE) return m;
+  var out = Object.assign({}, m), bsrc = Object.assign({}, m.bsrc || {}), any = false;
+  var ref = m.ref || {};
+  if (a.res && ref.h > 1 && ref.a > 1){
+    var keys = ref.d > 1 ? ['h', 'd', 'a'] : ['h', 'a'];
+    if (keys.every(function(k){ return a.res[k] > 1; }) && opMargin(keys.map(function(k){ return a.res[k]; }), 1.0, keys.length === 3 ? 1.2 : 1.15)){
+      var bk = Object.assign({}, m.book || {});
+      keys.forEach(function(k){ if (opSane(a.res[k], ref[k])){ bk[k] = a.res[k]; bsrc['res.' + k] = AUTO_LABEL; any = true; } });
+      out.book = bk;
+      if (m.sport === 'fb' && a.dc && ref.d > 1){
+        var fp = fairProbs([ref.h, ref.d, ref.a], 'power'), pdc = { hx: fp[0] + fp[1], xa: fp[1] + fp[2], ha: fp[0] + fp[2] }, dc = Object.assign({}, m.dc || {});
+        DC_KEYS.forEach(function(k){ var b = a.dc[k]; if (b > 1 && Math.abs(1 / b - pdc[k]) <= 0.08 && 1 / b >= pdc[k] - 0.06){ dc[k] = b; bsrc['dc.' + k] = AUTO_LABEL; any = true; } });
+        out.dc = dc;
+      }
+    }
+  }
+  if (m.ou && m.ou.ref && a.ou){
+    var o = a.ou[String(m.ou.line)];
+    if (o && o.o > 1 && o.u > 1 && opMargin([o.o, o.u], 1.0, 1.15) && opSane(o.o, m.ou.ref.o) && opSane(o.u, m.ou.ref.u)){
+      out.ou = Object.assign({}, m.ou, { book: { o: o.o, u: o.u } }); bsrc['ou.o'] = bsrc['ou.u'] = AUTO_LABEL; any = true;
+    }
+  }
+  if (m.hc && m.hc.ref && a.hc){
+    var hh = a.hc[String(m.hc.line)];
+    if (hh && hh.h > 1 && hh.a > 1 && opMargin([hh.h, hh.a], 1.0, 1.15) && opSane(hh.h, m.hc.ref.h) && opSane(hh.a, m.hc.ref.a)){
+      out.hc = Object.assign({}, m.hc, { book: { h: hh.h, a: hh.a } }); bsrc['hc.h'] = bsrc['hc.a'] = AUTO_LABEL; any = true;
+    }
+  }
+  if (!any) return m;
+  out.bsrc = bsrc; out.autoAt = t;
+  return out;
+}
+// Tagesanteil am OddsPapi-Kontingent (nach Wochentag gewichtet); reservePerDay bleibt fuer den Push-Dienst
+function opBudget(remaining, spentToday, nowMs, reservePerDay){
+  if (remaining == null || !isFinite(remaining)) return null;
+  var spent = Math.max(0, spentToday || 0), start = remaining + spent;
+  var res = Math.max(0, reservePerDay || 0) * daysLeftInMonth(nowMs);
+  var allow = Math.floor(Math.max(0, start - 3 - res) * DAY_WEIGHT[berlinDay(nowMs)] / weightLeft(nowMs));
+  return { allow: allow, spent: spent, left: Math.max(0, Math.min(allow - spent, remaining - 3)) };
+}
   return { normalizeFeed, applyOverride, selectionsFor, fairOddsFor, convertEvents, leagueByKey, marketsFor, oddsUrl, fmtLine, fmtHc, RULE, SMART_RESERVE,
+    opParse, opMatch, withAuto, opUrl, OP_BOOK, OP_BASE,
     setAh: function (v) { AH_FB = v !== false; } };
 })();
 
@@ -1009,6 +1285,7 @@ async function sendPush(env, sub, msg, nowMs, ttl) {
 // ---------------------------------------------------------------------------------------------------------------
 // Push-Logik
 const MIN = 60000;
+const APP_AUTO_LABEL = 'bet365 auto';
 // Erinnerung X Min vor Anpfiff: Dann sind Aufstellungen (Fussball ~60 Min, NBA 30 Min) bzw. Startgoalies (NHL) bekannt.
 // Pinnacle preist sie in Minuten ein, bet365 und Betano oft spaeter: das beste Fenster fuer Value.
 const DEFAULT_LEAD = { fb: 55, bb: 25, ih: 45 };
@@ -1052,11 +1329,13 @@ function newestQuota(a, b) {
   return (b.at || 0) > (a.at || 0) ? b : a;
 }
 // Spiele (Rohformat der App) zu Spielen mit deinen Quoten und deinem Anbieter
-function prepMatches(raw, user, cfg) {
+function prepMatches(raw, user, cfg, auto, nowMs) {
   const f = APP.normalizeFeed({ matches: raw });
   return (f ? f.matches : []).map((m) => {
     const p = cfg.prov[m.sport] || cfg.prov.fb;
-    return Object.assign(APP.applyOverride(m, user.ov && user.ov[m.id]), { bookName: p.book, taxF: p.tf });
+    const a = auto && auto[m.id];
+    const base = a && p.book === APP.OP_BOOK ? APP.withAuto(m, a, nowMs, a.fetched) : m;
+    return Object.assign(APP.applyOverride(base, user.ov && user.ov[m.id]), { bookName: p.book, taxF: p.tf });
   });
 }
 function valueLegs(m, cfg) {
@@ -1172,7 +1451,34 @@ async function runCron(env, nowMs) {
       if (!lg) return;
       APP.convertEvents(s.ev, lg, s.at).forEach((m) => { const old = rawById[m.id]; if (!old || !(old.oddsAt >= m.oddsAt)) rawById[m.id] = m; });
     });
-    const ms = prepMatches(due.map((g) => rawById[g.id] || g), user, cfg);
+    // bet365 automatisch (OddsPapi): ein Abruf fuer alle faelligen Ligen, gleicher Zeitpunkt wie Pinnacle
+    const auto = Object.assign({}, user.auto || {});
+    const op = user.op;
+    if (op && op.key && op.tours && op.idx) {
+      const opDay = berlinDay(nowMs);
+      if (!st.opSpent || st.opSpent.day !== opDay) st.opSpent = { day: opDay, n: 0 };
+      const tids = [...dueLeagues].filter((k) => { const lg = APP.leagueByKey(k); return lg && op.tours[k] && (cfg.prov[lg.sport] || {}).book === APP.OP_BOOK; }).map((k) => op.tours[k]);
+      const haveFresh = due.every((g) => auto[g.id] && nowMs - (auto[g.id].fetched || 0) < DATA_FRESH);
+      const opLeft = op.remaining == null ? Infinity : op.remaining - (st.opTotal || 0) + (op.seen || 0);
+      if (tids.length && !haveFresh && st.opSpent.n < (op.calls == null ? 3 : op.calls) && opLeft > 3) {
+        try {
+          const u = APP.opUrl('', '/v4/odds-by-tournaments', { bookmaker: op.book || APP.OP_BOOK, tournamentIds: [...new Set(tids)].slice(0, 10).join(','), oddsFormat: 'decimal', apiKey: op.key });
+          const r = await fetch(u, { headers: { Accept: 'application/json' } });
+          st.opSpent.n++; st.opTotal = (st.opTotal || 0) + 1; dirtyState = true;
+          if (r.ok) {
+            const list = await r.json();
+            const tid2l = {};
+            Object.keys(op.tours).forEach((k) => { tid2l[op.tours[k]] = k; });
+            const parsed = APP.opParse(list, op.idx, tid2l, op.book || APP.OP_BOOK);
+            const hit = APP.opMatch(Object.values(rawById).filter((g) => dueLeagues.has(g.lkey)), parsed);
+            Object.keys(hit).forEach((id) => { hit[id].fetched = nowMs; auto[id] = hit[id]; });
+            if (Object.keys(hit).length) { (await loadSnaps()).push({ id: 'auto:' + nowMs, kind: 'auto', at: nowMs, auto: hit }); dirtySnaps = true; }
+            report.fetched.push('bet365 (' + Object.keys(hit).length + ')');
+          } else logAdd('OddsPapi Fehler ' + r.status);
+        } catch (e) { logAdd('OddsPapi nicht erreichbar'); }
+      }
+    }
+    const ms = prepMatches(due.map((g) => rawById[g.id] || g), user, cfg, auto, nowMs);
     const vals = [];
     ms.forEach((m) => valueLegs(m, cfg).forEach((s) => vals.push({ m, s })));
     vals.sort((a, b) => b.s.ev - a.s.ev);
@@ -1184,8 +1490,9 @@ async function runCron(env, nowMs) {
       const top = vals[0], prov = top.m.bookName;
       const lines = vals.slice(0, 3).map((v) => v.s.label + ' @ ' + f2(v.s.book) + ' (' + pctS(v.s.ev) + ')');
       const at = top.m.refAt || top.m.oddsAt;
+      const viaAuto = top.s.src === APP_AUTO_LABEL;
       msg = { title: '💰 Value bei ' + prov + ': ' + vals.length + (vals.length === 1 ? ' Tipp' : ' Tipps'),
-        body: lines.join('\n') + '\nMit deinen eingetragenen Quoten, Pinnacle ' + (at ? 'von ' + berlinHm(at) : '') + '. Prüf, ob ' + prov + ' sie noch bietet. Anpfiff in ' + mins + ' Min.',
+        body: lines.join('\n') + '\n' + (viaAuto ? prov + '-Quoten automatisch von ' + berlinHm(top.m.autoAt) : 'Mit deinen eingetragenen Quoten') + ', Pinnacle ' + (at ? 'von ' + berlinHm(at) : '') + '. Prüf, ob ' + prov + ' sie noch bietet. Anpfiff in ' + mins + ' Min.',
         tag: 'value', url: './' };
     } else {
       const one = ms.length === 1 ? fairText(ms[0], cfg) : '';
@@ -1254,13 +1561,16 @@ async function push(request, headers, env, nowMs) {
       games: Array.isArray(b.games) ? b.games.slice(0, 300) : [],
       ov: b.ov && typeof b.ov === 'object' ? b.ov : {},
       legs: Array.isArray(b.legs) ? b.legs.slice(0, 100).filter((l) => l && typeof l.mid === 'string').map((l) => ({ mid: l.mid.slice(0, 120), lkey: String(l.lkey || '').slice(0, 60), market: String(l.market || '').slice(0, 4), ko: +l.ko })) : [],
-      quota: b.quota && typeof b.quota.remaining === 'number' ? { remaining: b.quota.remaining, used: b.quota.used, at: +b.quota.at || 0 } : (user.quota || null)
+      quota: b.quota && typeof b.quota.remaining === 'number' ? { remaining: b.quota.remaining, used: b.quota.used, at: +b.quota.at || 0 } : (user.quota || null),
+      op: b.op && typeof b.op === 'object' && typeof b.op.key === 'string' && b.op.key ? { key: b.op.key.slice(0, 100), book: String(b.op.book || 'bet365').slice(0, 30), tours: b.op.tours || {}, idx: b.op.idx || null,
+        calls: num(b.op.calls, 0, 20, 3), remaining: typeof b.op.remaining === 'number' ? b.op.remaining : null, seen: +b.op.seen || 0 } : null,
+      auto: b.auto && typeof b.auto === 'object' ? b.auto : {}
     };
     if (JSON.stringify(next) !== JSON.stringify(user)) await env.VS.put('user', JSON.stringify(next));
     const st = (await env.VS.get('state', 'json')) || {};
     const snaps = (await env.VS.get('snaps', 'json')) || [];
     const since = +b.since || 0;
-    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), snaps: snaps.filter((s) => s.at > since), quota: st.quota || null, log: (st.log || []).slice(-10), spent: st.spent || null, now: nowMs }, headers);
+    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), snaps: snaps.filter((s) => s.at > since), quota: st.quota || null, opTotal: st.opTotal || 0, log: (st.log || []).slice(-10), spent: st.spent || null, now: nowMs }, headers);
   }
   if (path === '/push/test') {
     if (!validSub(user.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in der App ein.', headers);
@@ -1290,6 +1600,7 @@ export default {
     if ((request.headers.get('Origin') || '') !== allowed) return json(403, 'Origin not allowed', headers);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     if (new URL(request.url).pathname.startsWith('/push/')) return push(request, headers, env, Date.now());
+    if (new URL(request.url).pathname.startsWith('/op/')) return opProxy(request, headers);
     return proxy(request, headers, env);
   },
   async scheduled(event, env, ctx) {
