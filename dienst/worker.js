@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '75f51a79c9';
+const WORKER_VER = '3ca8b77d79';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -1696,7 +1696,8 @@ async function push(request, headers, env, nowMs) {
       quota: b.quota && typeof b.quota.remaining === 'number' ? { remaining: b.quota.remaining, used: b.quota.used, at: +b.quota.at || 0 } : (user.quota || null),
       op: b.op && typeof b.op === 'object' && typeof b.op.key === 'string' && b.op.key ? { key: b.op.key.slice(0, 100), book: String(b.op.book || 'bet365').slice(0, 30), tours: b.op.tours || {}, idx: b.op.idx || null,
         calls: num(b.op.calls, 0, 20, 3), remaining: typeof b.op.remaining === 'number' ? b.op.remaining : null, seen: +b.op.seen || 0 } : null,
-      auto: b.auto && typeof b.auto === 'object' ? b.auto : {}
+      auto: b.auto && typeof b.auto === 'object' ? b.auto : {},
+      dg: b.dg && typeof b.dg === 'object' && JSON.stringify(b.dg).length < 4000 ? b.dg : null
     };
     if (JSON.stringify(next) !== JSON.stringify(user)) await env.VS.put('user', JSON.stringify(next));
     const st = (await env.VS.get('state', 'json')) || {};

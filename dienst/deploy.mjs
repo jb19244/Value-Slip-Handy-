@@ -119,7 +119,7 @@ export async function diag({ token, fetchFn = fetch }) {
     quotaApp: user.quota || null, quotaWorker: st.quota || null, spent: st.spent || null, opSpent: st.opSpent || null,
     op: user.op ? { tours: Object.keys(user.op.tours || {}), remaining: user.op.remaining, calls: user.op.calls } : null,
     autoMatched: Object.keys(user.auto || {}).length, ownOdds: Object.keys(user.ov || {}).length, openLegs: (user.legs || []).length,
-    leagues, log: (st.log || []).slice(-15).map((x) => ({ at: new Date(x.at).toISOString(), t: x.t })) };
+    app: user.dg || null, leagues, log: (st.log || []).slice(-15).map((x) => ({ at: new Date(x.at).toISOString(), t: x.t })) };
 }
 if (process.argv[1] && process.argv[1].endsWith('deploy.mjs')) {
   const code = readFileSync(new URL('worker.js', DIR), 'utf8');

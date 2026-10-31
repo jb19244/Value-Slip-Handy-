@@ -1656,6 +1656,11 @@ function recommendations(active, st){
   var recs = r.slips.map(function(sl, i){
     return { title: names[i], sub: 'Bei ' + (sl.legs[0].prov || 'Betano') + ' · jeder Tipp mit Value', slip: sl, also: [], rank: i + 1 };
   });
+  // Einzelwetten mit Value als eigene Scheine (kopieren, ins Tagebuch, Auswertung)
+  r.singles.slice(0, 5).forEach(function(x, i){
+    var sl = { legs: [x], odds: x.book, eff: x.book * (x.tf || 1), p: x.p, ev: x.ev, score: slipGrowth(x.p, x.book * (x.tf || 1), st) };
+    recs.push({ title: recs.length || i ? 'Einzelwette' : 'Beste Wette: Einzelwette', sub: 'Bei ' + (x.prov || 'Betano') + ' · Value ' + sgn(x.ev), slip: sl, also: [], rank: 10 + i, single: true });
+  });
   r.safeSlips.forEach(function(sl, i){
     recs.push({ title: i ? 'Hohe Trefferchance, Alternative' : 'Hohe Trefferchance', sub: 'Bei ' + (sl.legs[0].prov || 'Betano') + ' · jeder Tipp ab ' + pct(SAFE.minP, 0) + ' Chance, wenig Value', slip: sl, also: [], rank: 0, safe: true });
   });
@@ -1769,7 +1774,6 @@ function renderSlip(){
   // Beste Einzelwetten: zuerst echte Value-Tipps, sonst die sichersten Tipps mit kleinem Nachteil
   var sv = R.singlesValue.slice(0, 5);
   var sh = R.singlesHit.slice(0, 5);
-  if (sv.length) h += '<div class="card"><div class="label">Beste Einzelwetten (mit Value)</div><ol class="legs singles top">' + sv.map(legRow).join('') + '</ol></div>';
   if (sh.length) h += '<div class="card"><div class="label">Sichere Einzelwetten (ab ' + pct(SAFE.singleMinP, 0) + ' Chance, wenig Value)</div><ol class="legs singles top">' + sh.map(legRow).join('') + '</ol></div>';
   h += det('slipfoot', 'Hinweise', '<p class="foot">Chancen aus Pinnacle-Quoten ohne Marge, weitere Fußballmärkte aus einem Torverteilungsmodell. Die App prüft jede mögliche Kombination und zeigt nur die besten Scheine; pro Spiel höchstens ein Tipp. Begonnene Spiele fließen nicht ein. Prüfe jede Quote vor dem Setzen in der Betano-App. Einsatz: ' +
     kellyName(st.kelly) + 'Kelly, höchstens 3 % der Bankroll. Ab 18. Hilfe bei Spielproblemen: check-dein-spiel.de</p>', 'small');
@@ -2645,7 +2649,29 @@ function onFeed(raw, persist){
   if (state.editing && !$('overlay').hidden) return void (state.pendingRender = true);
   renderAll(true);
 }
+// The Odds API begrenzt, wie schnell Abrufe aufeinander folgen. Darum mit kleinem Abstand nacheinander abrufen und bei
+// „zu schnell“ (429 ohne Kontingent-Hinweis) kurz warten und erneut versuchen, statt alle weiteren Ligen abzubrechen.
+var apiQueue = Promise.resolve(), apiLast = 0, API_GAP = 350;
 function fetchJson(url, estCost, allowObj){
+  var run = function(){
+    var wait = Math.max(0, apiLast + API_GAP - Date.now());
+    return new Promise(function(r){ setTimeout(r, wait); }).then(function(){
+      var attempt = function(n){
+        apiLast = Date.now();
+        return fetchJsonOnce(url, estCost, allowObj).catch(function(e){
+          var quotaHit = /quota|usage/i.test(String(e && e.body || ''));
+          if (e && e.status === 429 && !quotaHit && n < 3) return new Promise(function(r){ setTimeout(r, 1200 * (n + 1)); }).then(function(){ return attempt(n + 1); });
+          throw e;
+        });
+      };
+      return attempt(0);
+    });
+  };
+  var p = apiQueue.then(run, run);
+  apiQueue = p.catch(function(){});
+  return p;
+}
+function fetchJsonOnce(url, estCost, allowObj){
   var ctl = typeof AbortController === 'function' ? new AbortController() : null;
   var timer = ctl ? setTimeout(function(){ ctl.abort(); }, 20000) : null;
   return fetch(url, { signal: ctl ? ctl.signal : undefined, headers: { Accept: 'application/json' } }).then(function(r){
@@ -2673,7 +2699,7 @@ function refreshOdds(opts){
   state.loading = true; state.apiError = ''; a.lastAttempt = now; saveApi(); rerenderApi();
   var fixtures = {}, odds = {}, failed = [], fatal = null, todo = [], skippedBudget = false, oddsAsked = 0, plannedOdds = -1, smartSkipped = false;
   var done = function(){ state.loading = false; saveApi(); if (!$('overlay').hidden && !state.editing) openSettings(); };
-  var guard = function(e){ if (e.status === 401 || e.status === 429 || e.status === 0) fatal = e; return e; };
+  var guard = function(e){ if (e.status === 401 || e.status === 0 || (e.status === 429 && /quota|usage/i.test(String(e.body || '')))) fatal = e; return e; };
   return fetchJson(sportsUrl(base, key)).then(function(sports){
     var active = {};
     sports.forEach(function(x){ if (x && x.key) active[x.key] = true; });
@@ -2963,7 +2989,7 @@ function opSettings(){
 // Push-Benachrichtigungen ueber den eigenen Push-Dienst (Cloudflare Worker, Code unter dienst/worker.js)
 // Die App schickt dem Dienst: Spiele mit Pinnacle-Quoten, deine eingetragenen Quoten, offene Tipps und Einstellungen.
 // Der Dienst erinnert vor Anpfiff, meldet Value und holt die Schlussquote. Seine Abrufe holt sich die App beim naechsten Oeffnen.
-var PUSH_VER = '75f51a79c9';
+var PUSH_VER = '3ca8b77d79';
 var PUSH_LEADS = {
   fb: [[0, 'Aus'], [30, '30 Min'], [55, '55 Min'], [90, '90 Min']],
   bb: [[0, 'Aus'], [25, '25 Min'], [45, '45 Min'], [90, '90 Min']],
@@ -2997,7 +3023,8 @@ function pushPayload(sub){
     opx = { key: String(o.key).trim(), book: o.setup.book, tours: o.setup.tours, idx: idx, calls: state.api.push.opCalls, remaining: opRemaining(), seen: state.api.push.opSeen || 0 };
     Object.keys(state.auto).forEach(function(id){ if (ids[id]) auto[id] = state.auto[id]; });
   }
-  return { token: state.api.push.token, sub: sub, apiKey: String(state.api.key || '').trim(), cfg: pushCfg(), games: games, ov: ov, legs: legs, quota: state.api.quota, since: state.api.push.since || 0, op: opx, auto: auto };
+  return { token: state.api.push.token, sub: sub, apiKey: String(state.api.key || '').trim(), cfg: pushCfg(), games: games, ov: ov, legs: legs, quota: state.api.quota, since: state.api.push.since || 0, op: opx, auto: auto,
+    dg: { notes: state.feed ? String(state.feed.notes || '').slice(0, 400) : '', lf: state.api.lf || {}, mode: state.api.oddsMode, err: state.apiError || '', opErr: state.api.op.err || '', opInfo: state.api.op.info || null, spent: state.api.spent || null, leagues: selectedLeagues().map(function(l){ return l.key; }) } };
 }
 function pushFetch(path, body){
   var url = pushUrl();
