@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'd7ffbac230';
+const WORKER_VER = '75f51a79c9';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -653,6 +653,68 @@ function stakeFor(p, o, bank, frac){
   if (!(k > 0) || !(bank > 0)) return 0;
   return Math.round(bank * Math.min(k * frac, 0.03) * 10) / 10;
 }
+// Eingetragene Betano-Quoten (ov.bt) als eigenes Spiel-Objekt mit Betano-Quoten zur aktuellen Linie
+function withBetano(m, bt){
+  if (!bt || typeof bt !== 'object') return null;
+  var g = function(t){ return bt[t] > 1 ? bt[t] : null; };
+  return Object.assign({}, m, { book: { h: g('res.h'), d: g('res.d'), a: g('res.a') }, dc: (m.sport || 'fb') === 'fb' ? { hx: g('dc.hx'), xa: g('dc.xa'), ha: g('dc.ha') } : null,
+    ou: m.ou ? Object.assign({}, m.ou, { book: bt.ouLine === m.ou.line ? { o: g('ou.o'), u: g('ou.u') } : { o: null, u: null } }) : null,
+    hc: m.hc ? Object.assign({}, m.hc, { book: bt.hcLine === m.hc.line ? { h: g('hc.h'), a: g('hc.a') } : { h: null, a: null } }) : null,
+    bsrc: {}, ovf: {}, btClone: true });
+}
+// Surebets zwischen deinen Anbietern: je Ausgang die beste Quote (nach Wettsteuer); Summe der Kehrwerte unter 1 = sicherer Gewinn.
+// books: [{ name, tf, m }] (m = Spiel mit den Quoten dieses Anbieters). Auch 1X2 gegen Doppelte Chance (z. B. 1 bei bet365, X2 bei Betano).
+function sbOdd(m, mk, k){
+  if (mk === 'res') return m.book && m.book[k];
+  if (mk === 'dc') return m.dc && m.dc[k];
+  if (mk === 'ou') return m.ou && m.ou.book && m.ou.book[k];
+  if (mk === 'hc') return m.hc && m.hc.book && m.hc.book[k];
+  return null;
+}
+function sbLabel(m, mk, k){
+  if (mk === 'res') return k === 'h' ? m.home : (k === 'a' ? m.away : 'Unentschieden');
+  if (mk === 'dc') return { hx: m.home + ' oder Remis', xa: 'Remis oder ' + m.away, ha: m.home + ' oder ' + m.away }[k];
+  if (mk === 'ou') return (k === 'o' ? 'Über ' : 'Unter ') + fmtLine(m.ou.line);
+  if (mk === 'hc') return (k === 'h' ? m.home + ' ' + fmtHc(m.hc.line) : m.away + ' ' + fmtHc(-m.hc.line));
+  return k;
+}
+function findSurebets(m, books){
+  var out = [], sport = m.sport || 'fb', ref = m.ref || {};
+  var groups = [];
+  if (sport === 'fb' && ref.d > 1){
+    groups.push({ market: 'res', parts: [['res', 'h'], ['res', 'd'], ['res', 'a']] });
+    groups.push({ market: 'res+dc', parts: [['res', 'h'], ['dc', 'xa']] }, { market: 'res+dc', parts: [['res', 'a'], ['dc', 'hx']] }, { market: 'res+dc', parts: [['res', 'd'], ['dc', 'ha']] });
+  } else groups.push({ market: 'res', parts: [['res', 'h'], ['res', 'a']] });
+  if (m.ou) groups.push({ market: 'ou', parts: [['ou', 'o'], ['ou', 'u']], line: m.ou.line });
+  if (m.hc) groups.push({ market: 'hc', parts: [['hc', 'h'], ['hc', 'a']], line: m.hc.line });
+  groups.forEach(function(g){
+    var legs = g.parts.map(function(pt){
+      var best = null;
+      books.forEach(function(bk){
+        var bm = bk.m;
+        if (pt[0] === 'ou' && !(bm.ou && bm.ou.line === g.line)) return;
+        if (pt[0] === 'hc' && !(bm.hc && bm.hc.line === g.line)) return;
+        var o = sbOdd(bm, pt[0], pt[1]);
+        if (!(o > 1)) return;
+        var e = o * (bk.tf > 0 && bk.tf <= 1 ? bk.tf : 1);
+        if (!best || e > best.eff) best = { book: bk.name, market: pt[0], key: pt[1], odds: o, eff: e, label: sbLabel(m, pt[0], pt[1]) };
+      });
+      return best;
+    });
+    if (legs.some(function(l){ return !l; })) return;
+    var S = legs.reduce(function(a, l){ return a + 1 / l.eff; }, 0);
+    if (S < 1 - 1e-9) out.push({ mid: m.id, game: m.home + ' – ' + m.away, sport: sport, league: m.league, kickoff: m.kickoff, market: g.market, legs: legs, S: S, profit: 1 / S - 1 });
+  });
+  return out.sort(function(a, b){ return b.profit - a.profit; });
+}
+// Einsaetze fuer einen Gesamtbetrag: gleiche Auszahlung bei jedem Ausgang, auf 10 Cent gerundet; Gewinn = schlechtester Fall
+function surebetStakes(sb, total){
+  var stakes = sb.legs.map(function(l){ return Math.round(total / (l.eff * sb.S) * 10) / 10; });
+  var sum = stakes.reduce(function(a, x){ return a + x; }, 0);
+  var pays = stakes.map(function(x, i){ return x * sb.legs[i].eff; });
+  var minPay = Math.min.apply(null, pays);
+  return { stakes: stakes, sum: Math.round(sum * 100) / 100, pays: pays, profit: Math.round((minPay - sum) * 100) / 100 };
+}
 // Profi-Auswertung des Tagebuchs: erwarteter gegen tatsaechlichen Gewinn, Schwankungsband, Drawdown, Aufschluesselung.
 // Gewinn eines Scheins ist zweiwertig: +Einsatz*(Quote*Steuer-1) mit Chance p, sonst -Einsatz. Varianz = Einsatz^2 * (Quote*Steuer)^2 * p*(1-p).
 var EDGE_TIERS = [[-Infinity, 0.02, 'unter 2 %'], [0.02, 0.05, '2–5 %'], [0.05, 0.1, '5–10 %'], [0.1, Infinity, 'ab 10 %']];
@@ -1197,7 +1259,7 @@ function opBudget(remaining, spentToday, nowMs, reservePerDay){
   return { allow: allow, spent: spent, left: Math.max(0, Math.min(allow - spent, remaining - 3)) };
 }
   return { normalizeFeed, applyOverride, selectionsFor, fairOddsFor, convertEvents, leagueByKey, marketsFor, oddsUrl, fmtLine, fmtHc, RULE, SMART_RESERVE,
-    opParse, opMatch, withAuto, opUrl, OP_BOOK, OP_BASE,
+    opParse, opMatch, withAuto, opUrl, OP_BOOK, OP_BASE, withBetano, findSurebets,
     setAh: function (v) { AH_FB = v !== false; } };
 })();
 
@@ -1320,7 +1382,7 @@ function normCfg(c) {
     prov[sp] = { book: p && typeof p.book === 'string' ? p.book.slice(0, 20) : 'bet365', tf: num(p && p.tf, 0.5, 1, 1) };
   }
   return { lead, prov, mode: c.mode === 'smart' ? 'smart' : 'always', value: c.value !== false, calls: num(c.calls, 0, 50, 6), minEdge: num(c.minEdge, 0, 0.5, 0.02),
-    devig: c.devig === 'prop' ? 'prop' : 'power', ah: c.ah !== false, windowH: num(c.windowH, 6, 72, 24) };
+    devig: c.devig === 'prop' ? 'prop' : 'power', btTf: num(c.btTf, 0.5, 1, 0.947), ah: c.ah !== false, windowH: num(c.windowH, 6, 72, 24) };
 }
 function quotaOf(r) {
   const n = (k) => { const v = parseFloat(r.headers.get(k)); return isFinite(v) ? v : null; };
@@ -1514,9 +1576,29 @@ async function runCron(env, nowMs) {
       if (!prev || s.ev >= prev.ev + 0.02 || nowMs - prev.at > 90 * MIN) vals.push({ m, s, key });
     }));
     vals.sort((a, b) => b.s.ev - a.s.ev);
+    // Surebets: dein Anbieter gegen deine eingetragenen Betano-Quoten
+    st.sbSent = st.sbSent || {};
+    const sbs = [];
+    ms.forEach((m) => {
+      const bt = user.ov && user.ov[m.id] && user.ov[m.id].bt;
+      if (!bt || m.bookName === 'Betano') return;
+      const b = APP.withBetano(m, bt);
+      APP.findSurebets(m, [{ name: m.bookName, tf: m.taxF, m }, { name: 'Betano', tf: cfg.btTf, m: b }]).forEach((sb) => {
+        const key = m.id + '|' + sb.legs.map((l) => l.book + l.market + l.key).join(',');
+        const prev = st.sbSent[key];
+        if (!prev || sb.profit >= prev.p + 0.01 || nowMs - prev.at > 90 * MIN) sbs.push({ sb, key });
+      });
+    });
+    sbs.sort((a, b) => b.sb.profit - a.sb.profit);
     const main = watch.filter(mainDue);
     let msg = null;
-    if (vals.length) {
+    if (sbs.length) {
+      const sb = sbs[0].sb;
+      msg = { title: '🔒 Surebet +' + (sb.profit * 100).toFixed(1).replace('.', ',') + ' %: ' + sb.game,
+        body: sb.legs.map((l) => l.book + ': ' + l.label + ' @ ' + f2(l.odds)).join('\n') + '\nSicherer Gewinn, egal wie das Spiel ausgeht. Öffne die App für die Einsätze und prüf beide Quoten vor dem Setzen.',
+        tag: 'sure', url: './' };
+      sbs.forEach((x) => { st.sbSent[x.key] = { p: x.sb.profit, at: nowMs }; });
+    } else if (vals.length) {
       const top = vals[0], prov = top.m.bookName;
       const lines = vals.slice(0, 3).map((v) => v.s.label + ' @ ' + f2(v.s.book) + ' (' + pctS(v.s.ev) + ')');
       const at = top.m.refAt || top.m.oddsAt;
@@ -1558,6 +1640,7 @@ async function runCron(env, nowMs) {
   for (const k of Object.keys(st.closeDone)) if (st.closeDone[k] < old) { delete st.closeDone[k]; dirtyState = true; }
   for (const k of Object.keys(st.base || {})) if (!(st.base[k].at > old)) { delete st.base[k]; dirtyState = true; }
   for (const k of Object.keys(st.valSent || {})) if (st.valSent[k].at < old) { delete st.valSent[k]; dirtyState = true; }
+  for (const k of Object.keys(st.sbSent || {})) if (st.sbSent[k].at < old) { delete st.sbSent[k]; dirtyState = true; }
   for (const k of Object.keys(st.chk || {})) if (st.chk[k] < old) { delete st.chk[k]; dirtyState = true; }
   // alte Schnappschuesse aufraeumen: wenn sie ohnehin geladen sind, sonst alle 6 Stunden
   const cleanDue = !st.cleanAt || nowMs - st.cleanAt > 6 * 3600000;

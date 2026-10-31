@@ -216,6 +216,7 @@ button.card.rec{display:flex;align-items:center;justify-content:space-between;ga
 .autob{font-weight:600;color:var(--accent)}
 .btl{font-size:11px;font-weight:600;color:var(--muted);margin-top:4px} input.bt{background:var(--surface)} .refline.cmp b{font-weight:700} .refline.cmp b.good{color:var(--good)}
 .bto{display:block;font-style:normal;font-size:11px;line-height:1.25;color:var(--muted);margin-top:3px;text-align:center} .bto.win{color:var(--good);font-weight:700}
+.sbrow{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 0;border-bottom:1px solid var(--line)} .sbl{display:flex;flex-direction:column;gap:2px;min-width:0} .sbl small{font-size:12px;color:var(--muted);line-height:1.35} .sbst{font-family:var(--font-d);font-size:20px;font-weight:600;white-space:nowrap} .sblegs{margin:12px 0} .sbleg{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
 .fairb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--surface2);color:var(--fg)}
 .pinb{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.02em;padding:1px 6px;border-radius:6px;background:var(--good-bg);color:var(--good)}
 input.o.auto{color:var(--muted)}
@@ -860,6 +861,68 @@ function stakeFor(p, o, bank, frac){
   var k = kellyFull(p, o);
   if (!(k > 0) || !(bank > 0)) return 0;
   return Math.round(bank * Math.min(k * frac, 0.03) * 10) / 10;
+}
+// Eingetragene Betano-Quoten (ov.bt) als eigenes Spiel-Objekt mit Betano-Quoten zur aktuellen Linie
+function withBetano(m, bt){
+  if (!bt || typeof bt !== 'object') return null;
+  var g = function(t){ return bt[t] > 1 ? bt[t] : null; };
+  return Object.assign({}, m, { book: { h: g('res.h'), d: g('res.d'), a: g('res.a') }, dc: (m.sport || 'fb') === 'fb' ? { hx: g('dc.hx'), xa: g('dc.xa'), ha: g('dc.ha') } : null,
+    ou: m.ou ? Object.assign({}, m.ou, { book: bt.ouLine === m.ou.line ? { o: g('ou.o'), u: g('ou.u') } : { o: null, u: null } }) : null,
+    hc: m.hc ? Object.assign({}, m.hc, { book: bt.hcLine === m.hc.line ? { h: g('hc.h'), a: g('hc.a') } : { h: null, a: null } }) : null,
+    bsrc: {}, ovf: {}, btClone: true });
+}
+// Surebets zwischen deinen Anbietern: je Ausgang die beste Quote (nach Wettsteuer); Summe der Kehrwerte unter 1 = sicherer Gewinn.
+// books: [{ name, tf, m }] (m = Spiel mit den Quoten dieses Anbieters). Auch 1X2 gegen Doppelte Chance (z. B. 1 bei bet365, X2 bei Betano).
+function sbOdd(m, mk, k){
+  if (mk === 'res') return m.book && m.book[k];
+  if (mk === 'dc') return m.dc && m.dc[k];
+  if (mk === 'ou') return m.ou && m.ou.book && m.ou.book[k];
+  if (mk === 'hc') return m.hc && m.hc.book && m.hc.book[k];
+  return null;
+}
+function sbLabel(m, mk, k){
+  if (mk === 'res') return k === 'h' ? m.home : (k === 'a' ? m.away : 'Unentschieden');
+  if (mk === 'dc') return { hx: m.home + ' oder Remis', xa: 'Remis oder ' + m.away, ha: m.home + ' oder ' + m.away }[k];
+  if (mk === 'ou') return (k === 'o' ? 'Über ' : 'Unter ') + fmtLine(m.ou.line);
+  if (mk === 'hc') return (k === 'h' ? m.home + ' ' + fmtHc(m.hc.line) : m.away + ' ' + fmtHc(-m.hc.line));
+  return k;
+}
+function findSurebets(m, books){
+  var out = [], sport = m.sport || 'fb', ref = m.ref || {};
+  var groups = [];
+  if (sport === 'fb' && ref.d > 1){
+    groups.push({ market: 'res', parts: [['res', 'h'], ['res', 'd'], ['res', 'a']] });
+    groups.push({ market: 'res+dc', parts: [['res', 'h'], ['dc', 'xa']] }, { market: 'res+dc', parts: [['res', 'a'], ['dc', 'hx']] }, { market: 'res+dc', parts: [['res', 'd'], ['dc', 'ha']] });
+  } else groups.push({ market: 'res', parts: [['res', 'h'], ['res', 'a']] });
+  if (m.ou) groups.push({ market: 'ou', parts: [['ou', 'o'], ['ou', 'u']], line: m.ou.line });
+  if (m.hc) groups.push({ market: 'hc', parts: [['hc', 'h'], ['hc', 'a']], line: m.hc.line });
+  groups.forEach(function(g){
+    var legs = g.parts.map(function(pt){
+      var best = null;
+      books.forEach(function(bk){
+        var bm = bk.m;
+        if (pt[0] === 'ou' && !(bm.ou && bm.ou.line === g.line)) return;
+        if (pt[0] === 'hc' && !(bm.hc && bm.hc.line === g.line)) return;
+        var o = sbOdd(bm, pt[0], pt[1]);
+        if (!(o > 1)) return;
+        var e = o * (bk.tf > 0 && bk.tf <= 1 ? bk.tf : 1);
+        if (!best || e > best.eff) best = { book: bk.name, market: pt[0], key: pt[1], odds: o, eff: e, label: sbLabel(m, pt[0], pt[1]) };
+      });
+      return best;
+    });
+    if (legs.some(function(l){ return !l; })) return;
+    var S = legs.reduce(function(a, l){ return a + 1 / l.eff; }, 0);
+    if (S < 1 - 1e-9) out.push({ mid: m.id, game: m.home + ' – ' + m.away, sport: sport, league: m.league, kickoff: m.kickoff, market: g.market, legs: legs, S: S, profit: 1 / S - 1 });
+  });
+  return out.sort(function(a, b){ return b.profit - a.profit; });
+}
+// Einsaetze fuer einen Gesamtbetrag: gleiche Auszahlung bei jedem Ausgang, auf 10 Cent gerundet; Gewinn = schlechtester Fall
+function surebetStakes(sb, total){
+  var stakes = sb.legs.map(function(l){ return Math.round(total / (l.eff * sb.S) * 10) / 10; });
+  var sum = stakes.reduce(function(a, x){ return a + x; }, 0);
+  var pays = stakes.map(function(x, i){ return x * sb.legs[i].eff; });
+  var minPay = Math.min.apply(null, pays);
+  return { stakes: stakes, sum: Math.round(sum * 100) / 100, pays: pays, profit: Math.round((minPay - sum) * 100) / 100 };
 }
 // Profi-Auswertung des Tagebuchs: erwarteter gegen tatsaechlichen Gewinn, Schwankungsband, Drawdown, Aufschluesselung.
 // Gewinn eines Scheins ist zweiwertig: +Einsatz*(Quote*Steuer-1) mit Chance p, sonst -Einsatz. Varianz = Einsatz^2 * (Quote*Steuer)^2 * p*(1-p).
@@ -1535,12 +1598,18 @@ function autoFor(m, now){ var a = state.auto[m.id]; return a && bookFor(m.sport)
 function betanoQuotes(m){
   var bt = (state.ov[m.id] || {}).bt;
   if (!bt || bookFor(m.sport) === 'Betano') return null;
-  var g = function(t){ return bt[t] > 1 ? bt[t] : null; };
-  var out = Object.assign({}, m, { book: { h: g('res.h'), d: g('res.d'), a: g('res.a') }, dc: m.sport === 'fb' ? { hx: g('dc.hx'), xa: g('dc.xa'), ha: g('dc.ha') } : null,
-    ou: m.ou ? Object.assign({}, m.ou, { book: bt.ouLine === m.ou.line ? { o: g('ou.o'), u: g('ou.u') } : { o: null, u: null } }) : null,
-    hc: m.hc ? Object.assign({}, m.hc, { book: bt.hcLine === m.hc.line ? { h: g('hc.h'), a: g('hc.a') } : { h: null, a: null } }) : null,
-    bsrc: {}, ovf: {}, bookName: 'Betano', taxF: taxFor('Betano'), btClone: true });
-  return out;
+  return Object.assign(withBetano(m, bt), { bookName: 'Betano', taxF: taxFor('Betano') });
+}
+// Surebets aller offenen Spiele (dein Anbieter gegen deine eingetragenen Betano-Quoten)
+function allSurebets(active){
+  var out = [];
+  active.forEach(function(m){
+    if (!m.feed || m.btClone) return;
+    var b = betanoQuotes(m);
+    if (!b) return;
+    out = out.concat(findSurebets(m, [{ name: m.bookName, tf: m.taxF, m: m }, { name: 'Betano', tf: b.taxF, m: b }]));
+  });
+  return out.sort(function(a, b){ return b.profit - a.profit; });
 }
 function hasFeed(){ return !!(state.feed && state.feed.matches.length); }
 function viewMatches(){
@@ -1614,11 +1683,42 @@ function recCard(rec, i, st){
     '<span class="rtitle"><b>' + esc(rec.title) + '</b><small>' + esc(rec.sub) + '</small></span>' +
     '<span class="rnums"><b>' + f2(sl.odds) + '</b><small>' + pct(sl.p, 0) + ' · ' + edgePill(sl.ev, 0) + '</small><small>' + sl.legs.length + (sl.legs.length === 1 ? ' Tipp' : ' Tipps') + '</small></span></button>';
 }
+function sbLegLine(l){ return '<b>' + esc(l.book) + '</b> ' + esc(l.label) + ' @ ' + f2(l.odds); }
+function surebetCard(){
+  var sbs = state.surebets || [];
+  if (!sbs.length) return '';
+  return '<div class="card sbcard"><div class="label">🔒 Surebets: sicherer Gewinn</div>' + sbs.slice(0, 5).map(function(sb, i){
+    return '<button class="sbrow" data-act="sbopen" data-i="' + i + '"><span class="sbl"><b>' + esc(sb.game) + '</b><small>' + sb.legs.map(sbLegLine).join(' · ') + '</small></span><span class="pill good">+' + (sb.profit * 100).toFixed(1).replace('.', ',') + ' %</span></button>';
+  }).join('') + '<p class="hint" style="margin:0">Aus deinen bet365-Quoten und den eingetragenen Betano-Quoten (nach Steuer). Antippen für die Einsätze.</p></div>';
+}
+function openSurebet(i){
+  var sb = (state.surebets || [])[i];
+  if (!sb) return;
+  state.sbOpen = sb;
+  var total = state.sbTotal || 100;
+  openSheet('<div class="grab"></div><h2>Surebet</h2><p class="sub"><b>' + esc(sb.game) + '</b><br><span class="muted small">' + esc(sb.league || '') + '</span></p>' +
+    '<div class="fields">' + field('sb-total', 'Gesamteinsatz in €', String(total).replace('.', ','), 'o', true) + '</div>' +
+    '<div id="sbOut"></div>' +
+    '<p class="hint">Prüf beide Quoten direkt vor dem Setzen. Setz zuerst die Wette, deren Quote eher fällt (meist die höhere), dann sofort die andere. Ändert sich eine Quote, rechne neu. Die Betano-Steuer ist eingerechnet.</p>' +
+    '<div class="actions"><button class="btn block" data-act="close">Fertig</button></div>');
+  updateSurebet();
+}
+function updateSurebet(){
+  var sb = state.sbOpen, out = $('sbOut'); if (!sb || !out) return;
+  var total = parseNum($('sb-total') ? $('sb-total').value : '');
+  if (!(total > 0)){ out.innerHTML = '<p class="muted">Gib einen Gesamteinsatz ein.</p>'; return; }
+  state.sbTotal = total;
+  var r = surebetStakes(sb, total);
+  out.innerHTML = '<div class="sblegs">' + sb.legs.map(function(l, i){
+    return '<div class="sbleg"><div class="sbl"><span class="label">' + esc(l.book) + '</span><b>' + esc(l.label) + '</b><small>Quote ' + f2(l.odds) + (l.eff < l.odds - 1e-9 ? ' (nach Steuer ' + f2(l.eff) + ')' : '') + ' · Auszahlung ' + eur(r.pays[i]) + '</small></div><span class="sbst">' + eur(r.stakes[i]) + '</span></div>';
+  }).join('') + '</div><div class="verdict good"><span>Sicherer Gewinn</span><b>' + eur(r.profit) + '</b></div><p class="hint" style="margin:0">Einsatz zusammen ' + eur(r.sum) + ', Rendite ' + sgn(r.profit / r.sum) + ' egal wie das Spiel ausgeht.</p>';
+}
 function renderSlip(){
   var st = state.settings;
   var active = activeMatches();
   active = active.concat(active.map(betanoQuotes).filter(Boolean));
   var R = recommendations(active, st);
+  state.surebets = allSurebets(activeMatches());
   state.recs = R.recs;
   if (!(state.recOpen >= 0) || state.recOpen >= R.recs.length) state.recOpen = 0;
   var sportName = { all: 'alle Sportarten', fb: 'Fußball', bb: 'Basketball', ih: 'Eishockey' }[st.sport] || 'alle Sportarten';
@@ -1636,6 +1736,7 @@ function renderSlip(){
       '</div></div>';
   }
   h += feedStatus(active);
+  h += surebetCard();
 
   if (!R.recs.length){
     var usable = active.filter(function(m){ return selectionsFor(m, st.devig).length; }).length;
@@ -2815,7 +2916,7 @@ function opSettings(){
 // Push-Benachrichtigungen ueber den eigenen Push-Dienst (Cloudflare Worker, Code unter dienst/worker.js)
 // Die App schickt dem Dienst: Spiele mit Pinnacle-Quoten, deine eingetragenen Quoten, offene Tipps und Einstellungen.
 // Der Dienst erinnert vor Anpfiff, meldet Value und holt die Schlussquote. Seine Abrufe holt sich die App beim naechsten Oeffnen.
-var PUSH_VER = 'd7ffbac230';
+var PUSH_VER = '75f51a79c9';
 var PUSH_LEADS = {
   fb: [[0, 'Aus'], [30, '30 Min'], [55, '55 Min'], [90, '90 Min']],
   bb: [[0, 'Aus'], [25, '25 Min'], [45, '45 Min'], [90, '90 Min']],
@@ -2830,7 +2931,7 @@ function bytesB64u(buf){ var b = new Uint8Array(buf), s2 = ''; for (var i = 0; i
 function pushCfg(){
   var p = state.api.push, prov = {};
   ['fb', 'bb', 'ih'].forEach(function(sp){ var b = bookFor(sp); prov[sp] = { book: b, tf: taxFor(b) }; });
-  return { lead: p.lead, prov: prov, mode: p.mode === 'always' ? 'always' : 'smart', value: p.value !== false, calls: p.calls, minEdge: state.settings.minEdge, devig: state.settings.devig, ah: AH_FB, windowH: state.api.windowH };
+  return { btTf: taxFor('Betano'), lead: p.lead, prov: prov, mode: p.mode === 'always' ? 'always' : 'smart', value: p.value !== false, calls: p.calls, minEdge: state.settings.minEdge, devig: state.settings.devig, ah: AH_FB, windowH: state.api.windowH };
 }
 function pushPayload(sub){
   var now = Date.now(), sel = {}, ids = {}, ov = {}, legs = [];
@@ -3179,6 +3280,7 @@ document.addEventListener('click', function(e){
     case 'pushlead-fb': case 'pushlead-bb': case 'pushlead-ih': state.api.push.lead[act.slice(9)] = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
     case 'pushval': state.api.push.value = t.getAttribute('data-v') === 'on'; saveApi(); schedulePushSync(); openSettings(); break;
     case 'pushopcalls': state.api.push.opCalls = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
+    case 'sbopen': openSurebet(+t.getAttribute('data-i')); break;
     case 'pushmode': state.api.push.mode = t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
     case 'pushcalls': state.api.push.calls = +t.getAttribute('data-v'); saveApi(); schedulePushSync(); openSettings(); break;
     case 'anaby': state.anaBy = t.getAttribute('data-v'); renderCalc(); break;
@@ -3217,6 +3319,7 @@ document.addEventListener('input', function(e){
   if (id === 's-bank'){ var b = parseNum(e.target.value); if (b > 0){ state.settings.bankroll = b; save(); $('bankChip').textContent = eur(b); renderSlip(); updateCalc(); } }
   if (id === 's-key'){ state.api.key = e.target.value.trim(); state.apiError = ''; saveApi(); }
   if (id === 's-base'){ state.api.base = e.target.value.trim(); saveApi(); }
+  if (id === 'sb-total'){ updateSurebet(); return; }
   if (id === 's-push'){ state.api.push.url = e.target.value.trim(); saveApi(); }
   if (id === 's-opkey'){ var nk = e.target.value.trim(); if (nk !== state.api.op.key){ state.api.op.key = nk; state.api.op.setup = null; state.api.op.err = ''; state.api.op.via = ''; saveApi(); } }
   if (id === 's-edge'){ var d = parseNum(e.target.value); if (d >= 0 && d <= 50){ state.settings.minEdge = d / 100; save(); renderSlip(); renderGames(); updateCalc(); } }
