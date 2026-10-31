@@ -1,0 +1,32 @@
+# Einmalige Quoten-Analyse auf Zuruf (dienst/analyse-start aendern)
+name: Analyse
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['dienst/analyse-start']
+permissions:
+  contents: write
+concurrency: analyse
+jobs:
+  analyse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Analyse
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUFLARE_API_TOKEN: ${{ secrets.CLOUFLARE_API_TOKEN }}
+          CLOUFLARE_API_KEY: ${{ secrets.CLOUFLARE_API_KEY }}
+        run: LEAGUES="$(cat dienst/analyse-start | head -1)" node dienst/analyse.mjs
+      - name: Ergebnis speichern
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          [ -f dienst/analyse.json ] || exit 0
+          git add dienst/analyse.json
+          git diff --cached --quiet || (git commit -m "Analyse [skip ci]" && git pull --rebase -q && git push)
