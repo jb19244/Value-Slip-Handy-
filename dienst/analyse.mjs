@@ -6,7 +6,7 @@ const API = 'https://api.cloudflare.com/client/v4';
 const DIR = new URL('./', import.meta.url);
 const html = readFileSync(new URL('../index.html', DIR), 'utf8');
 const code = html.split('// BEGIN LOGIC')[1].split('// END API')[0].replace('// END LOGIC', '').replace('// BEGIN API', '');
-const L = new Function(code + '; return {convertEvents,normalizeFeed,selectionsFor,fairOddsFor,leagueByKey,oddsUrl,opUrl,opParse,opMatch,withAuto,bestBets,marketsFor,berlinDay};')();
+const L = new Function(code + '; return {opMarketIndex,convertEvents,normalizeFeed,selectionsFor,fairOddsFor,leagueByKey,oddsUrl,opUrl,opParse,opMatch,withAuto,bestBets,marketsFor,berlinDay};')();
 const token = findToken(process.env);
 const H = { Authorization: 'Bearer ' + token };
 const j = async (u, o) => { const r = await fetch(u, o); const t = await r.text(); try { return { ok: r.ok, status: r.status, body: JSON.parse(t), headers: r.headers }; } catch (e) { return { ok: r.ok, status: r.status, body: t, headers: r.headers }; } };
@@ -34,12 +34,14 @@ if (user.op && user.op.key) {
   if (!r.ok) out.errors.push('OddsPapi ' + r.status + ' ' + JSON.stringify(r.body).slice(0, 200));
   else {
     const tid2l = {}; Object.keys(user.op.tours).forEach((k) => { tid2l[user.op.tours[k]] = k; });
-    const parsed = L.opParse(r.body, user.op.idx, tid2l, user.op.book || 'bet365');
+    const mkAll = await j(L.opUrl('', '/v4/markets', { apiKey: user.op.key }));
+    const idx = Array.isArray(mkAll.body) ? L.opMarketIndex(mkAll.body, { fb: 10, bb: 11, ih: 15 }) : user.op.idx;
+    const parsed = L.opParse(r.body, idx, tid2l, user.op.book || 'bet365');
     // Fehlersuche: Aufbau der Antwort und erkannte Maerkte
     const list = Array.isArray(r.body) ? r.body : [];
     const seen = {};
     list.forEach((f) => { const bo = f.bookmakerOdds && f.bookmakerOdds[user.op.book || 'bet365']; if (bo && bo.markets) Object.keys(bo.markets).forEach((k) => { seen[k] = (seen[k] || 0) + 1; }); });
-    const mk = await j(L.opUrl('', '/v4/markets', { apiKey: user.op.key }));
+    const mk = mkAll;
     const defs = Array.isArray(mk.body) ? mk.body.filter((m) => seen[String(m.marketId)]) : [];
     out.debug = { fixtureKeys: list[0] ? Object.keys(list[0]) : [], bookKeys: list[0] && list[0].bookmakerOdds ? Object.keys(list[0].bookmakerOdds) : [],
       sample: list.slice(0, 2).map((f) => ({ fixtureId: f.fixtureId, tournamentId: f.tournamentId, sportId: f.sportId, startTime: f.startTime, p1: f.participant1Id, p2: f.participant2Id, p1n: f.participant1Name, p2n: f.participant2Name,

@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '3ca8b77d79';
+const WORKER_VER = '84a5278484';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -1088,12 +1088,14 @@ function opOutcomeKey(name){
   if (n === '12' || n === 'homeoraway') return 'ha';
   return null;
 }
-function opPeriodOk(p){
-  var n = opNorm(p);
-  if (!n) return { ok: true, ot: false };
-  var ot = /\bincl|\bovertime\b|\bot\b|\bincluding\b/.test(n);
-  if (!ot && /half|quarter|period|inning|set|minute|first|second|third|1st|2nd|3rd|4th|\b1h\b|\b2h\b|\bq\d/.test(n)) return { ok: false };
-  if (ot || /^(fulltime|full time|ft|match|regular time|regulartime|regulation|game|full match|whole match)$/.test(n)) return { ok: true, ot: ot };
+// OddsPapi-Perioden (echte Daten): "result" = ganzes Spiel, "p1"/"p1+p2" = Viertel/Haelfte, "ot" = nur Verlaengerung.
+// "inkl. Verlaengerung" steht im Marktnamen, z. B. "Winner (incl. overtime)".
+function opPeriodOk(p, name){
+  var n = opNorm(p), nm = opNorm(name), both = n + ' ' + nm;
+  var incl = /\bincl|\bincluding\b/.test(both) && /overtime|\bot\b|extra/.test(both);
+  if (/^(ot|overtime|extra time|et|penalties|so|shootout)$/.test(n)) return { ok: false };
+  if (!n || /^(result|fulltime|full time|ft|match|regular time|regulartime|regulation|game|full match|whole match)$/.test(n)) return { ok: true, ot: incl };
+  if (incl && !/half|quarter|period|\bp\d|1st|2nd|3rd|4th/.test(n)) return { ok: true, ot: true };
   return { ok: false };
 }
 function opMarketIndex(markets, sportIds){
@@ -1103,7 +1105,7 @@ function opMarketIndex(markets, sportIds){
     if (!mk || mk.playerProp === true) return;
     var sp = bySport[mk.sportId];
     if (!sp || !Array.isArray(mk.outcomes)) return;
-    var per = opPeriodOk(mk.period);
+    var per = opPeriodOk(mk.period, mk.marketName);
     if (!per.ok) return;
     var map = {}, keys = [];
     mk.outcomes.forEach(function(o){ var k = o ? opOutcomeKey(o.outcomeName) : null; if (k && keys.indexOf(k) < 0){ map[String(o.outcomeId)] = k; keys.push(k); } });

@@ -1302,12 +1302,14 @@ function opOutcomeKey(name){
   if (n === '12' || n === 'homeoraway') return 'ha';
   return null;
 }
-function opPeriodOk(p){
-  var n = opNorm(p);
-  if (!n) return { ok: true, ot: false };
-  var ot = /\bincl|\bovertime\b|\bot\b|\bincluding\b/.test(n);
-  if (!ot && /half|quarter|period|inning|set|minute|first|second|third|1st|2nd|3rd|4th|\b1h\b|\b2h\b|\bq\d/.test(n)) return { ok: false };
-  if (ot || /^(fulltime|full time|ft|match|regular time|regulartime|regulation|game|full match|whole match)$/.test(n)) return { ok: true, ot: ot };
+// OddsPapi-Perioden (echte Daten): "result" = ganzes Spiel, "p1"/"p1+p2" = Viertel/Haelfte, "ot" = nur Verlaengerung.
+// "inkl. Verlaengerung" steht im Marktnamen, z. B. "Winner (incl. overtime)".
+function opPeriodOk(p, name){
+  var n = opNorm(p), nm = opNorm(name), both = n + ' ' + nm;
+  var incl = /\bincl|\bincluding\b/.test(both) && /overtime|\bot\b|extra/.test(both);
+  if (/^(ot|overtime|extra time|et|penalties|so|shootout)$/.test(n)) return { ok: false };
+  if (!n || /^(result|fulltime|full time|ft|match|regular time|regulartime|regulation|game|full match|whole match)$/.test(n)) return { ok: true, ot: incl };
+  if (incl && !/half|quarter|period|\bp\d|1st|2nd|3rd|4th/.test(n)) return { ok: true, ot: true };
   return { ok: false };
 }
 function opMarketIndex(markets, sportIds){
@@ -1317,7 +1319,7 @@ function opMarketIndex(markets, sportIds){
     if (!mk || mk.playerProp === true) return;
     var sp = bySport[mk.sportId];
     if (!sp || !Array.isArray(mk.outcomes)) return;
-    var per = opPeriodOk(mk.period);
+    var per = opPeriodOk(mk.period, mk.marketName);
     if (!per.ok) return;
     var map = {}, keys = [];
     mk.outcomes.forEach(function(o){ var k = o ? opOutcomeKey(o.outcomeName) : null; if (k && keys.indexOf(k) < 0){ map[String(o.outcomeId)] = k; keys.push(k); } });
@@ -2861,7 +2863,7 @@ function opSetup(){
   var o = state.api.op;
   if (!opOn()) return Promise.reject({ msg: 'Trag zuerst deinen OddsPapi-Schlüssel ein.' });
   o.err = ''; state.opBusy = 'Einrichten …'; refreshOpUi();
-  var setup = { at: Date.now(), sports: null, book: OP_BOOK, tours: {}, idx: null, plan: null };
+  var setup = { v: OP_SETUP_VER, at: Date.now(), sports: null, book: OP_BOOK, tours: {}, idx: null, plan: null };
   return opGet('/v4/account', {}, true).then(function(acc){
     var pl = opPlanBooks(acc);
     if (pl){ if (pl.limit != null){ o.limit = pl.limit; o.count = pl.count; o.countAt = Date.now(); } setup.plan = pl.books; }
@@ -2904,7 +2906,8 @@ function useBet365(){
   ['fb', 'bb', 'ih'].forEach(function(sp){ if (b[sp] !== OP_BOOK){ b[sp] = OP_BOOK; ch = true; } });
   if (ch){ st.books = b; save(); if ($('opgrp')) openSettings(); renderAll(true); }
 }
-function opSetupOk(){ var s = state.api.op.setup; return !!(s && s.idx && s.tours && Date.now() - (s.at || 0) < OP_SETUP_DAYS * 86400000); }
+var OP_SETUP_VER = 2;
+function opSetupOk(){ var s = state.api.op.setup; return !!(s && s.idx && s.tours && s.v === OP_SETUP_VER && Date.now() - (s.at || 0) < OP_SETUP_DAYS * 86400000); }
 // Ligen, fuer die bet365 jetzt geladen wird: gewaehlt, bet365 ist dein Anbieter, Spiele im Zeitraum
 function opLeagues(now){
   var s = state.api.op.setup, games = {};
@@ -2989,7 +2992,7 @@ function opSettings(){
 // Push-Benachrichtigungen ueber den eigenen Push-Dienst (Cloudflare Worker, Code unter dienst/worker.js)
 // Die App schickt dem Dienst: Spiele mit Pinnacle-Quoten, deine eingetragenen Quoten, offene Tipps und Einstellungen.
 // Der Dienst erinnert vor Anpfiff, meldet Value und holt die Schlussquote. Seine Abrufe holt sich die App beim naechsten Oeffnen.
-var PUSH_VER = '3ca8b77d79';
+var PUSH_VER = '84a5278484';
 var PUSH_LEADS = {
   fb: [[0, 'Aus'], [30, '30 Min'], [55, '55 Min'], [90, '90 Min']],
   bb: [[0, 'Aus'], [25, '25 Min'], [45, '45 Min'], [90, '90 Min']],
