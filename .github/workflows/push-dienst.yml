@@ -1,0 +1,31 @@
+# Richtet den Push-Dienst bei Cloudflare automatisch ein und haelt ihn aktuell.
+# Einmalig noetig: GitHub-Secret CLOUDFLARE_API_TOKEN (Cloudflare-Token mit der Vorlage "Edit Cloudflare Workers").
+name: Push-Dienst
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['dienst/worker.js', 'dienst/deploy.mjs', 'dienst/start', '.github/workflows/push-dienst.yml']
+permissions:
+  contents: write
+concurrency: push-dienst
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Bei Cloudflare einrichten
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node dienst/deploy.mjs
+      - name: Ergebnis fuer die App speichern
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          [ -f dienst/status.json ] || exit 0
+          git add dienst/status.json
+          git diff --cached --quiet || (git commit -m "Push-Dienst: Status [skip ci]" && git pull --rebase -q && git push)

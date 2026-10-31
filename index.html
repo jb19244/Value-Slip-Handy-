@@ -237,6 +237,7 @@ input.o.auto{color:var(--muted)}
 .verdict.good{background:var(--good-bg);color:var(--good)} .verdict.bad{background:var(--bad-bg);color:var(--bad)} .verdict.warn{background:var(--warn-bg);color:var(--warn)}
 .verdict b{font-family:var(--font-d);font-size:30px;font-variant-numeric:tabular-nums}
 .guide{margin:8px 0 0;padding-left:20px;font-size:14px;line-height:1.5} .guide li{margin:0 0 10px} .guide code{font-size:13px;background:var(--surface2);padding:1px 5px;border-radius:5px;word-break:break-all}
+.manual{margin:10px 0 0;font-size:14px} .manual summary{color:var(--accent);font-weight:600;padding:6px 0;cursor:pointer}
 .plog{list-style:none;margin:0;padding:0;font-size:13px} .plog li{padding:4px 0;border-bottom:1px solid var(--line)}
 .ana h3{margin:0 0 6px;font-size:15px}
 .ana .chart{width:100%;height:auto;display:block;touch-action:pan-y}
@@ -2925,6 +2926,22 @@ function pushOff(){
   (pushSupported() ? navigator.serviceWorker.ready.then(function(reg){ return reg.pushManager.getSubscription(); }).then(function(sub){ return sub && sub.unsubscribe(); }).catch(function(){}) : Promise.resolve())
     .then(function(){ return pushUrl() && tok ? pushFetch('/push/off', { token: tok }).catch(function(){}) : null; }).then(done, done);
 }
+// Automatische Einrichtung ueber GitHub: dienst/status.json enthaelt die Adresse des Push-Dienstes (oder den Fehler)
+function loadDienstStatus(){
+  if (state.dienstLoading || (state.dienst && Date.now() - state.dienst.t < 60000)) return;
+  state.dienstLoading = true;
+  fetch('dienst/status.json?t=' + Date.now(), { cache: 'no-store' }).then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }).then(function(j){
+    state.dienstLoading = false;
+    state.dienst = { t: Date.now(), s: j && typeof j === 'object' ? j : null };
+    var p = state.api.push;
+    if (j && j.ok && typeof j.url === 'string' && /^https:\/\/[a-z0-9.-]+\.workers\.dev$/.test(j.url) && !p.url){ p.url = j.url; saveApi(); }
+    refreshPushUi();
+  });
+}
+function repoInfo(){
+  var owner = location.hostname.split('.')[0], repo = location.pathname.split('/').filter(Boolean)[0] || '';
+  return { owner: owner, repo: repo, ok: /\.github\.io$/.test(location.hostname) && !!repo };
+}
 function refreshPushUi(){
   var g = $('pushgrp');
   if (!g || (document.activeElement && document.activeElement.id === 's-push')) return;
@@ -2935,13 +2952,17 @@ function pushSettings(){
   var ago = p.lastSync ? Math.round((Date.now() - p.lastSync) / 60000) : null;
   var status = on ? (p.active ? '<span class="pill good">Aktiv</span>' : '<span class="pill warn">Kein Abo</span>') + (ago != null ? ' <span class="muted small">abgeglichen ' + (ago < 1 ? 'gerade eben' : 'vor ' + (ago < 60 ? ago + ' Min' : Math.floor(ago / 60) + ' Std')) + '</span>' : '') : '<span class="pill">Aus</span>';
   var old = on && p.ver && p.ver !== PUSH_VER;
+  if (!state.dienst) setTimeout(loadDienstStatus, 0);
+  var ds = state.dienst && state.dienst.s;
+  var auto = ds ? (ds.ok ? (p.url === ds.url ? '<p class="hint" style="margin:0"><b>Automatisch eingerichtet.</b> Tippe auf „Benachrichtigungen einschalten“.</p>' : '') : '<p class="err" style="margin:0">Automatische Einrichtung: ' + esc(ds.msg || 'fehlgeschlagen') + '</p>') : '';
   var log = (p.log || []).slice().reverse().slice(0, 5).map(function(x){ return '<li><span class="muted">' + esc(berlinTime(new Date(x.at))) + '</span> ' + esc(x.t) + '</li>'; }).join('');
   return '<div class="group pushg" id="pushgrp"><div class="label">Benachrichtigungen</div>' +
     '<div class="row">' + status + '</div>' +
     '<div class="field wide"><label for="s-push">Adresse deines Push-Dienstes</label><input id="s-push" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(p.url) + '" placeholder="https://value-slip.deinname.workers.dev"></div>' +
-    '<p class="hint" style="margin:0">Dein eigener Dienst bei Cloudflare, kostenlos. Er läuft alle 5 Minuten, auch wenn die App zu ist. <button class="link" data-act="pushguide" type="button">So richtest du ihn ein</button></p>' +
+    '<p class="hint" style="margin:0">Dein eigener Dienst bei Cloudflare, kostenlos. Er läuft alle 5 Minuten, auch wenn die App zu ist. <button class="link" data-act="pushguide" type="button">So richtest du ihn ein (2 Schritte)</button></p>' +
+ (on ? '' : auto) +
     (p.err ? '<p class="err" style="margin:0">' + esc(p.err) + '</p>' : '') +
-    (old ? '<p class="hint" style="margin:0"><b>Neue Version des Push-Dienstes:</b> Kopier den Code neu und ersetze ihn bei Cloudflare (Anleitung, Schritt 3).</p>' : '') +
+    (old ? '<p class="hint" style="margin:0"><b>Neue Version des Push-Dienstes:</b> ' + (ds && ds.ok ? 'GitHub spielt sie automatisch ein, das dauert ein paar Minuten.' : 'Kopier den Code neu und ersetze ihn bei Cloudflare (Anleitung, „Von Hand“).') + '</p>' : '') +
     (on ? '<div class="actions"><button class="btn ghost" data-act="pushtest">Test senden</button><button class="btn ghost" data-act="pushoff">Ausschalten</button></div>'
         : '<button class="btn block" data-act="pushon">Benachrichtigungen einschalten</button>') +
     '<span class="label">Erinnerung vor Anpfiff</span>' +
@@ -2958,20 +2979,29 @@ function pushSettings(){
 }
 function openPushGuide(){
   if (!state.workerCode) fetch('dienst/worker.js', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.text() : ''; }).then(function(t){ state.workerCode = t; var b = $('pg-copy'); if (b) b.disabled = !t; }).catch(function(){});
-  var origin = location.origin;
+  var origin = location.origin, ri = repoInfo();
+  var secretUrl = ri.ok ? 'https://github.com/' + ri.owner + '/' + ri.repo + '/settings/secrets/actions/new' : 'https://github.com';
+  var actionsUrl = ri.ok ? 'https://github.com/' + ri.owner + '/' + ri.repo + '/actions/workflows/push-dienst.yml' : 'https://github.com';
   openSheet('<div class="grab"></div><h2>Push-Dienst einrichten</h2>' +
-    '<p class="sub">Einmalig, etwa 10 Minuten, alles im Safari auf dem iPhone. Kostenlos bei Cloudflare.</p>' +
+    '<p class="sub">Zwei Schritte im Safari, zusammen etwa 3 Minuten. Den Rest richtet GitHub bei Cloudflare automatisch ein.</p>' +
     '<ol class="guide">' +
-    '<li>Öffne <b>dash.cloudflare.com</b> und leg ein kostenloses Konto an (oder melde dich an).</li>' +
-    '<li><b>Workers &amp; Pages</b> → <b>Create</b> → Worker mit der Vorlage „Hello World“ anlegen, Name z. B. <code>value-slip</code> → <b>Deploy</b>.</li>' +
-    '<li><b>Edit code</b>: Inhalt komplett löschen, den Code einfügen und <b>Deploy</b> tippen.<br><button class="btn ghost sm" id="pg-copy" data-act="pushcode" type="button"' + (state.workerCode ? '' : ' disabled') + '>Code kopieren</button> <a class="link" href="dienst/worker.js" target="_blank" rel="noopener">Code ansehen</a></li>' +
-    '<li><b>Storage &amp; Databases</b> → <b>KV</b> → neuen Speicher anlegen, Name z. B. <code>value-slip</code>.</li>' +
-    '<li>Zurück beim Worker: <b>Settings</b> → <b>Bindings</b> → <b>Add</b> → <b>KV namespace</b>. Variable name genau <code>VS</code>, den Speicher aus Schritt 4 wählen, speichern.</li>' +
-    '<li><b>Settings</b> → <b>Variables and Secrets</b> → <b>Add</b>: Typ Text, Name <code>ALLOWED_ORIGIN</code>, Wert genau <code>' + esc(origin) + '</code></li>' +
-    '<li><b>Settings</b> → <b>Trigger Events</b> → <b>Add</b> → <b>Cron Triggers</b>: <code>*/5 * * * *</code> (alle 5 Minuten).</li>' +
-    '<li>Kopier die Adresse des Workers (endet auf <code>.workers.dev</code>), trag sie in den Einstellungen bei „Adresse deines Push-Dienstes“ ein und tippe <b>Benachrichtigungen einschalten</b>, dann <b>Test senden</b>.</li>' +
+    '<li><b>Schlüssel bei Cloudflare holen.</b> <a class="link" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">API-Tokens öffnen</a><br>' +
+      '<b>Create Token</b> → bei <b>„Edit Cloudflare Workers“</b> auf <b>Use template</b>. Unter „Account Resources“ dein Konto wählen, unter „Zone Resources“ <b>All zones</b>. Dann <b>Continue to summary</b> → <b>Create Token</b> → Token <b>kopieren</b>.</li>' +
+    '<li><b>Bei GitHub hinterlegen.</b> <a class="link" href="' + esc(secretUrl) + '" target="_blank" rel="noopener">Secret anlegen öffnen</a><br>' +
+      'Name genau <code>CLOUDFLARE_API_TOKEN</code>, darunter den Token einfügen → <b>Add secret</b>.</li>' +
     '</ol>' +
-    '<p class="hint">Push gibt es auf dem iPhone nur in der installierten App (Safari → Teilen → Zum Home-Bildschirm). Die Menüs bei Cloudflare können leicht anders heißen. Deinen API-Schlüssel schickt die App selbst, du musst ihn bei Cloudflare nicht eintragen. Nur dein iPhone kann den Dienst nutzen: Das erste Gerät, das Push einschaltet, wird Besitzer.</p>' +
+    '<p class="hint">Danach Claude Bescheid sagen oder selbst starten: <a class="link" href="' + esc(actionsUrl) + '" target="_blank" rel="noopener">Push-Dienst starten</a> (dort „Run workflow“). Nach 1–2 Minuten steht die Adresse automatisch hier in den Einstellungen, dann nur noch <b>Benachrichtigungen einschalten</b> und <b>Test senden</b>. Neue Versionen spielt GitHub künftig selbst ein.</p>' +
+    '<p class="hint">Push gibt es auf dem iPhone nur in der installierten App (Safari → Teilen → Zum Home-Bildschirm).</p>' +
+    '<details class="manual"><summary>Von Hand einrichten (ohne GitHub)</summary>' +
+    '<ol class="guide">' +
+    '<li><b>Workers &amp; Pages</b> → <b>Create</b> → „Hello World“, Name <code>value-slip</code> → <b>Deploy</b>.</li>' +
+    '<li><b>Edit code</b>: Inhalt löschen, Code einfügen, <b>Deploy</b>.<br><button class="btn ghost sm" id="pg-copy" data-act="pushcode" type="button"' + (state.workerCode ? '' : ' disabled') + '>Code kopieren</button> <a class="link" href="dienst/worker.js" target="_blank" rel="noopener">Code ansehen</a></li>' +
+    '<li><b>Storage &amp; Databases</b> → <b>KV</b> → Speicher <code>value-slip</code> anlegen.</li>' +
+    '<li>Worker → <b>Bindings</b> → <b>KV namespace</b>: Variable name <code>VS</code>, Speicher wählen.</li>' +
+    '<li><b>Settings</b> → <b>Variables and Secrets</b>: Text <code>ALLOWED_ORIGIN</code> = <code>' + esc(origin) + '</code></li>' +
+    '<li><b>Settings</b> → <b>Trigger Events</b> → <b>Cron</b>: <code>*/5 * * * *</code></li>' +
+    '<li>Adresse (…<code>.workers.dev</code>) hier eintragen → einschalten → Test.</li>' +
+    '</ol></details>' +
     '<div class="actions"><button class="btn block" data-act="settings">Zurück zu den Einstellungen</button></div>');
 }
 function rerenderApi(){
