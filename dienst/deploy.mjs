@@ -83,9 +83,23 @@ export async function deploy({ token, owner, code, fetchFn = fetch, sleep = (ms)
   return status;
 }
 
+// Token auch finden, wenn das Secret leicht anders heisst oder als Variable angelegt wurde (nur Namen werden gemeldet, nie Werte)
+function parse(j) { try { const o = JSON.parse(j || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } }
+function names(j) { return Object.keys(parse(j)).filter((k) => k.toLowerCase() !== 'github_token'); }
+export function findToken(env) {
+  if (env.CLOUDFLARE_API_TOKEN && env.CLOUDFLARE_API_TOKEN.trim()) return env.CLOUDFLARE_API_TOKEN.trim();
+  const all = Object.assign({}, parse(env.ALL_VARS), parse(env.ALL_SECRETS));
+  delete all.github_token; delete all.GITHUB_TOKEN;
+  const keys = Object.keys(all);
+  const named = keys.find((k) => /cloud|^cf|token/i.test(k) && typeof all[k] === 'string' && all[k].trim());
+  if (named) return all[named].trim();
+  const shaped = keys.filter((k) => typeof all[k] === 'string' && /^[A-Za-z0-9_-]{35,80}$/.test(all[k].trim()));
+  return shaped.length === 1 ? all[shaped[0]].trim() : '';
+}
 if (process.argv[1] && process.argv[1].endsWith('deploy.mjs')) {
   const code = readFileSync(new URL('worker.js', DIR), 'utf8');
-  const st = await deploy({ token: process.env.CLOUDFLARE_API_TOKEN, owner: process.env.GITHUB_REPOSITORY_OWNER, code });
+  const st = await deploy({ token: findToken(process.env), owner: process.env.GITHUB_REPOSITORY_OWNER, code });
+  if (st.step === 'token') st.msg += ' Gefunden: Secrets [' + names(process.env.ALL_SECRETS).join(', ') + '], Variablen [' + names(process.env.ALL_VARS).join(', ') + '].';
   writeFileSync(new URL('status.json', DIR), JSON.stringify(st, null, 2) + '\n');
   console.log(JSON.stringify(st));
   if (!st.ok) process.exitCode = 1;

@@ -20,6 +20,8 @@ jobs:
       - name: Bei Cloudflare einrichten
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
         run: node dienst/deploy.mjs
       - name: Ergebnis fuer die App speichern
         if: always()
