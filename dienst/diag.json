@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "at": "2026-10-31T14:23:17.592Z",
+  "at": "2026-10-31T14:44:06.206Z",
   "synced": true,
   "subscribed": true,
   "cfg": {
@@ -33,9 +33,9 @@
     }
   },
   "quotaApp": {
-    "remaining": 207,
-    "used": 293,
-    "at": 1793455600745
+    "remaining": 203,
+    "used": 297,
+    "at": 1793457152737
   },
   "quotaWorker": {
     "remaining": 226,
@@ -73,29 +73,24 @@
       "icehockey_sweden_hockey_league",
       "icehockey_liiga"
     ],
-    "remaining": 230,
+    "remaining": 229,
     "calls": 3
   },
-  "autoMatched": 12,
-  "ownOdds": 6,
+  "autoMatched": 8,
+  "ownOdds": 1,
   "openLegs": 0,
+  "app": null,
   "leagues": {
-    "soccer_germany_bundesliga": {
-      "games": 6,
-      "withOdds": 6,
-      "lastOdds": "2026-10-31T14:06:39.699Z",
-      "next": "2026-10-31T14:30:00.000Z"
-    },
     "soccer_epl": {
       "games": 7,
-      "withOdds": 0,
-      "lastOdds": null,
+      "withOdds": 7,
+      "lastOdds": "2026-10-31T14:32:28.447Z",
       "next": "2026-10-31T15:00:00.000Z"
     },
     "soccer_spain_la_liga": {
       "games": 3,
-      "withOdds": 0,
-      "lastOdds": null,
+      "withOdds": 3,
+      "lastOdds": "2026-10-31T14:32:28.447Z",
       "next": "2026-10-31T15:15:00.000Z"
     },
     "soccer_italy_serie_a": {
@@ -105,10 +100,16 @@
       "next": "2026-10-31T17:00:00.000Z"
     },
     "icehockey_nhl": {
-      "games": 9,
+      "games": 10,
       "withOdds": 0,
       "lastOdds": null,
       "next": "2026-10-31T17:10:00.000Z"
+    },
+    "soccer_germany_bundesliga": {
+      "games": 1,
+      "withOdds": 1,
+      "lastOdds": "2026-10-31T14:06:39.699Z",
+      "next": "2026-10-31T17:30:00.000Z"
     },
     "basketball_nba": {
       "games": 7,
@@ -169,6 +170,10 @@
     {
       "at": "2026-10-31T14:20:39.017Z",
       "t": "Geprüft, nichts Lohnendes: Rayo Vallecano – Celta Vigo"
+    },
+    {
+      "at": "2026-10-31T14:40:39.017Z",
+      "t": "📈 Pinnacle bewegt sich: Hull City – Ipswich Town"
     }
   ]
 }
