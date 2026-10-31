@@ -87,7 +87,7 @@ export async function deploy({ token, owner, code, fetchFn = fetch, sleep = (ms)
 function parse(j) { try { const o = JSON.parse(j || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } }
 function names(j) { return Object.keys(parse(j)).filter((k) => k.toLowerCase() !== 'github_token'); }
 export function findToken(env) {
-  if (env.CLOUDFLARE_API_TOKEN && env.CLOUDFLARE_API_TOKEN.trim()) return env.CLOUDFLARE_API_TOKEN.trim();
+  for (const k of ['CLOUDFLARE_API_TOKEN', 'CF_API_TOKEN', 'CLOUDFLARE_TOKEN', 'CLOUDFLARE_API_TOKEN_VAR']) if (env[k] && env[k].trim()) return env[k].trim();
   const all = Object.assign({}, parse(env.ALL_VARS), parse(env.ALL_SECRETS));
   delete all.github_token; delete all.GITHUB_TOKEN;
   const keys = Object.keys(all);
@@ -99,7 +99,6 @@ export function findToken(env) {
 if (process.argv[1] && process.argv[1].endsWith('deploy.mjs')) {
   const code = readFileSync(new URL('worker.js', DIR), 'utf8');
   const st = await deploy({ token: findToken(process.env), owner: process.env.GITHUB_REPOSITORY_OWNER, code });
-  if (st.step === 'token') st.msg += ' Gefunden: Secrets [' + names(process.env.ALL_SECRETS).join(', ') + '], Variablen [' + names(process.env.ALL_VARS).join(', ') + '].';
   writeFileSync(new URL('status.json', DIR), JSON.stringify(st, null, 2) + '\n');
   console.log(JSON.stringify(st));
   if (!st.ok) process.exitCode = 1;
