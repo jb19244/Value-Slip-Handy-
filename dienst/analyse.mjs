@@ -35,6 +35,17 @@ if (user.op && user.op.key) {
   else {
     const tid2l = {}; Object.keys(user.op.tours).forEach((k) => { tid2l[user.op.tours[k]] = k; });
     const parsed = L.opParse(r.body, user.op.idx, tid2l, user.op.book || 'bet365');
+    // Fehlersuche: Aufbau der Antwort und erkannte Maerkte
+    const list = Array.isArray(r.body) ? r.body : [];
+    const seen = {};
+    list.forEach((f) => { const bo = f.bookmakerOdds && f.bookmakerOdds[user.op.book || 'bet365']; if (bo && bo.markets) Object.keys(bo.markets).forEach((k) => { seen[k] = (seen[k] || 0) + 1; }); });
+    const mk = await j(L.opUrl('', '/v4/markets', { apiKey: user.op.key }));
+    const defs = Array.isArray(mk.body) ? mk.body.filter((m) => seen[String(m.marketId)]) : [];
+    out.debug = { fixtureKeys: list[0] ? Object.keys(list[0]) : [], bookKeys: list[0] && list[0].bookmakerOdds ? Object.keys(list[0].bookmakerOdds) : [],
+      sample: list.slice(0, 2).map((f) => ({ fixtureId: f.fixtureId, tournamentId: f.tournamentId, sportId: f.sportId, startTime: f.startTime, p1: f.participant1Id, p2: f.participant2Id, p1n: f.participant1Name, p2n: f.participant2Name,
+        markets: f.bookmakerOdds && f.bookmakerOdds[user.op.book || 'bet365'] ? Object.fromEntries(Object.entries(f.bookmakerOdds[user.op.book || 'bet365'].markets).slice(0, 12).map(([k, v]) => [k, Object.fromEntries(Object.entries(v.outcomes || {}).map(([oid, o]) => [oid, o.players && o.players['0'] ? { price: o.players['0'].price, active: o.players['0'].active } : o]))])) : null })),
+      seen, defs: defs.slice(0, 60), idxBb: user.op.idx && user.op.idx.bb, idxIh: user.op.idx && user.op.idx.ih,
+      startTimes: list.map((f) => f.startTime + ' ' + f.tournamentId + ' ' + f.participant1Id + '-' + f.participant2Id) };
     auto = L.opMatch(raws, parsed);
     out.op = { fixtures: Array.isArray(r.body) ? r.body.length : 0, parsed: parsed.length, matched: Object.keys(auto).length,
       unmatched: parsed.filter((p) => !Object.values(auto).some((a) => a.fid === p.fid)).map((p) => p.home + ' – ' + p.away + ' ' + new Date(p.ko).toISOString()) };
