@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "at": "2026-10-31T14:44:06.206Z",
+  "at": "2026-10-31T18:05:48.753Z",
   "synced": true,
   "subscribed": true,
   "cfg": {
@@ -14,7 +14,7 @@
     "calls": 10,
     "minEdge": 0.005,
     "devig": "power",
-    "btTf": 0.947,
+    "btTf": 1,
     "ah": false,
     "windowH": 12
   },
@@ -33,9 +33,9 @@
     }
   },
   "quotaApp": {
-    "remaining": 203,
-    "used": 297,
-    "at": 1793457152737
+    "remaining": 181,
+    "used": 319,
+    "at": 1793469533082
   },
   "quotaWorker": {
     "remaining": 226,
@@ -73,61 +73,112 @@
       "icehockey_sweden_hockey_league",
       "icehockey_liiga"
     ],
-    "remaining": 229,
+    "remaining": 226,
     "calls": 3
   },
-  "autoMatched": 8,
+  "autoMatched": 4,
   "ownOdds": 1,
   "openLegs": 0,
-  "app": null,
+  "app": {
+    "notes": "20 Spiele im Zeitraum, davon 20 mit Quoten. Referenz ist ausschließlich Pinnacle (20 Spiele mit Pinnacle-Quoten, 13 Ligen abgefragt). Die Quoten deines Anbieters (Betano oder bet365) trägst du selbst ein. Doppelte Chance, Beide treffen, Tore und Team-Tore: Chance aus Pinnacle 1X2 und Über/Unter berechnet (kein zusätzlicher Abruf), die Quote deines Anbieters aus deinen 1X2-Quoten geschätzt.",
+    "lf": {
+      "soccer_italy_serie_a": 1793469526659,
+      "soccer_germany_dfb_pokal": 1793204260674,
+      "soccer_england_efl_cup": 1793301225961,
+      "soccer_spain_copa_del_rey": 1793302620928,
+      "basketball_nba": 1793469526659,
+      "basketball_euroleague": 1793380112800,
+      "icehockey_nhl": 1793466188463,
+      "soccer_germany_bundesliga2": 1793466188463,
+      "soccer_france_ligue_one": 1793469526659,
+      "soccer_germany_bundesliga": 1793466188463,
+      "soccer_spain_la_liga": 1793466188463,
+      "soccer_epl": 1793466188463
+    },
+    "mode": "smart",
+    "err": "",
+    "opErr": "OddsPapi antwortet mit Fehler 400 (Too many tournament IDs specified.).",
+    "opInfo": {
+      "at": 1793466197043,
+      "fixtures": 44,
+      "raw": 57,
+      "games": 16,
+      "matched": 3,
+      "leagues": [
+        "soccer_germany_bundesliga",
+        "soccer_germany_bundesliga2",
+        "soccer_epl",
+        "soccer_spain_la_liga",
+        "icehockey_nhl"
+      ]
+    },
+    "spent": {
+      "day": "2026-10-31",
+      "n": 75
+    },
+    "leagues": [
+      "soccer_germany_bundesliga",
+      "soccer_germany_bundesliga2",
+      "soccer_epl",
+      "soccer_spain_la_liga",
+      "soccer_italy_serie_a",
+      "soccer_france_ligue_one",
+      "soccer_uefa_champs_league",
+      "soccer_germany_dfb_pokal",
+      "soccer_fa_cup",
+      "soccer_england_efl_cup",
+      "soccer_spain_copa_del_rey",
+      "soccer_italy_coppa_italia",
+      "soccer_france_coupe_de_france",
+      "soccer_uefa_europa_league",
+      "soccer_uefa_europa_conference_league",
+      "basketball_nba",
+      "basketball_euroleague",
+      "icehockey_nhl"
+    ]
+  },
   "leagues": {
-    "soccer_epl": {
-      "games": 7,
-      "withOdds": 7,
-      "lastOdds": "2026-10-31T14:32:28.447Z",
-      "next": "2026-10-31T15:00:00.000Z"
-    },
-    "soccer_spain_la_liga": {
-      "games": 3,
-      "withOdds": 3,
-      "lastOdds": "2026-10-31T14:32:28.447Z",
-      "next": "2026-10-31T15:15:00.000Z"
-    },
-    "soccer_italy_serie_a": {
-      "games": 2,
-      "withOdds": 0,
-      "lastOdds": null,
-      "next": "2026-10-31T17:00:00.000Z"
-    },
     "icehockey_nhl": {
-      "games": 10,
-      "withOdds": 0,
-      "lastOdds": null,
-      "next": "2026-10-31T17:10:00.000Z"
-    },
-    "soccer_germany_bundesliga": {
-      "games": 1,
-      "withOdds": 1,
-      "lastOdds": "2026-10-31T14:06:39.699Z",
-      "next": "2026-10-31T17:30:00.000Z"
+      "games": 8,
+      "withOdds": 8,
+      "lastOdds": "2026-10-31T17:03:08.463Z",
+      "next": "2026-10-31T18:10:00.000Z"
     },
     "basketball_nba": {
       "games": 7,
-      "withOdds": 0,
-      "lastOdds": null,
+      "withOdds": 7,
+      "lastOdds": "2026-10-31T17:58:46.659Z",
       "next": "2026-10-31T19:10:00.000Z"
     },
     "soccer_germany_bundesliga2": {
       "games": 1,
-      "withOdds": 0,
-      "lastOdds": null,
+      "withOdds": 1,
+      "lastOdds": "2026-10-31T17:03:08.463Z",
       "next": "2026-10-31T19:30:00.000Z"
+    },
+    "soccer_italy_serie_a": {
+      "games": 1,
+      "withOdds": 1,
+      "lastOdds": "2026-10-31T17:58:46.659Z",
+      "next": "2026-10-31T19:45:00.000Z"
     },
     "soccer_france_ligue_one": {
       "games": 1,
-      "withOdds": 0,
-      "lastOdds": null,
+      "withOdds": 1,
+      "lastOdds": "2026-10-31T17:58:46.659Z",
       "next": "2026-10-31T19:45:00.000Z"
+    },
+    "soccer_epl": {
+      "games": 1,
+      "withOdds": 1,
+      "lastOdds": "2026-10-31T17:03:08.463Z",
+      "next": "2026-10-31T20:00:00.000Z"
+    },
+    "soccer_spain_la_liga": {
+      "games": 1,
+      "withOdds": 1,
+      "lastOdds": "2026-10-31T17:03:08.463Z",
+      "next": "2026-10-31T20:00:00.000Z"
     }
   },
   "log": [
@@ -174,6 +225,22 @@
     {
       "at": "2026-10-31T14:40:39.017Z",
       "t": "📈 Pinnacle bewegt sich: Hull City – Ipswich Town"
+    },
+    {
+      "at": "2026-10-31T16:05:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Udinese – AS Roma"
+    },
+    {
+      "at": "2026-10-31T16:25:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Boston Bruins – Chicago Blackhawks, Detroit Red Wings – St Louis Blues"
+    },
+    {
+      "at": "2026-10-31T16:35:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Bayern Munich – Borussia Dortmund, Tottenham Hotspur – Crystal Palace"
+    },
+    {
+      "at": "2026-10-31T17:25:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: New York Islanders – Edmonton Oilers, Nashville Predators – Tampa Bay Lightning"
     }
   ]
 }
