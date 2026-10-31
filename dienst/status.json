@@ -1,7 +1,7 @@
 {
-  "ok": false,
-  "at": "2026-10-31T08:47:05.232Z",
-  "step": "token",
-  "msg": "Das GitHub-Secret CLOUDFLARE_API_TOKEN fehlt.",
-  "url": ""
+  "ok": true,
+  "at": "2026-10-31T08:50:18.024Z",
+  "step": "fertig",
+  "msg": "Push-Dienst läuft.",
+  "url": "https://value-slip.75rk4v4jg4.workers.dev"
 }
