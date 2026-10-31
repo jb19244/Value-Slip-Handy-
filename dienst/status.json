@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "at": "2026-10-31T08:35:14.279Z",
+  "step": "token",
+  "msg": "Das GitHub-Secret CLOUDFLARE_API_TOKEN fehlt.",
+  "url": ""
+}
