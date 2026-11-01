@@ -2925,9 +2925,21 @@ function opLoad(opts){
     if (!lg.length){ if (opts.manual) toast('Keine Spiele mit Pinnacle-Quoten in Ligen, für die bet365 dein Anbieter ist'); return; }
     state.opBusy = 'bet365 lädt …'; o.lastTry = Date.now(); refreshOpUi();
     var tids = lg.map(function(x){ return x.tid; }).filter(function(x, i, a){ return a.indexOf(x) === i; });
-    var chunks = []; for (var i = 0; i < tids.length; i += 10) chunks.push(tids.slice(i, i + 10));
+    // OddsPapi erlaubt nur wenige Turniere je Abruf ("Too many tournament IDs"): in Paketen abrufen, bei Ablehnung Paket halbieren
+    var size = o.maxT > 0 ? o.maxT : 5;
+    var chunks = []; for (var i = 0; i < tids.length; i += size) chunks.push(tids.slice(i, i + size));
     var all = [], chain = Promise.resolve();
-    chunks.forEach(function(c){ chain = chain.then(function(){ return opGet('/v4/odds-by-tournaments', { bookmaker: setup.book, tournamentIds: c.join(','), oddsFormat: 'decimal' }, true).then(function(j){ all = all.concat(Array.isArray(j) ? j : []); }); }); });
+    var fetchChunk = function(c){
+      return opGet('/v4/odds-by-tournaments', { bookmaker: setup.book, tournamentIds: c.join(','), oddsFormat: 'decimal' }, true).then(function(j){ all = all.concat(Array.isArray(j) ? j : []); }, function(e){
+        var msg = JSON.stringify(e && e.body || '');
+        if (e && e.status === 400 && /too many tournament/i.test(msg) && c.length > 1){
+          var half = Math.max(1, Math.floor(c.length / 2)); o.maxT = half; saveApi();
+          return fetchChunk(c.slice(0, half)).then(function(){ return fetchChunk(c.slice(half)); });
+        }
+        throw e;
+      });
+    };
+    chunks.forEach(function(c){ chain = chain.then(function(){ return fetchChunk(c); }); });
     return chain.then(function(){
       var t = Date.now(), tid2l = {};
       Object.keys(setup.tours).forEach(function(k){ tid2l[setup.tours[k]] = k; });
@@ -2992,7 +3004,7 @@ function opSettings(){
 // Push-Benachrichtigungen ueber den eigenen Push-Dienst (Cloudflare Worker, Code unter dienst/worker.js)
 // Die App schickt dem Dienst: Spiele mit Pinnacle-Quoten, deine eingetragenen Quoten, offene Tipps und Einstellungen.
 // Der Dienst erinnert vor Anpfiff, meldet Value und holt die Schlussquote. Seine Abrufe holt sich die App beim naechsten Oeffnen.
-var PUSH_VER = '84a5278484';
+var PUSH_VER = '61d379e4f1';
 var PUSH_LEADS = {
   fb: [[0, 'Aus'], [30, '30 Min'], [55, '55 Min'], [90, '90 Min']],
   bb: [[0, 'Aus'], [25, '25 Min'], [45, '45 Min'], [90, '90 Min']],
@@ -3023,7 +3035,7 @@ function pushPayload(sub){
   if (opOn() && o.setup && o.setup.idx){
     var idx = {};
     ['fb', 'bb', 'ih'].forEach(function(sp){ if (bookFor(sp) === OP_BOOK) idx[sp] = o.setup.idx[sp] || {}; });
-    opx = { key: String(o.key).trim(), book: o.setup.book, tours: o.setup.tours, idx: idx, calls: state.api.push.opCalls, remaining: opRemaining(), seen: state.api.push.opSeen || 0 };
+    opx = { key: String(o.key).trim(), book: o.setup.book, tours: o.setup.tours, idx: idx, maxT: o.maxT || 5, calls: state.api.push.opCalls, remaining: opRemaining(), seen: state.api.push.opSeen || 0 };
     Object.keys(state.auto).forEach(function(id){ if (ids[id]) auto[id] = state.auto[id]; });
   }
   return { token: state.api.push.token, sub: sub, apiKey: String(state.api.key || '').trim(), cfg: pushCfg(), games: games, ov: ov, legs: legs, quota: state.api.quota, since: state.api.push.since || 0, op: opx, auto: auto,

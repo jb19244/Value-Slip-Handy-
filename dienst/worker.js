@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '84a5278484';
+const WORKER_VER = '61d379e4f1';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -1553,11 +1553,16 @@ async function runCron(env, nowMs) {
       const opLeft = op.remaining == null ? Infinity : op.remaining - (st.opTotal || 0) + (op.seen || 0);
       if (tids.length && !haveFresh && st.opSpent.n < (op.calls == null ? 3 : op.calls) && opLeft > 3) {
         try {
-          const u = APP.opUrl('', '/v4/odds-by-tournaments', { bookmaker: op.book || APP.OP_BOOK, tournamentIds: [...new Set(tids)].slice(0, 10).join(','), oddsFormat: 'decimal', apiKey: op.key });
-          const r = await fetch(u, { headers: { Accept: 'application/json' } });
-          st.opSpent.n++; st.opTotal = (st.opTotal || 0) + 1; dirtyState = true;
-          if (r.ok) {
-            const list = await r.json();
+          const all = [...new Set(tids)], size = op.maxT > 0 ? op.maxT : 3, list = [];
+          let okAny = false, lastStatus = 0;
+          for (let i = 0; i < all.length && st.opSpent.n < (op.calls == null ? 3 : op.calls); i += size) {
+            const u = APP.opUrl('', '/v4/odds-by-tournaments', { bookmaker: op.book || APP.OP_BOOK, tournamentIds: all.slice(i, i + size).join(','), oddsFormat: 'decimal', apiKey: op.key });
+            if (i) await new Promise((res) => setTimeout(res, 1100));
+            const r = await fetch(u, { headers: { Accept: 'application/json' } });
+            st.opSpent.n++; st.opTotal = (st.opTotal || 0) + 1; dirtyState = true; lastStatus = r.status;
+            if (r.ok) { okAny = true; const part = await r.json(); if (Array.isArray(part)) list.push(...part); }
+          }
+          if (okAny) {
             const tid2l = {};
             Object.keys(op.tours).forEach((k) => { tid2l[op.tours[k]] = k; });
             const parsed = APP.opParse(list, op.idx, tid2l, op.book || APP.OP_BOOK);
@@ -1565,7 +1570,7 @@ async function runCron(env, nowMs) {
             Object.keys(hit).forEach((id) => { hit[id].fetched = nowMs; auto[id] = hit[id]; });
             if (Object.keys(hit).length) { snaps.push({ id: 'auto:' + nowMs, kind: 'auto', at: nowMs, auto: hit }); dirtySnaps = true; }
             report.fetched.push('bet365 (' + Object.keys(hit).length + ')');
-          } else logAdd('OddsPapi Fehler ' + r.status);
+          } else logAdd('OddsPapi Fehler ' + lastStatus);
         } catch (e) { logAdd('OddsPapi nicht erreichbar'); }
       }
     }
@@ -1697,6 +1702,7 @@ async function push(request, headers, env, nowMs) {
       legs: Array.isArray(b.legs) ? b.legs.slice(0, 100).filter((l) => l && typeof l.mid === 'string').map((l) => ({ mid: l.mid.slice(0, 120), lkey: String(l.lkey || '').slice(0, 60), market: String(l.market || '').slice(0, 4), ko: +l.ko })) : [],
       quota: b.quota && typeof b.quota.remaining === 'number' ? { remaining: b.quota.remaining, used: b.quota.used, at: +b.quota.at || 0 } : (user.quota || null),
       op: b.op && typeof b.op === 'object' && typeof b.op.key === 'string' && b.op.key ? { key: b.op.key.slice(0, 100), book: String(b.op.book || 'bet365').slice(0, 30), tours: b.op.tours || {}, idx: b.op.idx || null,
+        maxT: num(b.op.maxT, 1, 10, 3),
         calls: num(b.op.calls, 0, 20, 3), remaining: typeof b.op.remaining === 'number' ? b.op.remaining : null, seen: +b.op.seen || 0 } : null,
       auto: b.auto && typeof b.auto === 'object' ? b.auto : {},
       dg: b.dg && typeof b.dg === 'object' && JSON.stringify(b.dg).length < 4000 ? b.dg : null
