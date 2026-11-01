@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "at": "2026-10-31T18:05:48.753Z",
+  "at": "2026-11-01T08:39:25.570Z",
   "synced": true,
   "subscribed": true,
   "cfg": {
@@ -33,21 +33,21 @@
     }
   },
   "quotaApp": {
-    "remaining": 181,
-    "used": 319,
-    "at": 1793469533082
+    "remaining": 489,
+    "used": 11,
+    "at": 1793521800608
   },
   "quotaWorker": {
-    "remaining": 226,
-    "used": 274,
-    "at": 1793450139017
+    "remaining": 497,
+    "used": 3,
+    "at": 1793495739017
   },
   "spent": {
-    "day": "2026-10-31",
+    "day": "2026-11-01",
     "n": 10
   },
   "opSpent": {
-    "day": "2026-10-31",
+    "day": "2026-11-01",
     "n": 3
   },
   "op": {
@@ -73,26 +73,26 @@
       "icehockey_sweden_hockey_league",
       "icehockey_liiga"
     ],
-    "remaining": 226,
+    "remaining": 223,
     "calls": 3
   },
-  "autoMatched": 4,
-  "ownOdds": 1,
+  "autoMatched": 0,
+  "ownOdds": 0,
   "openLegs": 0,
   "app": {
-    "notes": "20 Spiele im Zeitraum, davon 20 mit Quoten. Referenz ist ausschließlich Pinnacle (20 Spiele mit Pinnacle-Quoten, 13 Ligen abgefragt). Die Quoten deines Anbieters (Betano oder bet365) trägst du selbst ein. Doppelte Chance, Beide treffen, Tore und Team-Tore: Chance aus Pinnacle 1X2 und Über/Unter berechnet (kein zusätzlicher Abruf), die Quote deines Anbieters aus deinen 1X2-Quoten geschätzt.",
+    "notes": "20 Spiele im Zeitraum, davon 16 mit Quoten. Referenz ist ausschließlich Pinnacle (16 Spiele mit Pinnacle-Quoten, 14 Ligen abgefragt). Die Quoten deines Anbieters (Betano oder bet365) trägst du selbst ein. Doppelte Chance, Beide treffen, Tore und Team-Tore: Chance aus Pinnacle 1X2 und Über/Unter berechnet (kein zusätzlicher Abruf), die Quote deines Anbieters aus deinen 1X2-Quoten geschätzt.",
     "lf": {
-      "soccer_italy_serie_a": 1793469526659,
+      "soccer_italy_serie_a": 1793521793486,
       "soccer_germany_dfb_pokal": 1793204260674,
       "soccer_england_efl_cup": 1793301225961,
       "soccer_spain_copa_del_rey": 1793302620928,
       "basketball_nba": 1793469526659,
       "basketball_euroleague": 1793380112800,
-      "icehockey_nhl": 1793466188463,
-      "soccer_germany_bundesliga2": 1793466188463,
-      "soccer_france_ligue_one": 1793469526659,
+      "icehockey_nhl": 1793489139017,
+      "soccer_germany_bundesliga2": 1793521793486,
+      "soccer_france_ligue_one": 1793521793486,
       "soccer_germany_bundesliga": 1793466188463,
-      "soccer_spain_la_liga": 1793466188463,
+      "soccer_spain_la_liga": 1793521793486,
       "soccer_epl": 1793466188463
     },
     "mode": "smart",
@@ -113,8 +113,8 @@
       ]
     },
     "spent": {
-      "day": "2026-10-31",
-      "n": 75
+      "day": "2026-11-01",
+      "n": 8
     },
     "leagues": [
       "soccer_germany_bundesliga",
@@ -138,102 +138,50 @@
     ]
   },
   "leagues": {
-    "icehockey_nhl": {
-      "games": 8,
-      "withOdds": 8,
-      "lastOdds": "2026-10-31T17:03:08.463Z",
-      "next": "2026-10-31T18:10:00.000Z"
-    },
-    "basketball_nba": {
-      "games": 7,
-      "withOdds": 7,
-      "lastOdds": "2026-10-31T17:58:46.659Z",
-      "next": "2026-10-31T19:10:00.000Z"
+    "soccer_italy_serie_a": {
+      "games": 5,
+      "withOdds": 5,
+      "lastOdds": "2026-11-01T08:29:53.486Z",
+      "next": "2026-11-01T11:30:00.000Z"
     },
     "soccer_germany_bundesliga2": {
-      "games": 1,
-      "withOdds": 1,
-      "lastOdds": "2026-10-31T17:03:08.463Z",
-      "next": "2026-10-31T19:30:00.000Z"
+      "games": 3,
+      "withOdds": 3,
+      "lastOdds": "2026-11-01T08:29:53.486Z",
+      "next": "2026-11-01T12:30:00.000Z"
     },
-    "soccer_italy_serie_a": {
-      "games": 1,
-      "withOdds": 1,
-      "lastOdds": "2026-10-31T17:58:46.659Z",
-      "next": "2026-10-31T19:45:00.000Z"
+    "soccer_spain_la_liga": {
+      "games": 4,
+      "withOdds": 4,
+      "lastOdds": "2026-11-01T08:29:53.486Z",
+      "next": "2026-11-01T13:00:00.000Z"
     },
     "soccer_france_ligue_one": {
-      "games": 1,
-      "withOdds": 1,
-      "lastOdds": "2026-10-31T17:58:46.659Z",
-      "next": "2026-10-31T19:45:00.000Z"
+      "games": 4,
+      "withOdds": 4,
+      "lastOdds": "2026-11-01T08:29:53.486Z",
+      "next": "2026-11-01T14:00:00.000Z"
+    },
+    "soccer_germany_bundesliga": {
+      "games": 2,
+      "withOdds": 0,
+      "lastOdds": null,
+      "next": "2026-11-01T14:30:00.000Z"
     },
     "soccer_epl": {
       "games": 1,
-      "withOdds": 1,
-      "lastOdds": "2026-10-31T17:03:08.463Z",
-      "next": "2026-10-31T20:00:00.000Z"
+      "withOdds": 0,
+      "lastOdds": null,
+      "next": "2026-11-01T16:30:00.000Z"
     },
-    "soccer_spain_la_liga": {
+    "icehockey_nhl": {
       "games": 1,
-      "withOdds": 1,
-      "lastOdds": "2026-10-31T17:03:08.463Z",
-      "next": "2026-10-31T20:00:00.000Z"
+      "withOdds": 0,
+      "lastOdds": null,
+      "next": "2026-11-01T18:00:00.000Z"
     }
   },
   "log": [
-    {
-      "at": "2026-10-31T11:05:39.017Z",
-      "t": "⏱ Anpfiff in 54 Min"
-    },
-    {
-      "at": "2026-10-31T11:35:39.017Z",
-      "t": "⏱ Anpfiff in 54 Min"
-    },
-    {
-      "at": "2026-10-31T11:40:39.017Z",
-      "t": "💰 Value bei bet365: 3 Tipps"
-    },
-    {
-      "at": "2026-10-31T12:05:39.017Z",
-      "t": "Geprüft, nichts Lohnendes: Levante – Atlético Madrid"
-    },
-    {
-      "at": "2026-10-31T13:05:39.017Z",
-      "t": "Geprüft, nichts Lohnendes: Bologna – Monza"
-    },
-    {
-      "at": "2026-10-31T13:35:39.017Z",
-      "t": "Geprüft, nichts Lohnendes: Augsburg – SC Freiburg, Bayer Leverkusen – VfB Stuttgart"
-    },
-    {
-      "at": "2026-10-31T13:55:39.017Z",
-      "t": "💰 Value bei bet365: 1 Tipp"
-    },
-    {
-      "at": "2026-10-31T14:05:39.017Z",
-      "t": "Geprüft, nichts Lohnendes: Bournemouth – Leeds United, Brentford – Nottingham Forest"
-    },
-    {
-      "at": "2026-10-31T14:10:39.017Z",
-      "t": "💰 Value bei bet365: 1 Tipp"
-    },
-    {
-      "at": "2026-10-31T14:20:39.017Z",
-      "t": "Geprüft, nichts Lohnendes: Rayo Vallecano – Celta Vigo"
-    },
-    {
-      "at": "2026-10-31T14:40:39.017Z",
-      "t": "📈 Pinnacle bewegt sich: Hull City – Ipswich Town"
-    },
-    {
-      "at": "2026-10-31T16:05:39.017Z",
-      "t": "Geprüft, nichts Lohnendes: Udinese – AS Roma"
-    },
-    {
-      "at": "2026-10-31T16:25:39.017Z",
-      "t": "Geprüft, nichts Lohnendes: Boston Bruins – Chicago Blackhawks, Detroit Red Wings – St Louis Blues"
-    },
     {
       "at": "2026-10-31T16:35:39.017Z",
       "t": "Geprüft, nichts Lohnendes: Bayern Munich – Borussia Dortmund, Tottenham Hotspur – Crystal Palace"
@@ -241,6 +189,58 @@
     {
       "at": "2026-10-31T17:25:39.017Z",
       "t": "Geprüft, nichts Lohnendes: New York Islanders – Edmonton Oilers, Nashville Predators – Tampa Bay Lightning"
+    },
+    {
+      "at": "2026-10-31T18:35:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Karlsruher SC – 1. FC Heidenheim"
+    },
+    {
+      "at": "2026-10-31T18:45:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Utah Jazz – Portland Trail Blazers"
+    },
+    {
+      "at": "2026-10-31T18:50:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: AC Milan – Inter Milan, Troyes – Le Mans FC"
+    },
+    {
+      "at": "2026-10-31T19:05:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Aston Villa – Fulham, Barcelona – Alavés"
+    },
+    {
+      "at": "2026-10-31T19:25:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Los Angeles Kings – Buffalo Sabres, San Jose Sharks – Ottawa Senators"
+    },
+    {
+      "at": "2026-10-31T21:45:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Charlotte Hornets – Philadelphia 76ers"
+    },
+    {
+      "at": "2026-10-31T22:25:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Montréal Canadiens – Pittsburgh Penguins, Vancouver Canucks – Toronto Maple Leafs"
+    },
+    {
+      "at": "2026-10-31T22:45:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: New Orleans Pelicans – Atlanta Hawks"
+    },
+    {
+      "at": "2026-10-31T23:25:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Dallas Stars – Columbus Blue Jackets"
+    },
+    {
+      "at": "2026-10-31T23:35:39.017Z",
+      "t": "📈 Pinnacle bewegt sich: Memphis Grizzlies – Sacramento Kings"
+    },
+    {
+      "at": "2026-10-31T23:45:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Milwaukee Bucks – Cleveland Cavaliers, Memphis Grizzlies – Sacramento Kings"
+    },
+    {
+      "at": "2026-11-01T00:15:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Houston Rockets – Oklahoma City Thunder"
+    },
+    {
+      "at": "2026-11-01T01:25:39.017Z",
+      "t": "Geprüft, nichts Lohnendes: Colorado Avalanche – Calgary Flames"
     }
   ]
 }
