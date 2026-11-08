@@ -1,0 +1,358 @@
+{
+  "at": "2026-11-08T19:49:55.313Z",
+  "url": "https://value-slip.75rk4v4jg4.workers.dev",
+  "checks": [
+    {
+      "what": "EURUSD=X 15m",
+      "status": 200,
+      "ms": 256,
+      "n": 480,
+      "last": 1.1141,
+      "err": ""
+    },
+    {
+      "what": "EURUSD=X 60m",
+      "status": 200,
+      "ms": 134,
+      "n": 552,
+      "last": 1.1141,
+      "err": ""
+    },
+    {
+      "what": "EURUSD=X 1d",
+      "status": 200,
+      "ms": 129,
+      "n": 524,
+      "last": 1.1141,
+      "err": ""
+    },
+    {
+      "what": "GBPUSD=X 15m",
+      "status": 200,
+      "ms": 105,
+      "n": 480,
+      "last": 1.3347,
+      "err": ""
+    },
+    {
+      "what": "GBPUSD=X 60m",
+      "status": 200,
+      "ms": 157,
+      "n": 552,
+      "last": 1.3347,
+      "err": ""
+    },
+    {
+      "what": "GBPUSD=X 1d",
+      "status": 200,
+      "ms": 124,
+      "n": 524,
+      "last": 1.3347,
+      "err": ""
+    },
+    {
+      "what": "JPY=X 15m",
+      "status": 200,
+      "ms": 157,
+      "n": 480,
+      "last": 158.381,
+      "err": ""
+    },
+    {
+      "what": "JPY=X 60m",
+      "status": 200,
+      "ms": 186,
+      "n": 552,
+      "last": 158.381,
+      "err": ""
+    },
+    {
+      "what": "JPY=X 1d",
+      "status": 200,
+      "ms": 174,
+      "n": 524,
+      "last": 158.381,
+      "err": ""
+    },
+    {
+      "what": "GC=F 15m",
+      "status": 200,
+      "ms": 130,
+      "n": 357,
+      "last": 4074.9,
+      "err": ""
+    },
+    {
+      "what": "GC=F 60m",
+      "status": 200,
+      "ms": 139,
+      "n": 605,
+      "last": 4074.9,
+      "err": ""
+    },
+    {
+      "what": "GC=F 1d",
+      "status": 200,
+      "ms": 135,
+      "n": 504,
+      "last": 4074.9,
+      "err": ""
+    },
+    {
+      "what": "SI=F 15m",
+      "status": 200,
+      "ms": 103,
+      "n": 357,
+      "last": 51.942,
+      "err": ""
+    },
+    {
+      "what": "SI=F 60m",
+      "status": 200,
+      "ms": 246,
+      "n": 605,
+      "last": 51.942,
+      "err": ""
+    },
+    {
+      "what": "SI=F 1d",
+      "status": 200,
+      "ms": 104,
+      "n": 504,
+      "last": 51.942,
+      "err": ""
+    },
+    {
+      "what": "CL=F 15m",
+      "status": 200,
+      "ms": 173,
+      "n": 357,
+      "last": 90.83,
+      "err": ""
+    },
+    {
+      "what": "CL=F 60m",
+      "status": 200,
+      "ms": 115,
+      "n": 605,
+      "last": 90.83,
+      "err": ""
+    },
+    {
+      "what": "CL=F 1d",
+      "status": 200,
+      "ms": 105,
+      "n": 504,
+      "last": 90.83,
+      "err": ""
+    },
+    {
+      "what": "^GDAXI 15m",
+      "status": 200,
+      "ms": 198,
+      "n": 171,
+      "last": 25820.36,
+      "err": ""
+    },
+    {
+      "what": "^GDAXI 60m",
+      "status": 200,
+      "ms": 99,
+      "n": 208,
+      "last": 25820.36,
+      "err": ""
+    },
+    {
+      "what": "^GDAXI 1d",
+      "status": 200,
+      "ms": 208,
+      "n": 507,
+      "last": 25820.36,
+      "err": ""
+    },
+    {
+      "what": "^NDX 15m",
+      "status": 200,
+      "ms": 100,
+      "n": 131,
+      "last": 26989.992,
+      "err": ""
+    },
+    {
+      "what": "^NDX 60m",
+      "status": 200,
+      "ms": 104,
+      "n": 162,
+      "last": 26989.992,
+      "err": ""
+    },
+    {
+      "what": "^NDX 1d",
+      "status": 200,
+      "ms": 147,
+      "n": 501,
+      "last": 26989.992,
+      "err": ""
+    },
+    {
+      "what": "^GSPC 15m",
+      "status": 200,
+      "ms": 102,
+      "n": 131,
+      "last": 7376.86,
+      "err": ""
+    },
+    {
+      "what": "^GSPC 60m",
+      "status": 200,
+      "ms": 107,
+      "n": 162,
+      "last": 7376.86,
+      "err": ""
+    },
+    {
+      "what": "^GSPC 1d",
+      "status": 200,
+      "ms": 103,
+      "n": 501,
+      "last": 7376.86,
+      "err": ""
+    },
+    {
+      "what": "SAP.DE 15m",
+      "status": 200,
+      "ms": 102,
+      "n": 171,
+      "last": 210.75,
+      "err": ""
+    },
+    {
+      "what": "SAP.DE 60m",
+      "status": 200,
+      "ms": 92,
+      "n": 208,
+      "last": 210.75,
+      "err": ""
+    },
+    {
+      "what": "SAP.DE 1d",
+      "status": 200,
+      "ms": 136,
+      "n": 507,
+      "last": 210.75,
+      "err": ""
+    },
+    {
+      "what": "NVDA 15m",
+      "status": 200,
+      "ms": 106,
+      "n": 131,
+      "last": 186.64,
+      "err": ""
+    },
+    {
+      "what": "NVDA 60m",
+      "status": 200,
+      "ms": 134,
+      "n": 162,
+      "last": 186.64,
+      "err": ""
+    },
+    {
+      "what": "NVDA 1d",
+      "status": 200,
+      "ms": 137,
+      "n": 501,
+      "last": 186.64,
+      "err": ""
+    },
+    {
+      "what": "Kalender",
+      "status": 502,
+      "n": 0,
+      "err": "Datenquelle nicht erreichbar: Kalender 429",
+      "sample": null
+    },
+    {
+      "what": "COT 099741",
+      "status": 200,
+      "n": 160,
+      "sample": {
+        "report_date_as_yyyy_mm_dd": "2026-11-03T00:00:00.000",
+        "noncomm_positions_long_all": "229383",
+        "noncomm_positions_short_all": "387174",
+        "comm_positions_long_all": "507069",
+        "comm_positions_short_all": "382218",
+        "open_interest_all": "876122"
+      },
+      "err": ""
+    },
+    {
+      "what": "COT 088691",
+      "status": 200,
+      "n": 160,
+      "sample": {
+        "report_date_as_yyyy_mm_dd": "2026-11-03T00:00:00.000",
+        "noncomm_positions_long_all": "220530",
+        "noncomm_positions_short_all": "40982",
+        "comm_positions_long_all": "64326",
+        "comm_positions_short_all": "269228",
+        "open_interest_all": "399169"
+      },
+      "err": ""
+    },
+    {
+      "what": "COT 13874A",
+      "status": 200,
+      "n": 160,
+      "sample": {
+        "report_date_as_yyyy_mm_dd": "2026-11-03T00:00:00.000",
+        "noncomm_positions_long_all": "229322",
+        "noncomm_positions_short_all": "358736",
+        "comm_positions_long_all": "1444052",
+        "comm_positions_short_all": "1438857",
+        "open_interest_all": "1986532"
+      },
+      "err": ""
+    },
+    {
+      "what": "COT 209742",
+      "status": 200,
+      "n": 160,
+      "sample": {
+        "report_date_as_yyyy_mm_dd": "2026-11-03T00:00:00.000",
+        "noncomm_positions_long_all": "88899",
+        "noncomm_positions_short_all": "46026",
+        "comm_positions_long_all": "150650",
+        "comm_positions_short_all": "213920",
+        "open_interest_all": "292587"
+      },
+      "err": ""
+    },
+    {
+      "what": "Suche",
+      "status": 200,
+      "sample": [
+        {
+          "symbol": "RHM.DE",
+          "name": "RHEINMETALL AG                I",
+          "type": "EQUITY",
+          "exch": "XETRA"
+        },
+        {
+          "symbol": "RNMBY",
+          "name": "Rheinmetall AG",
+          "type": "EQUITY",
+          "exch": "OTC Markets"
+        },
+        {
+          "symbol": "RNMBF",
+          "name": "Rheinmetall AG",
+          "type": "EQUITY",
+          "exch": "OTC Markets"
+        }
+      ],
+      "err": ""
+    }
+  ]
+}
