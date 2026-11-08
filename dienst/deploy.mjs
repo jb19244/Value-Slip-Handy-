@@ -8,7 +8,7 @@ const NAME = 'value-slip';
 const CRON = '*/5 * * * *';
 const DIR = new URL('./', import.meta.url);
 
-export async function deploy({ token, owner, code, fetchFn = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
+export async function deploy({ token, owner, repo, code, fetchFn = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
   const status = { ok: false, at: new Date(now()).toISOString(), step: '', msg: '', url: '' };
   const fail = (step, msg) => Object.assign(status, { ok: false, step, msg });
   if (!token) return fail('token', 'Das GitHub-Secret CLOUDFLARE_API_TOKEN fehlt.');
@@ -44,7 +44,8 @@ export async function deploy({ token, owner, code, fetchFn = fetch, sleep = (ms)
 
   // 3) Worker hochladen (mit Speicher VS und ALLOWED_ORIGIN)
   const meta = { main_module: 'worker.js', compatibility_date: '2024-09-23',
-    bindings: [{ type: 'kv_namespace', name: 'VS', namespace_id: ns.id }, { type: 'plain_text', name: 'ALLOWED_ORIGIN', text: origin }] };
+    bindings: [{ type: 'kv_namespace', name: 'VS', namespace_id: ns.id }, { type: 'plain_text', name: 'ALLOWED_ORIGIN', text: origin }]
+      .concat(repo && /^[A-Za-z0-9._-]+$/.test(repo) ? [{ type: 'plain_text', name: 'PAGES_URL', text: origin + '/' + repo + '/' }] : []) };
   const form = new FormData();
   form.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
   form.append('worker.js', new Blob([code], { type: 'application/javascript+module' }), 'worker.js');
@@ -123,7 +124,7 @@ export async function diag({ token, fetchFn = fetch }) {
 }
 if (process.argv[1] && process.argv[1].endsWith('deploy.mjs')) {
   const code = readFileSync(new URL('worker.js', DIR), 'utf8');
-  const st = await deploy({ token: findToken(process.env), owner: process.env.GITHUB_REPOSITORY_OWNER, code });
+  const st = await deploy({ token: findToken(process.env), owner: process.env.GITHUB_REPOSITORY_OWNER, repo: String(process.env.GITHUB_REPOSITORY || '').split('/')[1], code });
   writeFileSync(new URL('status.json', DIR), JSON.stringify(st, null, 2) + '\n');
   try { if (st.ok) writeFileSync(new URL('diag.json', DIR), JSON.stringify(await diag({ token: findToken(process.env) }), null, 2) + '\n'); } catch (e) { console.log('diag', e.message); }
   console.log(JSON.stringify(st));

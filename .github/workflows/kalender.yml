@@ -1,0 +1,24 @@
+# Legt den Wirtschaftskalender (Forex Factory, diese Woche) fuer Trade Check als Kopie ab, falls die Quelle den Cloudflare-Dienst sperrt.
+name: Kalender
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7 */4 * * *'
+permissions:
+  contents: write
+concurrency: kalender
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kalender laden
+        run: |
+          curl -sSf -A "Mozilla/5.0 (compatible; TradeCheck/1.0)" https://nfs.faireconomy.media/ff_calendar_thisweek.json -o /tmp/cal.json
+          python3 -c "import json;d=json.load(open('/tmp/cal.json'));assert isinstance(d,list) and len(d)>5;json.dump(d,open('dienst/calendar.json','w'),ensure_ascii=False)"
+      - name: Speichern
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dienst/calendar.json
+          git diff --cached --quiet || (git commit -m "Kalender aktualisiert [skip ci]" && git pull --rebase -q && git push)

@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '21a86dcea7';
+const WORKER_VER = '009b04ab50';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -1757,10 +1757,13 @@ async function cachedKV(env, key, maxAgeMs, nowMs, load) {
 }
 async function getCalendar(env, nowMs) {
   return cachedKV(env, 'mkt:cal', 30 * 60e3, nowMs, async () => {
-    const r = await fetch(FF_URL, { headers: UA });
-    if (!r.ok) throw new Error('Kalender ' + r.status);
-    const j = await r.json();
-    if (!Array.isArray(j)) throw new Error('Kalender leer');
+    // Forex Factory sperrt geteilte Cloudflare-Adressen oft (429); dann die Kopie nehmen, die GitHub alle paar Stunden ablegt
+    let j = null, why = '';
+    try { const r = await fetch(FF_URL, { headers: UA }); if (r.ok) j = await r.json(); else why = 'FF ' + r.status; } catch (e) { why = 'FF ' + (e && e.message); }
+    if (!Array.isArray(j) && env.PAGES_URL) {
+      try { const r = await fetch(env.PAGES_URL + 'dienst/calendar.json?t=' + Math.floor(nowMs / 600e3), { headers: UA }); if (r.ok) j = await r.json(); else why += ', Kopie ' + r.status; } catch (e) { why += ', Kopie ' + (e && e.message); }
+    }
+    if (!Array.isArray(j)) throw new Error('Kalender ' + why);
     return j.filter((e) => e && (e.impact === 'High' || e.impact === 'Medium' || e.impact === 'Low')).slice(0, 400)
       .map((e) => ({ title: String(e.title || '').slice(0, 80), country: String(e.country || '').slice(0, 4), date: e.date, impact: e.impact, forecast: e.forecast || '', previous: e.previous || '' }));
   });
