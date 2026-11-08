@@ -1,11 +1,11 @@
 {
-  "at": "2026-11-08T19:52:05.839Z",
+  "at": "2026-11-08T20:04:45.627Z",
   "url": "https://value-slip.75rk4v4jg4.workers.dev",
   "checks": [
     {
       "what": "EURUSD=X 15m",
       "status": 200,
-      "ms": 254,
+      "ms": 268,
       "n": 480,
       "last": 1.1141,
       "err": ""
@@ -13,7 +13,7 @@
     {
       "what": "EURUSD=X 60m",
       "status": 200,
-      "ms": 96,
+      "ms": 117,
       "n": 552,
       "last": 1.1141,
       "err": ""
@@ -21,7 +21,7 @@
     {
       "what": "EURUSD=X 1d",
       "status": 200,
-      "ms": 108,
+      "ms": 227,
       "n": 524,
       "last": 1.1141,
       "err": ""
@@ -29,55 +29,55 @@
     {
       "what": "GBPUSD=X 15m",
       "status": 200,
-      "ms": 108,
+      "ms": 148,
       "n": 480,
-      "last": 1.3347,
+      "last": 1.3348,
       "err": ""
     },
     {
       "what": "GBPUSD=X 60m",
       "status": 200,
-      "ms": 120,
+      "ms": 156,
       "n": 552,
-      "last": 1.3347,
+      "last": 1.3348,
       "err": ""
     },
     {
       "what": "GBPUSD=X 1d",
       "status": 200,
-      "ms": 90,
+      "ms": 171,
       "n": 524,
-      "last": 1.3347,
+      "last": 1.3348,
       "err": ""
     },
     {
       "what": "JPY=X 15m",
       "status": 200,
-      "ms": 93,
+      "ms": 152,
       "n": 480,
-      "last": 158.38,
+      "last": 158.392,
       "err": ""
     },
     {
       "what": "JPY=X 60m",
       "status": 200,
-      "ms": 102,
+      "ms": 126,
       "n": 552,
-      "last": 158.38,
+      "last": 158.392,
       "err": ""
     },
     {
       "what": "JPY=X 1d",
       "status": 200,
-      "ms": 94,
+      "ms": 161,
       "n": 524,
-      "last": 158.38,
+      "last": 158.392,
       "err": ""
     },
     {
       "what": "GC=F 15m",
       "status": 200,
-      "ms": 110,
+      "ms": 128,
       "n": 357,
       "last": 4074.9,
       "err": ""
@@ -85,15 +85,15 @@
     {
       "what": "GC=F 60m",
       "status": 200,
-      "ms": 100,
-      "n": 605,
+      "ms": 108,
+      "n": 604,
       "last": 4074.9,
       "err": ""
     },
     {
       "what": "GC=F 1d",
       "status": 200,
-      "ms": 95,
+      "ms": 149,
       "n": 504,
       "last": 4074.9,
       "err": ""
@@ -101,7 +101,7 @@
     {
       "what": "SI=F 15m",
       "status": 200,
-      "ms": 110,
+      "ms": 128,
       "n": 357,
       "last": 51.942,
       "err": ""
@@ -109,15 +109,15 @@
     {
       "what": "SI=F 60m",
       "status": 200,
-      "ms": 95,
-      "n": 605,
+      "ms": 115,
+      "n": 604,
       "last": 51.942,
       "err": ""
     },
     {
       "what": "SI=F 1d",
       "status": 200,
-      "ms": 92,
+      "ms": 174,
       "n": 504,
       "last": 51.942,
       "err": ""
@@ -125,7 +125,7 @@
     {
       "what": "CL=F 15m",
       "status": 200,
-      "ms": 99,
+      "ms": 109,
       "n": 357,
       "last": 90.83,
       "err": ""
@@ -133,15 +133,15 @@
     {
       "what": "CL=F 60m",
       "status": 200,
-      "ms": 76,
-      "n": 605,
+      "ms": 130,
+      "n": 604,
       "last": 90.83,
       "err": ""
     },
     {
       "what": "CL=F 1d",
       "status": 200,
-      "ms": 85,
+      "ms": 136,
       "n": 504,
       "last": 90.83,
       "err": ""
@@ -149,7 +149,7 @@
     {
       "what": "^GDAXI 15m",
       "status": 200,
-      "ms": 114,
+      "ms": 151,
       "n": 171,
       "last": 25820.36,
       "err": ""
@@ -157,7 +157,7 @@
     {
       "what": "^GDAXI 60m",
       "status": 200,
-      "ms": 119,
+      "ms": 118,
       "n": 208,
       "last": 25820.36,
       "err": ""
@@ -165,7 +165,7 @@
     {
       "what": "^GDAXI 1d",
       "status": 200,
-      "ms": 84,
+      "ms": 152,
       "n": 507,
       "last": 25820.36,
       "err": ""
@@ -173,7 +173,7 @@
     {
       "what": "^NDX 15m",
       "status": 200,
-      "ms": 119,
+      "ms": 112,
       "n": 131,
       "last": 26989.992,
       "err": ""
@@ -181,7 +181,7 @@
     {
       "what": "^NDX 60m",
       "status": 200,
-      "ms": 116,
+      "ms": 126,
       "n": 162,
       "last": 26989.992,
       "err": ""
@@ -189,7 +189,7 @@
     {
       "what": "^NDX 1d",
       "status": 200,
-      "ms": 92,
+      "ms": 161,
       "n": 501,
       "last": 26989.992,
       "err": ""
@@ -197,7 +197,7 @@
     {
       "what": "^GSPC 15m",
       "status": 200,
-      "ms": 92,
+      "ms": 136,
       "n": 131,
       "last": 7376.86,
       "err": ""
@@ -205,7 +205,7 @@
     {
       "what": "^GSPC 60m",
       "status": 200,
-      "ms": 85,
+      "ms": 112,
       "n": 162,
       "last": 7376.86,
       "err": ""
@@ -213,7 +213,7 @@
     {
       "what": "^GSPC 1d",
       "status": 200,
-      "ms": 105,
+      "ms": 193,
       "n": 501,
       "last": 7376.86,
       "err": ""
@@ -221,7 +221,7 @@
     {
       "what": "SAP.DE 15m",
       "status": 200,
-      "ms": 89,
+      "ms": 105,
       "n": 171,
       "last": 210.75,
       "err": ""
@@ -237,7 +237,7 @@
     {
       "what": "SAP.DE 1d",
       "status": 200,
-      "ms": 116,
+      "ms": 171,
       "n": 507,
       "last": 210.75,
       "err": ""
@@ -245,7 +245,7 @@
     {
       "what": "NVDA 15m",
       "status": 200,
-      "ms": 84,
+      "ms": 126,
       "n": 131,
       "last": 186.64,
       "err": ""
@@ -253,7 +253,7 @@
     {
       "what": "NVDA 60m",
       "status": 200,
-      "ms": 91,
+      "ms": 113,
       "n": 162,
       "last": 186.64,
       "err": ""
@@ -261,17 +261,34 @@
     {
       "what": "NVDA 1d",
       "status": 200,
-      "ms": 117,
+      "ms": 153,
       "n": 501,
       "last": 186.64,
       "err": ""
     },
     {
       "what": "Kalender",
-      "status": 502,
-      "n": 0,
-      "err": "Datenquelle nicht erreichbar: Kalender FF 429, Kopie 404",
-      "sample": null
+      "status": 200,
+      "n": 98,
+      "err": "",
+      "sample": [
+        {
+          "title": "RBA Assist Gov Hunter Speaks",
+          "country": "AUD",
+          "date": "2026-11-08T17:30:00-05:00",
+          "impact": "Low",
+          "forecast": "",
+          "previous": ""
+        },
+        {
+          "title": "CPI y/y",
+          "country": "CNY",
+          "date": "2026-11-08T20:30:00-05:00",
+          "impact": "Low",
+          "forecast": "0.8%",
+          "previous": "0.9%"
+        }
+      ]
     },
     {
       "what": "COT 099741",
