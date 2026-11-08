@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['dienst/worker.js', 'dienst/deploy.mjs', 'dienst/start', '.github/workflows/push-dienst.yml']
+    paths: ['dienst/worker.js', 'dienst/deploy.mjs', 'dienst/mkt-check.mjs', 'dienst/start', '.github/workflows/push-dienst.yml']
 permissions:
   contents: write
 concurrency: push-dienst
@@ -26,6 +26,10 @@ jobs:
           CLOUDFLARE_TOKEN: ${{ secrets.CLOUDFLARE_TOKEN }}
           CLOUDFLARE_API_TOKEN_VAR: ${{ vars.CLOUDFLARE_API_TOKEN }}
         run: node dienst/deploy.mjs
+      - name: Marktdaten fuer Trade Check pruefen
+        if: success()
+        continue-on-error: true
+        run: node dienst/mkt-check.mjs
       - name: Ergebnis fuer die App speichern
         if: always()
         run: |
@@ -34,4 +38,5 @@ jobs:
           [ -f dienst/status.json ] || exit 0
           git add dienst/status.json
           [ -f dienst/diag.json ] && git add dienst/diag.json || true
+          [ -f dienst/mkt-check.json ] && git add dienst/mkt-check.json || true
           git diff --cached --quiet || (git commit -m "Push-Dienst: Status [skip ci]" && git pull --rebase -q && git push)

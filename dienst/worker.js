@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '61d379e4f1';
+const WORKER_VER = '21a86dcea7';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -1730,6 +1730,206 @@ async function push(request, headers, env, nowMs) {
   return json(404, 'Not found', headers);
 }
 
+// ===================== Trade Check: Marktdaten, News-Warnung, Kurs-Alarme =====================
+const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
+const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
+const FF_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json';
+const COT_URL = 'https://publicreporting.cftc.gov/resource/6dca-aqww.json';
+const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; TradeCheck/1.0)', Accept: 'application/json' };
+const symOk = (s) => typeof s === 'string' && /^[A-Za-z0-9^=.\-]{1,20}$/.test(s);
+async function yahooChart(sym, interval, range) {
+  const u = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(sym) + '?interval=' + interval + '&range=' + range + '&includePrePost=false';
+  let r = await fetch(u, { headers: UA, cf: { cacheTtl: interval === '1d' || interval === '1wk' ? 900 : 60, cacheEverything: true } });
+  if (r.status === 429 || r.status >= 500) r = await fetch(u.replace('query1.', 'query2.'), { headers: UA });
+  return r;
+}
+async function cachedKV(env, key, maxAgeMs, nowMs, load) {
+  const c = env.VS ? await env.VS.get(key, 'json') : null;
+  if (c && nowMs - c.at < maxAgeMs) return { data: c.data, at: c.at, cached: true };
+  try {
+    const data = await load();
+    if (env.VS) await env.VS.put(key, JSON.stringify({ at: nowMs, data }));
+    return { data, at: nowMs, cached: false };
+  } catch (e) {
+    if (c) return { data: c.data, at: c.at, cached: true, stale: true };
+    throw e;
+  }
+}
+async function getCalendar(env, nowMs) {
+  return cachedKV(env, 'mkt:cal', 30 * 60e3, nowMs, async () => {
+    const r = await fetch(FF_URL, { headers: UA });
+    if (!r.ok) throw new Error('Kalender ' + r.status);
+    const j = await r.json();
+    if (!Array.isArray(j)) throw new Error('Kalender leer');
+    return j.filter((e) => e && (e.impact === 'High' || e.impact === 'Medium' || e.impact === 'Low')).slice(0, 400)
+      .map((e) => ({ title: String(e.title || '').slice(0, 80), country: String(e.country || '').slice(0, 4), date: e.date, impact: e.impact, forecast: e.forecast || '', previous: e.previous || '' }));
+  });
+}
+async function mkt(request, headers, env, nowMs) {
+  if (request.method !== 'GET') return json(405, 'Method not allowed', headers);
+  const url = new URL(request.url), q = url.searchParams;
+  try {
+    if (url.pathname === '/mkt/chart') {
+      const sym = q.get('sym'), iv = q.get('interval') || '15m', rg = q.get('range') || '5d';
+      if (!symOk(sym) || !MKT_INTERVALS.includes(iv) || !MKT_RANGES.includes(rg)) return json(400, 'Ungültige Abfrage', headers);
+      const r = await yahooChart(sym, iv, rg);
+      const out = new Headers(headers); out.set('Content-Type', 'application/json'); out.set('Cache-Control', 'no-store');
+      return new Response(r.body, { status: r.status, headers: out });
+    }
+    if (url.pathname === '/mkt/search') {
+      const term = (q.get('q') || '').slice(0, 40);
+      if (!term.trim()) return json(400, 'Suchbegriff fehlt', headers);
+      const r = await fetch('https://query1.finance.yahoo.com/v1/finance/search?q=' + encodeURIComponent(term) + '&quotesCount=8&newsCount=0&listsCount=0', { headers: UA });
+      if (!r.ok) return json(r.status, 'Suche nicht erreichbar', headers);
+      const j = await r.json();
+      return jsonData({ quotes: (j.quotes || []).filter((x) => x.symbol && /EQUITY|ETF|INDEX|FUTURE|CURRENCY/.test(x.quoteType || '')).map((x) => ({ symbol: x.symbol, name: x.shortname || x.longname || x.symbol, type: x.quoteType, exch: x.exchDisp || x.exchange })) }, headers);
+    }
+    if (url.pathname === '/mkt/cal') {
+      const c = await getCalendar(env, nowMs);
+      return jsonData({ events: c.data, at: c.at, stale: !!c.stale }, headers);
+    }
+    if (url.pathname === '/mkt/cot') {
+      const code = q.get('code') || '';
+      if (!/^[0-9A-Z]{6}$/.test(code)) return json(400, 'Ungültiger Code', headers);
+      const c = await cachedKV(env, 'mkt:cot:' + code, 12 * 3600e3, nowMs, async () => {
+        const u = COT_URL + '?cftc_contract_market_code=' + code + '&$order=report_date_as_yyyy_mm_dd%20DESC&$limit=160&$select=report_date_as_yyyy_mm_dd,noncomm_positions_long_all,noncomm_positions_short_all,comm_positions_long_all,comm_positions_short_all,open_interest_all';
+        const r = await fetch(u, { headers: UA });
+        if (!r.ok) throw new Error('COT ' + r.status);
+        const j = await r.json();
+        if (!Array.isArray(j)) throw new Error('COT leer');
+        return j;
+      });
+      return jsonData({ rows: c.data, at: c.at, stale: !!c.stale }, headers);
+    }
+  } catch (e) {
+    return json(502, 'Datenquelle nicht erreichbar: ' + String(e && e.message || e).slice(0, 80), headers);
+  }
+  return json(404, 'Not found', headers);
+}
+// Eigener Besitzer-Schluessel fuer Trade Check (eigene App auf dem Home-Bildschirm, eigener Speicher)
+async function checkTradeOwner(env, token) {
+  if (typeof token !== 'string' || !/^[a-f0-9]{32,64}$/.test(token)) return false;
+  const h = await sha256hex(token), own = await env.VS.get('towner');
+  if (!own) { await env.VS.put('towner', h); return true; }
+  return own === h;
+}
+function normAlert(a, nowMs) {
+  if (!a || typeof a !== 'object' || !symOk(a.sym)) return null;
+  const lo = +a.lo, hi = +a.hi;
+  if (!(lo > 0) || !(hi >= lo)) return null;
+  return { id: String(a.id || '').slice(0, 24) || String(nowMs), sym: a.sym, name: String(a.name || a.sym).slice(0, 30), lo, hi, note: String(a.note || '').slice(0, 60), since: +a.since || nowMs, hit: +a.hit || 0, hitPx: +a.hitPx || 0 };
+}
+async function tradeRoute(request, headers, env, nowMs) {
+  if (!env.VS) return json(500, 'KV-Speicher fehlt', headers);
+  const path = new URL(request.url).pathname;
+  if (path === '/trade/key' && request.method === 'GET') return jsonData({ key: (await vapidKeys(env)).pub }, headers);
+  if (request.method !== 'POST') return json(405, 'Method not allowed', headers);
+  let b;
+  try { b = await readBody(request); } catch (e) { return json(400, 'Ungültige Anfrage', headers); }
+  if (!b || typeof b !== 'object') return json(400, 'Ungültige Anfrage', headers);
+  if (!(await checkTradeOwner(env, b.token))) return json(403, 'Trade Check ist schon mit einem anderen Gerät verbunden. Zum Zurücksetzen im KV-Speicher den Eintrag „towner“ löschen.', headers);
+  const t = (await env.VS.get('trade', 'json')) || {};
+  if (path === '/trade/sync') {
+    if (b.sub != null && !validSub(b.sub)) return json(400, 'Ungültiges Push-Abo', headers);
+    const old = {}; (t.alerts || []).forEach((a) => { old[a.id] = a; });
+    const alerts = (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 20).map((a) => normAlert(a, nowMs)).filter(Boolean)
+      .map((a) => old[a.id] && old[a.id].hit && !a.hit ? Object.assign(a, { hit: old[a.id].hit, hitPx: old[a.id].hitPx }) : a);
+    const next = { sub: b.off ? null : (b.sub || t.sub || null), on: b.on !== false,
+      ccys: (Array.isArray(b.ccys) ? b.ccys : []).filter((c) => /^[A-Z]{3}$/.test(c)).slice(0, 10),
+      kw: (Array.isArray(b.kw) ? b.kw : []).filter((k) => /^[a-z|]{2,40}$/.test(k)).slice(0, 5),
+      lead: num(b.lead, 5, 60, 15), kz: b.kz !== false, alerts, sent: t.sent || {} };
+    await env.VS.put('trade', JSON.stringify(next));
+    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, log: (t.log || []).slice(-10), now: nowMs }, headers);
+  }
+  if (path === '/trade/test') {
+    if (!validSub(t.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in Trade Check ein.', headers);
+    const r = await sendPush(env, t.sub, { title: 'Trade Check', body: 'Test: Benachrichtigungen funktionieren.', tag: 'ttest', url: './' }, nowMs, 600);
+    if (r.status === 404 || r.status === 410) { t.sub = null; await env.VS.put('trade', JSON.stringify(t)); }
+    return jsonData({ status: r.status, body: r.body }, headers);
+  }
+  if (path === '/trade/run') return jsonData(await runTrade(env, nowMs), headers);
+  return json(404, 'Not found', headers);
+}
+function berlinClock(ms) {
+  const f = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', weekday: 'short', hourCycle: 'h23' });
+  const p = {}; f.formatToParts(new Date(ms)).forEach((x) => { p[x.type] = x.value; });
+  return { min: (+p.hour) * 60 + (+p.minute), wd: p.weekday };
+}
+const hhmm = (ms) => new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' }).format(new Date(ms));
+async function runTrade(env, nowMs) {
+  if (!env.VS) return { skipped: 'kv' };
+  const t = await env.VS.get('trade', 'json');
+  if (!t || !t.on || !validSub(t.sub)) return { skipped: 'nosub' };
+  t.sent = t.sent || {}; t.log = Array.isArray(t.log) ? t.log : [];
+  const rep = { pushed: 0, checked: 0 };
+  let dirty = false, gone = false;
+  const send = async (key, msg) => {
+    if (t.sent[key] || gone) return false;
+    const r = await sendPush(env, t.sub, Object.assign({ title: 'Trade Check', url: './' }, msg), nowMs, 1800);
+    t.sent[key] = nowMs; dirty = true;
+    t.log.push({ at: nowMs, t: (msg.body || '').slice(0, 140) }); t.log = t.log.slice(-15);
+    if (r.status === 404 || r.status === 410) { t.sub = null; gone = true; }
+    else rep.pushed++;
+    return true;
+  };
+  const clk = berlinClock(nowMs), weekday = !['Sat', 'Sun'].includes(clk.wd);
+  const dayKey = berlinDay(nowMs);
+  // 1) Wichtige Termine kurz vorher
+  let cal = null;
+  const needCal = (t.ccys && t.ccys.length) || t.kz;
+  if (needCal) { try { cal = (await getCalendar(env, nowMs)).data; } catch (e) { cal = null; } }
+  if (cal && t.ccys && t.ccys.length) {
+    const lead = (t.lead || 15) * 60e3;
+    const soon = cal.filter((e) => e.impact === 'High' && t.ccys.includes(e.country)).map((e) => Object.assign({}, e, { t: Date.parse(e.date) }))
+      .filter((e) => isFinite(e.t) && e.t > nowMs && e.t - nowMs <= lead);
+    const groups = {};
+    soon.forEach((e) => { (groups[e.t] = groups[e.t] || []).push(e); });
+    for (const ts of Object.keys(groups)) {
+      const g = groups[ts], mins = Math.max(1, Math.round((+ts - nowMs) / 60e3));
+      const names = g.map((e) => e.country + ' ' + e.title + (e.forecast ? ' (Prognose ' + e.forecast + ')' : '')).join(', ');
+      await send('n:' + ts + ':' + g.map((e) => e.country).sort().join(''), { body: 'In ' + mins + ' Min (' + hhmm(+ts) + '): ' + names + '. Starke Ausschläge und breite Spreads möglich.', tag: 'news' });
+    }
+  }
+  // 2) Start der Hauptzeiten (London 08:00, New York 14:30) mit den Terminen des Tages
+  if (t.kz && weekday) {
+    const zones = [{ k: 'lon', at: 8 * 60, name: 'London-Eröffnung' }, { k: 'ny', at: 14 * 60 + 30, name: 'New-York-Eröffnung' }];
+    for (const z of zones) {
+      if (clk.min >= z.at && clk.min < z.at + 10) {
+        const next = (cal || []).filter((e) => e.impact === 'High' && (!t.ccys || !t.ccys.length || t.ccys.includes(e.country)))
+          .map((e) => Object.assign({}, e, { t: Date.parse(e.date) })).filter((e) => e.t > nowMs && e.t - nowMs < 6 * 3600e3).slice(0, 3);
+        const txt = next.length ? ' Heute wichtig: ' + next.map((e) => hhmm(e.t) + ' ' + e.country + ' ' + e.title).join(', ') + '.' : ' Keine wichtigen Termine in den nächsten Stunden.';
+        await send('kz:' + dayKey + ':' + z.k, { body: z.name + ': Jetzt ist am meisten Bewegung im Markt.' + txt, tag: 'kz' });
+      }
+    }
+  }
+  // 3) Kurs-Alarme: Preis erreicht deine Zone
+  const open = (t.alerts || []).filter((a) => !a.hit);
+  const syms = [...new Set(open.map((a) => a.sym))].slice(0, 10);
+  for (const sym of syms) {
+    let candles = [];
+    try {
+      const r = await yahooChart(sym, '5m', '1d');
+      if (!r.ok) continue;
+      const j = await r.json(), res = j && j.chart && j.chart.result && j.chart.result[0];
+      const ts = (res && res.timestamp) || [], qu = (res && res.indicators && res.indicators.quote && res.indicators.quote[0]) || {};
+      candles = ts.map((x, i) => ({ t: x * 1000, h: qu.high && qu.high[i], l: qu.low && qu.low[i], c: qu.close && qu.close[i] })).filter((x) => x.h != null && x.l != null);
+    } catch (e) { continue; }
+    rep.checked++;
+    for (const a of open.filter((x) => x.sym === sym)) {
+      const hit = candles.find((x) => x.t + 5 * 60e3 > a.since && x.l <= a.hi && x.h >= a.lo);
+      if (hit) {
+        const px = candles[candles.length - 1].c;
+        a.hit = nowMs; a.hitPx = px; dirty = true;
+        await send('a:' + a.id, { body: a.name + ' ist in deiner Zone ' + a.lo + '–' + a.hi + (a.note ? ' (' + a.note + ')' : '') + '. Aktuell ' + px + '. Jetzt Setup prüfen.', tag: 'alert-' + a.id });
+      }
+    }
+  }
+  // Aufraeumen: alte Sendungen vergessen
+  for (const k of Object.keys(t.sent)) if (nowMs - t.sent[k] > 3 * 86400e3) { delete t.sent[k]; dirty = true; }
+  if (dirty) await env.VS.put('trade', JSON.stringify(t));
+  return rep;
+}
+
 export default {
   async fetch(request, env) {
     const allowed = originOf(env);
@@ -1742,9 +1942,13 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
     if (new URL(request.url).pathname.startsWith('/push/')) return push(request, headers, env, Date.now());
     if (new URL(request.url).pathname.startsWith('/op/')) return opProxy(request, headers);
+    if (new URL(request.url).pathname.startsWith('/mkt/')) return mkt(request, headers, env, Date.now());
+    if (new URL(request.url).pathname.startsWith('/trade/')) return tradeRoute(request, headers, env, Date.now());
     return proxy(request, headers, env);
   },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runCron(env, event && event.scheduledTime ? event.scheduledTime : Date.now()));
+    const at = event && event.scheduledTime ? event.scheduledTime : Date.now();
+    ctx.waitUntil(runCron(env, at));
+    ctx.waitUntil(runTrade(env, at).catch(() => null));
   }
 };
