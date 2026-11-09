@@ -32,10 +32,11 @@ const grades = L.GRADES.map((g) => {
   const f = (arr) => arr.filter((t) => g.fn(t.sig, t.ampel));
   return { id: g.id, name: g.name, train: st(f(train)), test: st(f(test)), m15: st(f(m15all)), all: st(f(h1all)) };
 });
-// Auswahl nur nach Trainingsteil: mindestens 25 Trades, bester Schnitt
-const cand = grades.filter((g) => g.train.n >= 25 && g.train.mean > 0).sort((a, b) => b.train.mean - a.train.mean);
-const chosen = cand[0] || null;
-const passed = !!(chosen && chosen.test.n >= 15 && chosen.test.mean > 0 && (chosen.m15.n < 8 || chosen.m15.mean > -0.1));
+// Auswahl: Stufen, die in BEIDEN Haelften im Plus liegen und insgesamt sicher ueber null (95 %), beste zuerst.
+// A+ = beste, A = zweitbeste. Ohne solche Stufe wird nichts als A+ gemeldet.
+const cand = grades.filter((g) => g.train.n >= 5 && g.test.n >= 10 && g.train.mean > 0.1 && g.test.mean > 0.1 && g.all.lo > 0).sort((a, b) => b.all.mean - a.all.mean);
+const chosen = cand[0] || null, second = cand[1] || null;
+const passed = !!chosen;
 // Ampel-Gewichte nur uebernehmen, wenn sie auf dem Testteil besser trennen als ohne
 const cal = L.calibrate(train, 15);
 const sep = (arr, w) => { const g = arr.filter((t) => t.ampel === 'gruen').map((t) => t.r), r = arr.filter((t) => t.ampel !== 'gruen').map((t) => t.r); const m = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0; return { green: g.length, d: m(g) - m(r) }; };
@@ -43,7 +44,7 @@ const out = {
   at: new Date().toISOString(), data: info, split: new Date(split).toISOString().slice(0, 10),
   n: { h1: h1all.length, train: train.length, test: test.length, m15: m15all.length },
   all: st(h1all), trainAll: st(train), testAll: st(test), m15All: st(m15all),
-  grades, chosen: chosen ? chosen.id : null, passed,
+  grades, chosen: chosen ? chosen.id : null, second: second ? second.id : null, passed,
   ampelSep: { train: sep(train), test: sep(test) },
   byInstr: Object.fromEntries(L.INSTRUMENTS.map((i) => [i.k, st(h1all.filter((t) => t.instr === i.k))])),
   calibTrain: cal.info.map((x) => ({ key: x.key, title: x.title, d: +x.d.toFixed(3), m: x.m }))

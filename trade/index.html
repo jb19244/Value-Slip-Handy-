@@ -154,6 +154,7 @@ details.more[open] summary::after{content:"−"}
 table.st{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
 table.st th{font-weight:600;color:var(--muted);text-align:right;padding:4px 0 6px;font-size:12px}
 table.st th:first-child,table.st td:first-child{text-align:left}
+table.st th+th{padding-left:8px}
 table.st td{padding:6px 0;border-top:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums}
 table.st td:first-child{overflow-wrap:anywhere;padding-right:8px}
 .sheet-bg{position:fixed;inset:0;background:var(--overlay);z-index:20;display:flex;align-items:flex-end;justify-content:center}
@@ -834,7 +835,7 @@ var LS = 'tradecheck.v1';
 var SMC_TAGS = ['Order Block', 'Fair Value Gap', 'Liquidity Sweep', 'BOS', 'CHoCH', 'Breaker', 'Premium/Discount', 'OTE (62–79 %)'];
 var EW_TAGS = ['Welle 3', 'Welle 5', 'Welle C', 'ABC-Korrektur', 'Fib-Ziel'];
 function defaults(){
-  return { cfg: { account: 5000, risk: 1, fee: 1, url: '', token: '', push: { on: false, lead: 15, kz: true, scan: true, scanAll: false } },
+  return { cfg: { account: 5000, risk: 1, fee: 1, url: '', token: '', push: { on: false, lead: 15, kz: true, scan: true, scanAll: false, quality: 'top' } },
     form: { k: 'EURUSD', dir: 1, entry: '', stop: '', target: '', setups: [], ratio: '', ko: '' },
     watch: ['EURUSD', 'XAUUSD', 'DAX', 'NDX'], names: {}, trades: [], alerts: [], tab: 'check', fib: { a: '', b: '', c: '' }, ko: {}, tf: '15m' };
 }
@@ -1077,7 +1078,7 @@ function runCheck(){
   V.busy = true; rerender();
   Promise.all([instData(f.k, true), getCal(), getRates()]).then(function(r){
     var d = r[0], now = Date.now();
-    var res = scoreCheck({ instr: i, dir: f.dir, entry: e, stop: s, target: t, now: now, d1: d.d1, h1: d.h1, m15: d.m15, events: V.cal || null, cot: d.cot, bench: d.bench, wmul: V.bt && V.bt.wmul });
+    var res = scoreCheck({ instr: i, dir: f.dir, entry: e, stop: s, target: t, now: now, d1: d.d1, h1: d.h1, m15: d.m15, events: V.cal || null, cot: d.cot, bench: d.bench, wmul: null });
     res.k = f.k; res.at = now; var ratio = pnum(f.ratio) || koDefault(i);
     res.form = { entry: e, stop: s, target: t, dir: f.dir, ratio: ratio, ratioAssumed: !pnum(f.ratio) && ratio != null };
     if (!res.error){
@@ -1170,13 +1171,20 @@ function fibSheet(){
 }
 
 // ===================== Signale =====================
+function gradeIds(){ var b = V.bt1; return { a: (b && b.passed && b.chosen) || 'trend_liq_rr', b: (b && b.passed && b.second) || 'trend_liq' }; }
+function classify(g){
+  var ids = gradeIds(), i = instr(g.k), now = Date.now();
+  var news = (V.cal || []).some(function(e){ var t = Date.parse(e.date); return e.impact === 'High' && i && i.ccy.indexOf(e.country) >= 0 && t > g.t - 15 * 60e3 && t - g.t < 60 * 60e3; });
+  if (news) return 'B';
+  return gradeById(ids.a).fn(g) ? 'A+' : (gradeById(ids.b).fn(g) ? 'A' : 'B');
+}
 function localSignals(){
   var out = [], today = berlinParts(Date.now()).key;
   S.watch.forEach(function(k){
-    var i = instr(k), d = V.data[k]; if (!i || !d || !d.m15 || d.m15.length < 60) return;
-    scanSetups(d.m15, { instr: i, d1: d.d1 }).filter(function(g){ return g.day === today; }).forEach(function(g){
-      var sim = simulate(g, d.m15, 0);
-      out.push({ id: k + ':' + g.t, k: k, name: i.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko: g.stop - g.dir * g.risk * 0.5, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, withBias: g.withBias, expires: g.expires, status: sim.how === 'verpasst' ? 'verpasst' : (sim.filled ? (sim.r == null ? 'läuft' : (sim.r > 0 ? 'Ziel' : 'Stop')) : null) });
+    var i = instr(k), d = V.data[k]; if (!i || !d || !d.h1 || d.h1.length < 60) return;
+    scanSetups(d.h1, { instr: i, d1: d.d1, bar: 3600e3 }).filter(function(g){ return g.day === today; }).forEach(function(g){
+      var sim = simulate(g, d.h1, 0);
+      out.push({ id: k + ':' + g.t, k: k, name: i.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko: g.stop - g.dir * g.risk * 0.5, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, withBias: g.withBias, liqTarget: g.liqTarget, cls: classify(g), expires: g.expires, status: sim.how === 'verpasst' ? 'verpasst' : (sim.filled ? (sim.r == null ? 'läuft' : (sim.r > 0 ? 'Ziel' : 'Stop')) : null) });
     });
   });
   return out;
@@ -1185,16 +1193,25 @@ function allSignals(){
   var m = {}; (V.signals || []).concat(localSignals()).forEach(function(g){ if (!m[g.id]) m[g.id] = g; else if (g.status) m[g.id].status = g.status; });
   return Object.keys(m).map(function(k){ return m[k]; }).sort(function(a, b){ return b.t - a.t; });
 }
+function gradeLine(){
+  var b = V.bt1; if (!b || !b.grades) return '';
+  var ids = gradeIds(), g = b.grades.filter(function(x){ return x.id === ids.a; })[0]; if (!g || !g.all || !g.all.n) return '';
+  var f0 = Object.keys(b.data || {}).map(function(k){ return b.data[k].from; }).filter(Boolean).sort()[0], months = Math.max(1, (Date.parse(b.at) - Date.parse(f0 || b.split)) / (30.4 * 86400e3));
+  return '<p class="hint"><b>A+</b> in der Rückrechnung seit ' + esc(btFrom(b)) + ': ' + g.all.n + ' Trades, ' + fmt(g.all.win * 100, 0) + ' % Treffer, im Schnitt ' + sgn(g.all.mean, 2) + ' R. Das ist etwa ' + fmt(g.all.n / months, 1) + ' pro Monat über alle Märkte. <button class="link" data-act="tab" data-t="buch">Details</button></p>';
+}
 function viewSignals(limit){
-  var now = Date.now(), list = allSignals().filter(function(g){ return now - g.t < 26 * 3600e3; }).slice(0, limit || 12);
-  var h = '<section class="card" id="sigs"><div class="row"><h2>Signale</h2><span class="muted small">Sweep → Strukturbruch → FVG</span></div>';
-  if (!list.length) return h + '<p class="hint">Heute noch kein Setup in deinen Märkten. Der Scanner sucht in der Londoner und New Yorker Hauptzeit' + (S.cfg.push.on && S.cfg.push.scan ? ' und meldet sich per Mitteilung.' : '. Schalte unter Mehr die Benachrichtigungen ein, dann meldet er sich von selbst.') + '</p></section>';
+  var now = Date.now(), all = allSignals().filter(function(g){ return now - g.t < 26 * 3600e3; });
+  var list = (V.sigAll ? all : all.filter(function(g){ return g.cls === 'A+' || g.cls === 'A'; })).slice(0, limit || 12), hidden = all.length - (V.sigAll ? all.length : list.length);
+  var h = '<section class="card" id="sigs"><div class="row"><h2>Signale</h2><span class="muted small">1 Std · Sweep → Bruch → FVG</span></div>';
+  var more = hidden > 0 ? '<p class="hint">' + hidden + ' schwächere Signale ausgeblendet. <button class="link" data-act="sigall">Zeigen</button></p>' : (V.sigAll && all.length ? '<p class="hint"><button class="link" data-act="sigall">Nur A+ und A zeigen</button></p>' : '');
+  if (!list.length) return h + '<p class="hint">Heute noch kein A+ oder A Setup. Der Scanner prüft in der Londoner und New Yorker Hauptzeit alle 15 Minuten alle Märkte' + (S.cfg.push.on && S.cfg.push.scan !== false ? ' und meldet sich per Mitteilung.' : '. Schalte unter Mehr die Benachrichtigungen ein, dann meldet er sich von selbst.') + '</p>' + more + gradeLine() + '</section>';
   return h + list.map(function(g){
     var i = instr(g.k) || { dec: 2 }, live = now < g.expires && !g.status, st = g.status || (live ? 'aktiv bis ' + hm(g.expires) : 'abgelaufen');
     var cls = g.status === 'Ziel' ? 'good' : (g.status === 'Stop' ? 'bad' : (live ? 'warn' : ''));
-    return '<button class="sig" data-act="usesig" data-id="' + esc(g.id) + '"><span><b>' + esc(g.name) + '</b> <span class="' + (g.dir > 0 ? 'good' : 'bad') + '">' + (g.dir > 0 ? 'Long' : 'Short') + '</span> <span class="muted small">' + hm(g.t) + '</span></span><span class="pill ' + cls + '">' + esc(st) + '</span>' +
+    var gp = g.cls === 'A+' || g.cls === 'A' ? '<span class="pill good">' + g.cls + '</span> ' : '';
+    return '<button class="sig" data-act="usesig" data-id="' + esc(g.id) + '"><span>' + gp + '<b>' + esc(g.name) + '</b> <span class="' + (g.dir > 0 ? 'good' : 'bad') + '">' + (g.dir > 0 ? 'Long' : 'Short') + '</span> <span class="muted small">' + hm(g.t) + '</span></span><span class="pill ' + cls + '">' + esc(st) + '</span>' +
       '<span class="sub">Sweep ' + esc(g.sweep) + ' · Limit ' + fmt(g.entry, i.dec) + ' · Stop ' + fmt(g.stop, i.dec) + ' · CRV ' + fmt(g.rr, 1) + (g.withBias ? ' · mit Tagestrend' : ' · gegen Tagestrend') + '</span><span></span></button>';
-  }).join('') + (V.bt && V.bt.all ? '<p class="hint">Rückrechnung dieses Scanners: ' + V.bt.all.n + ' Trades, im Schnitt ' + sgn(V.bt.all.mean, 2) + ' R. ' + (V.bt.all.lo < 0 && V.bt.all.hi > 0 ? 'Ein Vorteil ist damit noch nicht belegt. Nimm Signale als Hinweis, worauf du schauen solltest, und prüf sie selbst.' : (V.bt.all.lo > 0 ? 'Ein Vorteil ist belegt.' : 'Bisher im Minus.')) + ' <button class="link" data-act="tab" data-t="buch">Details</button></p>' : '') + '</section>';
+  }).join('') + more + gradeLine() + '</section>';
 }
 function useSignal(id){
   var g = allSignals().filter(function(x){ return x.id === id; })[0]; if (!g) return;
@@ -1317,7 +1334,22 @@ function viewTrade(t){
     (t.status === 'open' ? tevBanner(t) + '<div class="btns" style="margin-top:8px"><button class="btn sm good-bg" data-act="close" data-id="' + t.id + '" data-how="target">Ziel</button><button class="btn sm danger" data-act="close" data-id="' + t.id + '" data-how="stop">Stop</button><button class="btn sm ghost" data-act="close" data-id="' + t.id + '" data-how="be">Break-even</button><button class="btn sm ghost" data-act="closex" data-id="' + t.id + '">Kurs …</button></div>'
       : (t.mfe != null ? '<div class="muted tiny">lief bis ' + sgn(t.mfe, 1) + 'R für dich, ' + sgn(t.mae, 1) + 'R gegen dich</div>' : '') + '<div style="margin-top:4px"><button class="link tiny" data-act="tdel" data-id="' + t.id + '">löschen</button></div>') + '</div>';
 }
+function btFrom(b){ var f = Object.keys(b.data || {}).map(function(k){ return b.data[k].from; }).filter(Boolean).sort()[0]; return f ? new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric' }).format(new Date(f)) : '2 Jahren'; }
 function viewBt(){
+  var b1 = V.bt1, h = '';
+  if (b1 && b1.grades){
+    var ids = gradeIds(), nm = function(id){ return id === ids.a ? 'A+' : (id === ids.b ? 'A' : ''); };
+    var rows = b1.grades.filter(function(g){ return g.all && g.all.n; }).sort(function(x, y){ return (nm(y.id) ? 2 - (nm(y.id) === 'A' ? 1 : 0) : 0) - (nm(x.id) ? 2 - (nm(x.id) === 'A' ? 1 : 0) : 0); });
+    h += '<section class="card"><div class="row"><h2>Rückrechnung</h2><span class="muted small">' + esc(dm(Date.parse(b1.at))) + '</span></div>' +
+      '<p class="hint" style="margin-top:4px">Der Scanner auf echten 1-Std-Kursen seit ' + esc(btFrom(b1)) + ', 9 Märkte, mit Spread. Ausgewählt wird nur, was in <b>beiden</b> Jahreshälften im Plus lag (vor und nach ' + esc(b1.split.split('-').reverse().join('.')) + '). Jeden Sonntag neu.</p>' +
+      '<table class="st"><tr><th>Stufe</th><th>Trades</th><th>Treffer</th><th>Ø R 1. Hälfte</th><th>Ø R 2. Hälfte</th></tr>' + rows.map(function(g){
+        var tag = nm(g.id); return '<tr><td>' + (tag ? '<b>' + tag + '</b> ' : '') + esc(g.name) + '</td><td>' + g.all.n + '</td><td>' + fmt(g.all.win * 100, 0) + ' %</td><td class="' + ((g.train.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (g.train.n ? sgn(g.train.mean, 2) : '–') + '</td><td class="' + ((g.test.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (g.test.n ? sgn(g.test.mean, 2) : '–') + '</td></tr>'; }).join('') + '</table>' +
+      '<p class="hint">' + (b1.passed ? 'A+ und A sind die einzigen Stufen, die in beiden Hälften klar im Plus lagen. Die Stichprobe ist klein, deshalb prüft die App jede Woche neu und zeigt dir auch die echten Ergebnisse deiner Signale.' : 'Keine Stufe war in beiden Hälften sicher im Plus. Der Scanner meldet dann nichts als A+.') +
+      ' Auf 15-Min-Kerzen schnitt derselbe Ansatz schlechter ab, deshalb sucht der Scanner auf 1-Std-Kerzen.</p></section>';
+  }
+  return h;
+}
+function viewBt15(){
   var b = V.bt; if (!b || !b.all) return '';
   var A = function(k){ return { gruen: 'Grün', gelb: 'Gelb', rot: 'Rot' }[k] || k; }, rows = function(o, f){ return Object.keys(o || {}).map(function(k){ return Object.assign({ key: f ? f(k) : (instr(k) ? instr(k).name : k) }, o[k]); }); };
   var verdict = b.all.lo > 0 ? 'Der Scanner hat einen belegten Vorteil.' : (b.all.hi < 0 ? 'Der Scanner hat in diesem Zeitraum Geld verloren.' : 'Noch kein belegter Vorteil: Das Ergebnis kann auch Zufall sein.');
@@ -1388,7 +1420,7 @@ function viewMehr(){
     '<p class="hint" style="margin-top:4px">Neue Setups aus dem Scanner, Betreuung offener Trades (1R erreicht, nahe Stop oder KO-Schwelle, Ziel oder Stop erreicht), Warnung vor wichtigen Terminen und deine Kurs-Alarme.</p>' +
     (!canPush || !standalone ? '<p class="hint warn">Auf dem iPhone gehen Mitteilungen nur, wenn Trade Check auf dem Home-Bildschirm liegt: Teilen → „Zum Home-Bildschirm“, dann von dort öffnen.</p>' : '') +
     (p.on ? '<label class="switch"><span>Setups melden (Scanner)</span><input type="checkbox" data-push="scan"' + (p.scan !== false ? ' checked' : '') + '></label>' +
-      (p.scan !== false ? '<label class="switch"><span>Auch gegen den Tagestrend</span><input type="checkbox" data-push="scanAll"' + (p.scanAll ? ' checked' : '') + '></label>' : '') +
+      (p.scan !== false ? '<div class="label" style="margin-top:6px">Welche Setups melden</div><div class="seg" style="margin-top:6px">' + [['top', 'Nur A+'], ['a', 'A+ und A'], ['all', 'Alle']].map(function(q){ return '<button data-act="quality" data-q="' + q[0] + '" aria-pressed="' + ((p.quality || 'top') === q[0]) + '">' + q[1] + '</button>'; }).join('') + '</div>' : '') +
       '<label class="switch"><span>Hauptzeiten (08:00 und 14:30)</span><input type="checkbox" data-push="kz"' + (p.kz ? ' checked' : '') + '></label>' +
       '<div class="label" style="margin-top:6px">News-Warnung vorher</div><div class="seg" style="margin-top:6px">' + [10, 15, 30].map(function(m){ return '<button data-act="lead" data-m="' + m + '" aria-pressed="' + (p.lead === m) + '">' + m + ' Min</button>'; }).join('') + '</div>' +
       '<div class="btns"><button class="btn ghost block" data-act="ptest">Test senden</button><button class="btn ghost block" data-act="poff">Ausschalten</button></div>'
@@ -1410,7 +1442,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0 }; });
-  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, scanAll: !!S.cfg.push.scanAll, trades: trades, alerts: S.alerts.map(function(a){ return { id: a.id, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit }; }) }, extra || {});
+  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'top', trades: trades, alerts: S.alerts.map(function(a){ return { id: a.id, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -1476,6 +1508,8 @@ function onAct(e){
   if (a === 'kosug') return setField('ko', el.dataset.p);
   if (a === 'tf'){ S.tf = el.dataset.tf; V.pick = null; save(); return rerender(); }
   if (a === 'usesig') return useSignal(el.dataset.id);
+  if (a === 'sigall'){ V.sigAll = !V.sigAll; return rerender(); }
+  if (a === 'quality'){ S.cfg.push.quality = el.dataset.q; save(); syncTrade(); return rerender(); }
   if (a === 'tevclose'){ var tt = S.trades.filter(function(x){ return x.id === el.dataset.id; })[0], ev = V.tev[el.dataset.id]; if (tt && ev) return closeTrade(tt.id, ev.done === 'ziel' ? tt.target : tt.stop); return; }
   if (a === 'run') return runCheck();
   if (a === 'open') return openTrade();
@@ -1520,6 +1554,7 @@ render = function(){ _render(); bind($('#page')); };
 
 // ---------- Start
 try { var qs = new URLSearchParams(location.search).get('sig'); if (qs) V.wantSig = qs; } catch (e) {}
+fetch('../dienst/backtest-1h.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.grades){ V.bt1 = b; if (S.tab === 'buch' || S.tab === 'markt') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.all){ delete b.trades; V.bt = b; if (S.tab === 'buch' || S.tab === 'markt') rerender(); } }).catch(function(){});
 loadDienst().then(function(s){ if (s && s.ok && s.url) dienstUrl = s.url; render(); if (S.cfg.push.on) syncTrade(); });
 render();

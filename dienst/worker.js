@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'ffd03854f2';
+const WORKER_VER = '966149c3fd';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2181,7 +2181,7 @@ function costOf(instr, px){
 // c = 15-Min-Kerzen, opt = { instr, d1, from (Index ab dem gesucht wird) }
 function scanSetups(c, opt){
   opt = opt || {};
-  var instr = opt.instr, kz = killzones(instr), out = [], n = c.length;
+  var instr = opt.instr, kz = killzones(instr), out = [], n = c.length, bar = opt.bar || 15 * 60e3, win = Math.max(4, Math.round(3 * 3600e3 / bar));
   if (n < 40) return out;
   var bp = c.map(function(x){ return berlinFast(x.t); });
   // Tageswerte vorbereiten
@@ -2204,7 +2204,7 @@ function scanSetups(c, opt){
     var b = bp[i], day = b.key, pk = prevOf[day], dd = days[day], pd = pk && days[pk];
     // offene Kandidaten weiterfuehren (CHoCH und FVG suchen)
     pending = pending.filter(function(s){
-      if (i - s.i > 12 || bp[i].key !== s.day) return false;
+      if (i - s.i > win || bp[i].key !== s.day) return false;
       if (s.dir > 0 ? c[i].l < s.ext - (a14[i] || 0) * 0.05 && !s.broke : c[i].h > s.ext + (a14[i] || 0) * 0.05 && !s.broke){ s.ext = s.dir > 0 ? Math.min(s.ext, c[i].l) : Math.max(s.ext, c[i].h); if (Math.abs(c[i].c - s.level) > (a14[i] || 0) * 0.8 && (c[i].c - s.level) * s.dir < 0) return false; }
       if (!s.broke && (c[i].c - s.ref) * s.dir > 0){ s.broke = i; }
       if (s.broke){
@@ -2227,8 +2227,9 @@ function scanSetups(c, opt){
             var target = tgt ? tgt.p : entry + s.dir * risk * 2.5;
             if (!biasCache[day]) biasCache[day] = biasAt(opt.d1, day) || 'x';
             var bias = biasCache[day] === 'x' ? 0 : biasCache[day];
-            out.push({ k: instr && instr.k, i: i, t: c[i].t + 15 * 60e3, day: day, dir: s.dir, entry: entry, stop: stop, target: target, rr: (target - entry) * s.dir / risk, risk: risk,
-              sweep: s.name, level: s.level, liqTarget: !!tgt, bias: bias, withBias: bias === s.dir, fvg: [g.lo, g.hi], expires: c[i].t + 15 * 60e3 + 3 * 3600e3 });
+            out.push({ k: instr && instr.k, i: i, t: c[i].t + bar, day: day, dir: s.dir, entry: entry, stop: stop, target: target, rr: (target - entry) * s.dir / risk, risk: risk,
+              sweep: s.name, level: s.level, liqTarget: !!tgt, bias: bias, withBias: bias === s.dir, fvg: [g.lo, g.hi], expires: c[i].t + bar + 3 * 3600e3,
+              gapAtr: (g.hi - g.lo) / a, depthAtr: Math.abs(s.ext - s.level) / a, session: s.min < 720 ? 'London' : 'New York', prevDay: /Vortag/.test(s.name) });
           }
           return false;
         }
@@ -2255,11 +2256,26 @@ function scanSetups(c, opt){
       // Referenz fuer den Strukturbruch: Extrem der letzten Kerzen vor dem Sweep
       var ref = L.dir > 0 ? -Infinity : Infinity;
       for (var r = Math.max(0, i - 5); r < i; r++) ref = L.dir > 0 ? Math.max(ref, c[r].h) : Math.min(ref, c[r].l);
-      pending.push({ i: i, day: day, dir: L.dir, name: L.n, level: L.p, ext: L.dir > 0 ? lo : hi, ref: ref, broke: 0, dayHi: dHi, dayLo: dLo });
+      pending.push({ min: b.min, i: i, day: day, dir: L.dir, name: L.n, level: L.p, ext: L.dir > 0 ? lo : hi, ref: ref, broke: 0, dayHi: dHi, dayLo: dLo });
     });
   }
   return out;
 }
+// ---- Qualitaetsstufen: feste Liste, die Auswahl trifft die Rueckrechnung (Jahr 1), geprueft wird auf Jahr 2
+var GRADES = [
+  { id: 'alle', name: 'Alle Signale', fn: function(s, a){ return true; } },
+  { id: 'trend', name: 'Mit Tagestrend', fn: function(s){ return s.withBias; } },
+  { id: 'trend_liq', name: 'Trend + Ziel an Liquidität', fn: function(s){ return s.withBias && s.liqTarget; } },
+  { id: 'trend_liq_rr', name: 'Trend + Liquiditätsziel + CRV ab 2,5', fn: function(s){ return s.withBias && s.liqTarget && s.rr >= 2.5; } },
+  { id: 'trend_disp', name: 'Trend + starke Verdrängung', fn: function(s){ return s.withBias && s.gapAtr >= 0.6; } },
+  { id: 'trend_green', name: 'Trend + Ampel grün', fn: function(s, a){ return s.withBias && a === 'gruen'; } },
+  { id: 'trend_liq_green', name: 'Trend + Liquiditätsziel + Ampel grün', fn: function(s, a){ return s.withBias && s.liqTarget && a === 'gruen'; } },
+  { id: 'trend_pd', name: 'Trend + Vortages-Sweep', fn: function(s){ return s.withBias && s.prevDay; } },
+  { id: 'trend_lon', name: 'Trend + London', fn: function(s){ return s.withBias && s.session === 'London'; } },
+  { id: 'trend_ny', name: 'Trend + New York', fn: function(s){ return s.withBias && s.session === 'New York'; } },
+  { id: 'aplus', name: 'Trend + Liquiditätsziel + Verdrängung + Ampel grün', fn: function(s, a){ return s.withBias && s.liqTarget && s.gapAtr >= 0.6 && a === 'gruen'; } }
+];
+function gradeById(id){ return GRADES.filter(function(g){ return g.id === id; })[0] || null; }
 // Ein Signal auf den folgenden Kerzen durchspielen (konservativ: Stop und Ziel in derselben Kerze = Stop)
 function simulate(sig, c, cost){
   var fill = -1, n = c.length, r = { filled: false, r: null, mae: 0, mfe: 0, how: 'offen' };
@@ -2288,13 +2304,13 @@ function simulate(sig, c, cost){
 }
 // Rueckrechnung fuer ein Instrument: Signale finden, durchspielen, Ampel zum Signalzeitpunkt bestimmen
 function backtest(p){
-  var c = p.m15, sigs = scanSetups(c, { instr: p.instr, d1: p.d1 }), res = [];
+  var bar = p.bar || 15 * 60e3, c = p.m15, sigs = scanSetups(c, { instr: p.instr, d1: p.d1, bar: bar }), res = [];
   var cost = costOf(p.instr, c.length ? c[c.length - 1].c : 0);
   sigs.forEach(function(s){
     var sim = simulate(s, c, cost);
     if (!sim.filled || sim.r == null) return;
     var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
-    var h1 = p.h1 ? p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300) : null;
+    var h1 = p.h1 ? (p.h1 === p.m15 ? c.slice(Math.max(0, s.i - 300), s.i + 1) : p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300)) : null;
     var d1 = p.d1 ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
     var chk = scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
@@ -2342,7 +2358,7 @@ function excursionAdvice(trades){
   }
   return out;
 }
-  return { scanSetups, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate };
+  return { scanSetups, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
 const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
@@ -2461,7 +2477,7 @@ async function tradeRoute(request, headers, env, nowMs) {
       kw: (Array.isArray(b.kw) ? b.kw : []).filter((k) => /^[a-z|]{2,40}$/.test(k)).slice(0, 5),
       lead: num(b.lead, 5, 60, 15), kz: b.kz !== false, alerts, sent: t.sent || {},
       watch: (Array.isArray(b.watch) ? b.watch : []).filter((k) => typeof k === 'string' && TL.instrumentByKey(k)).slice(0, 8),
-      scan: b.scan !== false, scanAll: !!b.scanAll,
+      scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top'].includes(b.quality) ? b.quality : 'top',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [] };
     // Ereignisse nur fuer noch offene Trades behalten
@@ -2484,6 +2500,20 @@ function berlinClock(ms) {
   return { min: (+p.hour) * 60 + (+p.minute), wd: p.weekday };
 }
 const hhmm = (ms) => new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' }).format(new Date(ms));
+// Belegte Qualitaetsstufe aus der grossen Rueckrechnung (GitHub legt sie woechentlich ab)
+async function qualityCfg(env, nowMs) {
+  try {
+    const c = await cachedKV(env, 'mkt:q', 12 * 3600e3, nowMs, async () => {
+      if (!env.PAGES_URL) return {};
+      const r = await fetch(env.PAGES_URL + 'dienst/backtest-1h.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA });
+      if (!r.ok) return {};
+      const j = await r.json();
+      const stats = {}; (j.grades || []).forEach((g) => { stats[g.id] = g.all && g.all.n ? { n: g.all.n, mean: g.all.mean, win: g.all.win } : null; });
+      return { chosen: j.passed ? j.chosen : null, second: j.passed ? j.second : null, stats };
+    });
+    return c.data || {};
+  } catch (e) { return {}; }
+}
 async function runTrade(env, nowMs) {
   if (!env.VS) return { skipped: 'kv' };
   const t = await env.VS.get('trade', 'json');
@@ -2595,31 +2625,43 @@ async function runTrade(env, nowMs) {
       if (nx) await send('t:' + tr.id + ':n' + nx.t, { body: 'In ' + Math.max(1, Math.round((nx.t - nowMs) / 60e3)) + ' Min: ' + nx.country + ' ' + nx.title + '. Dein ' + tr.name + '-Trade ist offen: Teilgewinn nehmen oder Stop nachziehen?', tag: 'trade-' + tr.id });
     }
   }
-  // 5) Setup-Scanner in den Hauptzeiten: Sweep -> CHoCH -> FVG auf 15 Min
-  if (t.scan !== false && weekday && (t.watch || []).length) {
+  // 5) Setup-Scanner in den Hauptzeiten: Sweep -> CHoCH -> FVG auf 1-Std-Kerzen (in der Rueckrechnung ueber 2 Jahre deutlich besser als 15 Min)
+  if (t.scan !== false && weekday) {
     t.scanAt = t.scanAt || {}; t.bias = t.bias || {}; t.signals = Array.isArray(t.signals) ? t.signals : [];
-    const due = t.watch.map((k) => TL.instrumentByKey(k)).filter((ins) => ins && TL.killzones(ins).some((z) => clk.min >= z[0] && clk.min < z[1] + 15) && nowMs - (t.scanAt[ins.k] || 0) >= 10 * 60e3)
+    const keys = TL.INSTRUMENTS.map((i) => i.k).concat((t.watch || []).filter((k) => /^S:/.test(k)));
+    const due = keys.map((k) => TL.instrumentByKey(k)).filter((ins) => ins && TL.killzones(ins).some((z) => clk.min >= z[0] && clk.min < z[1] + 75) && nowMs - (t.scanAt[ins.k] || 0) >= 14 * 60e3)
       .sort((a, b) => (t.scanAt[a.k] || 0) - (t.scanAt[b.k] || 0)).slice(0, 3);
     for (const ins of due) {
       t.scanAt[ins.k] = nowMs; dirty = true; rep.scanned = (rep.scanned || 0) + 1;
-      if (!t.bias[ins.k] || t.bias[ins.k].day !== dayKey) {
-        const d1 = await candlesOf(ins.y, '1d', '1y');
-        if (d1 && d1.length) t.bias[ins.k] = { day: dayKey, b: TL.biasAt(d1, dayKey) };
-      }
+      const d1 = await candlesOf(ins.y, '1d', '1y');
+      if (d1 && d1.length && (!t.bias[ins.k] || t.bias[ins.k].day !== dayKey)) t.bias[ins.k] = { day: dayKey, b: TL.biasAt(d1, dayKey) };
       const bias = t.bias[ins.k] ? t.bias[ins.k].b : 0;
-      const c = await candlesOf(ins.y, '15m', '5d');
+      const c = await candlesOf(ins.y, '60m', '1mo');
       if (!c || c.length < 60) continue;
-      const sigs = TL.scanSetups(c, { instr: ins, d1: null, from: c.length - 6 }).filter((g) => g.day === dayKey && nowMs - g.t < 40 * 60e3 && g.t < nowMs + 60e3);
+      const sigs = TL.scanSetups(c, { instr: ins, d1: null, bar: 3600e3, from: c.length - 3 }).filter((g) => g.day === dayKey && nowMs - g.t < 80 * 60e3 && g.t < nowMs + 60e3);
       for (const g of sigs) {
         const sim = TL.simulate(g, c, 0);
         if (sim.how === 'verpasst' || (sim.filled && sim.r != null)) continue;
         const id = ins.k + ':' + g.t;
         if (t.signals.some((x) => x.id === id)) continue;
         const ko = g.stop - g.dir * g.risk * 0.5;
-        const sig = { id, k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, level: g.level, withBias: bias === g.dir, bias, expires: g.expires, filled: sim.filled };
+        g.bias = bias; g.withBias = bias === g.dir;
+        const q = await qualityCfg(env, nowMs);
+        const m15 = await candlesOf(ins.y, '15m', '5d');
+        let calNow = null; try { calNow = (await getCalendar(env, nowMs)).data; } catch (e) { calNow = null; }
+        let chk = null; try { chk = TL.scoreCheck({ instr: ins, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, now: nowMs, d1, h1: c, m15: m15 && m15.length ? m15 : null, events: calNow }); } catch (e) { chk = null; }
+        const ampel = chk && !chk.error ? chk.ampel : null;
+        const newsSoon = (calNow || []).some((e) => e.impact === 'High' && ins.ccy.includes(e.country) && Date.parse(e.date) > nowMs - 15 * 60e3 && Date.parse(e.date) - nowMs < 60 * 60e3);
+        const gA = TL.gradeById(q.chosen || 'trend_liq_rr'), gB = TL.gradeById(q.second || 'trend_liq');
+        const cls = newsSoon ? 'B' : (gA && gA.fn(g, ampel) ? 'A+' : (gB && gB.fn(g, ampel) ? 'A' : 'B'));
+        const sig = { id, k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, level: g.level, withBias: g.withBias, liqTarget: g.liqTarget, bias, expires: g.expires, filled: sim.filled,
+          ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', newsSoon };
         t.signals.unshift(sig); t.signals = t.signals.slice(0, 30); dirty = true;
-        if (sig.withBias || t.scanAll) {
-          await send('s:' + id, { body: 'Setup ' + ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': Sweep ' + g.sweep + ', Strukturbruch auf 15 Min. Limit ' + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + ')' + (sig.withBias ? ', mit Tagestrend.' : ', gegen den Tagestrend.') + ' Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + ' wählen. Gilt bis ' + hhmm(g.expires) + '.', tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+        const want = t.quality === 'all' ? (sig.withBias || t.scanAll) : (t.quality === 'a' ? cls !== 'B' : cls === 'A+');
+        if (want) {
+          const gs = q.stats && q.stats[cls === 'A+' ? gA.id : (cls === 'A' ? gB.id : '')];
+          const proof = gs && gs.n ? ' Rückrechnung: ' + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Treffer, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' : '';
+          await send('s:' + id, { title: (cls !== 'B' ? cls + ' Setup' : 'Setup') + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. Limit ' + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + proof, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
         }
       }
     }
