@@ -16,7 +16,7 @@ async function chart(sym, iv, rg) {
   }
   return [];
 }
-const all = [], info = {};
+let all = [], info = {};
 const vix = await chart('^VIX', '1d', '5y'), dxy = await chart('DX-Y.NYB', '1d', '5y');
 for (const ins of L.scanUniverse()) {
   const h1 = await chart(ins.y, '60m', '730d'), d1 = await chart(ins.y, '1d', '5y');
@@ -26,16 +26,20 @@ for (const ins of L.scanUniverse()) {
   await new Promise((r) => setTimeout(r, 400));
 }
 const ts = all.map((t) => t.at).sort((a, b) => a - b);
-const split = ts.length ? ts[Math.floor(ts.length / 2)] : 0;
+// Drei Zeitraeume: Auswahl nur auf den ersten 75 % (1. und 2. Haelfte davon), die letzten 25 % bleiben unberuehrt (Haertetest)
+const cut = ts.length ? ts[Math.floor(ts.length * 0.75)] : 0;
+const split = ts.length ? ts[Math.floor(ts.length * 0.375)] : 0;
+const full = all; all = all.filter((t) => t.at < cut); const hold = full.filter((t) => t.at >= cut);
 const days = new Set(all.map((t) => L.berlinFast(t.at).key)).size;
-const t0 = ts[0] || 0, t1 = ts[ts.length - 1] || 0, tradingDays = Math.max(1, (t1 - t0) / 86400e3 * 5 / 7);
+const t0 = ts[0] || 0, t1 = cut || 0, tradingDays = Math.max(1, (t1 - t0) / 86400e3 * 5 / 7);
 const pick = (a) => a ? { n: a.n, mean: +a.mean.toFixed(3), win: +a.win.toFixed(3), sum: +a.sum.toFixed(1), lo: a.lo != null ? +a.lo.toFixed(3) : null, hi: a.hi != null ? +a.hi.toFixed(3) : null } : { n: 0 };
 const st = (arr) => pick(arr.length ? L.rStats(arr.map((t) => t.r)) : null);
 const grades = [];
 for (const type of Object.keys(L.SETUPS)) for (const g of L.GRADES) {
   const id = type + ':' + g.id, f = (arr) => arr.filter((t) => L.gradeMatch(id, t.sig, t.ampel));
   const sel = f(all);
-  grades.push({ id, type, name: L.gradeName(id), all: st(sel), train: st(sel.filter((t) => t.at < split)), test: st(sel.filter((t) => t.at >= split)), perDay: +(sel.length / tradingDays).toFixed(2) });
+  const hs = st(f(hold));
+  grades.push({ id, type, name: L.gradeName(id), hold: hs, all: st(sel), train: st(sel.filter((t) => t.at < split)), test: st(sel.filter((t) => t.at >= split)), perDay: +(sel.length / tradingDays).toFixed(2) });
 }
 // A+ = Stufe, die in beiden Haelften klar im Plus liegt UND insgesamt mit 95 % ueber null (beste davon).
 // A  = weitere Stufen, die in beiden Haelften im Plus liegen und im Schnitt mindestens +0,1 R bringen (noch nicht sicher belegt).
@@ -53,11 +57,15 @@ const out = {
   at: new Date().toISOString(), data: info, split: new Date(split).toISOString().slice(0, 10), tradingDays: Math.round(tradingDays), markets: Object.keys(info).filter((k) => info[k].h1 >= 500).length,
   n: Object.assign({ all: all.length }, Object.fromEntries(Object.keys(L.SETUPS).map((k) => [k, all.filter((t) => t.type === k).length]))),
   byType: Object.fromEntries(Object.keys(L.SETUPS).map((k) => [k, { name: L.setupName(k), ...st(all.filter((t) => t.type === k)), train: st(all.filter((t) => t.type === k && t.at < split)), test: st(all.filter((t) => t.type === k && t.at >= split)) }])),
-  all: st(all), grades, passed: !!chosen, chosen, second: aIds[0] || null, aIds, w60, ctx: { vix: vix.length, dxy: dxy.length },
+  all: st(all), holdFrom: new Date(cut).toISOString().slice(0, 10), holdAll: st(hold), tests: grades.length, grades, passed: !!chosen, chosen, second: aIds[0] || null, aIds, w60, ctx: { vix: vix.length, dxy: dxy.length },
   top: { ...st(inTop), perDay: +(inTop.length / tradingDays).toFixed(2) },
   good: { ...st(inA), perDay: +(inA.length / tradingDays).toFixed(2), train: st(inA.filter((t) => t.at < split)), test: st(inA.filter((t) => t.at >= split)) },
   goodByInstr: Object.fromEntries(Object.entries(byInstr).map(([k, v]) => [k, st(v)]))
 };
+const Phi = (x) => { const t = 1 / (1 + 0.2316419 * Math.abs(x)), d = 0.3989423 * Math.exp(-x * x / 2), p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return x > 0 ? 1 - p : p; };
+grades.forEach((g) => { if (g.all.n >= 10 && g.all.hi != null){ const se = (g.all.hi - g.all.lo) / (2 * 1.96), tv = se > 0 ? g.all.mean / se : 0; g.p = +(1 - Phi(tv)).toFixed(5); g.pAdj = +Math.min(1, g.p * grades.length).toFixed(4); } });
+// Haertetest der gemeldeten Stufen auf dem unberuehrten Zeitraum
+const holdOf = (ids) => st(hold.filter((t) => ids.some((id) => L.gradeMatch(id, t.sig, t.ampel))));
 // Positionsfuehrung und Dossier je guter Stufe: Stop bei 1R auf Einstand vs. stehen lassen; Trefferbilder
 const q = (arr, p) => { if (!arr.length) return null; const a = arr.slice().sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(p * a.length))]; };
 const stR = (arr, key) => pick(arr.length ? L.rStats(arr.map((t) => t[key] != null ? t[key] : t.r)) : null);
@@ -78,6 +86,9 @@ good.forEach((g) => {
     london: stR(sel.filter((t) => t.sig.session === 'London'), 'r'), ny: stR(sel.filter((t) => t.sig.session === 'New York'), 'r'),
     byInstr: Object.fromEntries(Object.entries(sel.reduce((m, t) => { (m[t.instr] = m[t.instr] || []).push(t); return m; }, {})).map(([k, v]) => [k, stR(v, 'r')])) };
 });
+out.holdTop = chosen ? holdOf([chosen]) : null; out.holdGood = holdOf(good.map((g) => g.id)); out.holdW60 = w60.length ? holdOf(w60) : null;
+// Alle Trades der gemeldeten Stufen (R und Zeit) fuer die Risiko-Simulation in der App
+out.rSeries = full.filter((t) => good.some((g) => L.gradeMatch(g.id, t.sig, t.ampel))).sort((a, b) => a.at - b.at).map((t) => [Math.round(t.at / 60000), +t.r.toFixed(2), w60.some((id) => L.gradeMatch(id, t.sig, t.ampel)) ? 1 : 0]);
 writeFileSync(new URL('backtest-1h.json', import.meta.url), JSON.stringify(out) + '\n');
-console.log(JSON.stringify({ w60, dossier: out.dossier, split: out.split, tradingDays: out.tradingDays, markets: out.markets, n: out.n, all: out.all, chosen, aIds, top: out.top, good: out.good,
+console.log(JSON.stringify({ hold: { from: out.holdFrom, all: out.holdAll, top: out.holdTop, good: out.holdGood, w60: out.holdW60 }, pAdj: grades.filter((g) => g.pAdj != null && g.pAdj < 0.5).map((g) => [g.id, g.p, g.pAdj]), w60, dossier: out.dossier, split: out.split, tradingDays: out.tradingDays, markets: out.markets, n: out.n, all: out.all, chosen, aIds, top: out.top, good: out.good,
   grades: grades.map((g) => [g.id, g.all.n, g.all.mean, g.train.n, g.train.mean, g.test.n, g.test.mean, g.all.lo, g.perDay]) }, null, 1));
