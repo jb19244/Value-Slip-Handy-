@@ -1288,6 +1288,20 @@ function viewResult(r){
   h += viewSize(r);
   return h;
 }
+// Order-Preise fuer den Knock-out (Trade Republic handelt den Schein, nicht den Basiswert)
+function orderPrices(r, i, f, ps){
+  if (!(r.koP > 0) || !(f.ratio > 0) || ps.certs == null) return '';
+  var cert = function(lv){ return Math.max(0, (lv - r.koP) * f.dir) * f.ratio * r.conv; };
+  var ce = cert(f.entry), cs = cert(f.stop), ct = cert(f.target);
+  if (!(ce > 0) || !(cs > 0)) return '';
+  var mode = r.sigCtx && r.sigCtx.g ? r.sigCtx.g.mode : 'limit';
+  var buy = mode === 'stop' ? 'Stop-Buy-Order' : (mode === 'market' ? 'Kauf sofort (Markt), max. ' : 'Limit-Kauforder');
+  return '<div class="label" style="margin-top:14px">Orders bei Trade Republic (Preise des Scheins)</div><ul class="list-plain">' +
+    '<li><b>1. Kaufen:</b> ' + fmt(ps.certs, 0) + ' Stück ' + (f.dir > 0 ? 'Call/Long' : 'Put/Short') + '-Knock-out, ' + buy + ' zu <b>' + eur(ce) + '</b></li>' +
+    '<li><b>2. Sofort danach:</b> Stop-Loss-Order zu <b>' + eur(cs) + '</b></li>' +
+    '<li><b>3. Ziel:</b> Der Schein steht dann bei etwa <b>' + eur(ct) + '</b>. Du bekommst eine Mitteilung und verkaufst von Hand.</li></ul>' +
+    '<p class="hint">Ungefähre Werte aus Basiswert, KO-Schwelle und Bezugsverhältnis. Der echte Kurs weicht um Spread und Aufgeld ein paar Cent ab. Stimmt der angezeigte Kurs bei Trade Republic grob, passt es.' + (i.basis ? ' Rohstoffe: Die Daten kommen vom Future. Dein Schein bezieht sich auf den Kassakurs. Rechne die Schwelle mit dem Kurs bei Trade Republic nach.' : '') + '</p>';
+}
 function viewSize(r){
   var i = instr(r.k), ps = r.ps, f = r.form;
   if (!ps) return '<section class="card"><h2>Positionsgröße</h2><p class="hint">' + (V.rates ? 'Trag deine Kontogröße unter Mehr ein.' : 'Wechselkurs fehlt, versuch es gleich noch einmal.') + '</p></section>';
@@ -1304,7 +1318,7 @@ function viewSize(r){
     else if (r.atr && behind < r.atr * 0.5) warn = '<p class="hint warn">Die KO-Schwelle liegt nur knapp hinter dem Stop. Bei Kurslücken kann der Schein ausknocken statt mit Verlust verkauft zu werden.</p>';
   }
   return '<section class="card"><div class="row"><h2>Positionsgröße</h2><span class="pill">' + fmt(S.cfg.risk, 2).replace(/,?0+$/, '') + ' % Risiko</span></div><dl class="kv"><div><dt>Risiko</dt><dd>' + eur(ps.riskEur) + '</dd></div>' +
-    rows.map(function(x){ return '<div><dt>' + x[0] + '</dt><dd>' + x[1] + '</dd></div>'; }).join('') + '</dl>' + warn +
+    rows.map(function(x){ return '<div><dt>' + x[0] + '</dt><dd>' + x[1] + '</dd></div>'; }).join('') + '</dl>' + warn + orderPrices(r, i, f, ps) +
     '<p class="hint">' + (i.type === 'fx' ? '1 Pip = ' + eur(ps.units * (i.quote === 'JPY' ? 0.01 : 0.0001) * r.conv) + '. ' : 'Verlust bis Stop je Einheit ' + (ps.perUnitEur < 0.01 ? fmt(ps.perUnitEur, 4) + ' €' : eur(ps.perUnitEur)) + '. ') + 'Dazu ' + eur(fee) + ' Ordergebühren.' + (f.ratioAssumed ? ' Gerechnet mit Bezugsverhältnis ' + fmt(f.ratio, f.ratio < 1 ? 2 : 0) + ' (üblich bei ' + esc(i.name) + '). Steht im Produktinfoblatt deines Scheins, bitte prüfen.' : '') + (r.koP > 0 ? '' : ' Mit KO-Schwelle rechne ich auch Einsatz und Hebel.') + '</p>' +
     '<div class="btns"><button class="btn block" data-act="open">Ins Tagebuch</button><button class="btn ghost" data-act="alarm">Alarm am Einstieg</button></div></section>';
 }
