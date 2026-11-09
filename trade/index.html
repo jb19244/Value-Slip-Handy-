@@ -375,12 +375,12 @@ function positionSize(p){
 // ---- Setup-Check
 var CHECKS = {
   trend_d: 'Tagestrend', struct_h1: 'Struktur 1 Std', struct_m15: 'Struktur 15 Min', pd: 'Premium/Discount', liq: 'Liquidität',
-  fvg: 'Fair Value Gap', atr: 'Stop gegen Schwankung', rr: 'Chance-Risiko', news: 'News', session: 'Handelszeit', cot: 'COT (Großspekulanten)', rs: 'Relative Stärke', vol: 'Tagesbewegung', price: 'Einstieg'
+  fvg: 'Fair Value Gap', atr: 'Stop gegen Schwankung', rr: 'Chance-Risiko', news: 'News', session: 'Handelszeit', cot: 'COT (Großspekulanten)', rs: 'Relative Stärke', vol: 'Tagesbewegung', price: 'Einstieg', corr: 'Gebündeltes Risiko'
 };
 var W = { pro: 1, contra: -1, warn: -0.5, neutral: 0 };
 function fmtP(x, dec){ return x == null || !isFinite(x) ? '–' : x.toFixed(dec == null ? 2 : dec).replace('.', ','); }
 function scoreCheck(p){
-  var instr = p.instr, dir = p.dir, items = [], add = function(key, verdict, weight, text, block){ items.push({ key: key, title: CHECKS[key], verdict: verdict, weight: weight, text: text, block: !!block }); };
+  var instr = p.instr, dir = p.dir, items = [], wm = p.wmul || {}, add = function(key, verdict, weight, text, block){ items.push({ key: key, title: CHECKS[key], verdict: verdict, weight: weight * (wm[key] != null ? wm[key] : 1), text: text, block: !!block }); };
   var dec = instr.dec;
   var price = p.m15 && p.m15.length ? p.m15[p.m15.length - 1].c : (p.h1 && p.h1.length ? p.h1[p.h1.length - 1].c : null);
   // Einstieg auf unsere Kursreihe abbilden (bei Rohstoffen liefert die Quelle den Future, Trade Republic den Kassakurs)
@@ -497,6 +497,11 @@ function scoreCheck(p){
     if (used >= 1.2) add('vol', 'warn', 0.5, 'Heute schon ' + fmtP(used * 100, 0) + ' % der üblichen Tagesbewegung gelaufen. Weite Ziele werden unwahrscheinlicher.');
     else add('vol', 'neutral', 0, 'Heute ' + fmtP(used * 100, 0) + ' % der üblichen Tagesbewegung.');
   }
+  // 13) Gebuendeltes Risiko mit offenen Trades (gleiche Waehrung in gleiche Richtung)
+  if (p.openTrades && p.openTrades.length){
+    var same = overlap(exposure(instr, dir), p.openTrades);
+    if (same.length) add('corr', 'warn', 0.5, 'Zusammen mit ' + same.map(function(x){ return x.name; }).join(', ') + ' setzt du doppelt auf ' + same.map(function(x){ return x.what; }).filter(function(v, i, a){ return a.indexOf(v) === i; }).join(' und ') + '. Geht es schief, verlierst du beide. Risiko je Trade halbieren überlegen.');
+  }
   var score = items.reduce(function(a, it){ return a + (it.verdict === 'pro' ? it.weight : (it.verdict === 'contra' ? -it.weight : (it.verdict === 'warn' ? -0.5 : 0))); }, 0);
   var blocked = items.some(function(it){ return it.block; });
   var maxPro = items.reduce(function(a, it){ return a + (it.weight || 0) * (it.verdict === 'pro' || it.verdict === 'contra' ? 1 : 0); }, 0);
@@ -580,6 +585,220 @@ function keyLevels(m15, h1, now, dec){
   var tol = Math.pow(10, -(dec == null ? 5 : dec)) * 0.5, res = [];
   out.forEach(function(x){ var y = res[res.length - 1]; if (y && Math.abs(y.p - x.p) <= tol){ y.name += ' · ' + x.name; } else res.push(x); });
   return res;
+}
+// ---- Gebuendeltes Risiko: worauf setzt ein Trade? (+1 = steigt, -1 = faellt)
+var EXPO_NAMES = { USD: 'den Dollar', EUR: 'den Euro', GBP: 'das Pfund', JPY: 'den Yen', RISK: 'steigende Aktien', XAU: 'Edelmetalle', OIL: 'Öl' };
+function exposure(instr, dir){
+  var e = {};
+  if (!instr) return e;
+  if (instr.type === 'fx'){ e[instr.ccy[0]] = dir; e[instr.ccy[1]] = -dir; }
+  else if (instr.type === 'cmd'){ e[instr.k === 'WTI' ? 'OIL' : 'XAU'] = dir; e.USD = -dir; }
+  else e.RISK = dir;
+  return e;
+}
+function overlap(exp, open){
+  var out = [];
+  (open || []).forEach(function(t){
+    var ex = exposure(instrumentByKey(t.instr), t.dir);
+    Object.keys(exp).forEach(function(k){ if (ex[k] && ex[k] === exp[k]) out.push({ name: t.name || t.instr, what: (exp[k] > 0 ? 'steigende' : 'fallende') + ' ' + ({ USD: 'Dollar', EUR: 'Euro', GBP: 'Pfund', JPY: 'Yen', RISK: 'Aktien', XAU: 'Edelmetalle', OIL: 'Ölpreise' }[k] || k), key: k }); });
+  });
+  return out;
+}
+
+// ---- Schnelle Berlin-Zeit fuer viele Kerzen (Sommerzeit: letzter Sonntag Maerz bis letzter Sonntag Oktober, 01:00 UTC)
+function lastSunUTC(y, m){ var d = new Date(Date.UTC(y, m + 1, 0, 1)); d.setUTCDate(d.getUTCDate() - d.getUTCDay()); return d.getTime(); }
+var _dstCache = {};
+function berlinFast(ms){
+  var y = new Date(ms).getUTCFullYear(), c = _dstCache[y] || (_dstCache[y] = [lastSunUTC(y, 2), lastSunUTC(y, 9)]);
+  var off = ms >= c[0] && ms < c[1] ? 2 : 1, d = new Date(ms + off * 3600e3);
+  var key = d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2);
+  return { key: key, min: d.getUTCHours() * 60 + d.getUTCMinutes(), wd: d.getUTCDay() };
+}
+// Hauptzeiten je Markt (Minuten Berlin)
+function killzones(instr){
+  var z = (instr && instr.zone) || 'eu';
+  if (z === 'usstock') return [[930, 1050]];
+  if (instr && instr.type === 'stock') return [[540, 690], [870, 1020]];
+  return [[480, 660], [870, 1020]];
+}
+// Tagestendenz aus Tageskerzen: Schluss ueber/unter EMA 50 (nur Tage vor dem Stichtag)
+function biasAt(d1, dayKey){
+  if (!d1 || d1.length < 60) return 0;
+  var cl = [], i;
+  for (i = 0; i < d1.length; i++){ if (berlinFast(d1[i].t + 12 * 3600e3).key >= dayKey) break; cl.push(d1[i].c); }
+  if (cl.length < 55) return 0;
+  var e = ema(cl, 50); return cl[cl.length - 1] > e[e.length - 1] ? 1 : -1;
+}
+// Typische Kosten (Spread des Knock-outs) in Kurspunkten
+function costOf(instr, px){
+  var c = { EURUSD: 0.0001, GBPUSD: 0.00015, USDJPY: 0.015, XAUUSD: 0.5, XAGUSD: 0.03, WTI: 0.04, DAX: 3, NDX: 4, SPX: 1 }[instr.k];
+  return c != null ? c : px * 0.0006;
+}
+
+// ---- Setup-Scanner: Liquidity Sweep (Asien/Vortag) in der Hauptzeit -> CHoCH auf 15 Min -> Einstieg im neuen FVG
+// c = 15-Min-Kerzen, opt = { instr, d1, from (Index ab dem gesucht wird) }
+function scanSetups(c, opt){
+  opt = opt || {};
+  var instr = opt.instr, kz = killzones(instr), out = [], n = c.length;
+  if (n < 40) return out;
+  var bp = c.map(function(x){ return berlinFast(x.t); });
+  // Tageswerte vorbereiten
+  var days = {}, order = [];
+  for (var i = 0; i < n; i++){
+    var k = bp[i].key, d = days[k];
+    if (!d){ d = days[k] = { hi: -Infinity, lo: Infinity, ahi: -Infinity, alo: Infinity, wd: bp[i].wd, first: i }; order.push(k); }
+    if (c[i].h > d.hi) d.hi = c[i].h; if (c[i].l < d.lo) d.lo = c[i].l;
+    if (bp[i].min < 480){ if (c[i].h > d.ahi) d.ahi = c[i].h; if (c[i].l < d.alo) d.alo = c[i].l; }
+  }
+  var prevOf = {}, last = null;
+  order.forEach(function(k){ prevOf[k] = last; if (days[k].wd !== 0 && days[k].wd !== 6) last = k; });
+  var biasCache = {};
+  var a14 = [], trs = 0;
+  for (i = 0; i < n; i++){ var tr = i ? Math.max(c[i].h - c[i].l, Math.abs(c[i].h - c[i - 1].c), Math.abs(c[i].l - c[i - 1].c)) : c[i].h - c[i].l; trs = i < 14 ? trs + tr : trs; a14.push(i < 13 ? null : (i === 13 ? (trs) / 14 : (a14[i - 1] * 13 + tr) / 14)); }
+  var inKz = function(m){ return kz.some(function(z){ return m >= z[0] && m < z[1]; }); };
+  var swept = {}, pending = [];
+  var from = Math.max(20, opt.from || 0);
+  for (i = 20; i < n; i++){
+    var b = bp[i], day = b.key, pk = prevOf[day], dd = days[day], pd = pk && days[pk];
+    // offene Kandidaten weiterfuehren (CHoCH und FVG suchen)
+    pending = pending.filter(function(s){
+      if (i - s.i > 12 || bp[i].key !== s.day) return false;
+      if (s.dir > 0 ? c[i].l < s.ext - (a14[i] || 0) * 0.05 && !s.broke : c[i].h > s.ext + (a14[i] || 0) * 0.05 && !s.broke){ s.ext = s.dir > 0 ? Math.min(s.ext, c[i].l) : Math.max(s.ext, c[i].h); if (Math.abs(c[i].c - s.level) > (a14[i] || 0) * 0.8 && (c[i].c - s.level) * s.dir < 0) return false; }
+      if (!s.broke && (c[i].c - s.ref) * s.dir > 0){ s.broke = i; }
+      if (s.broke){
+        // FVG in Richtung zwischen Sweep und jetzt
+        // groesstes FVG der Verdraengung (Mini-Luecken unter 0,3 ATR zaehlen nicht)
+        var g = null, minG = (a14[i] || 0) * 0.3;
+        for (var j = Math.max(s.i + 2, s.broke - 3); j <= i; j++){
+          var cand = null;
+          if (s.dir > 0 && c[j].l > c[j - 2].h) cand = { lo: c[j - 2].h, hi: c[j].l, j: j };
+          if (s.dir < 0 && c[j].h < c[j - 2].l) cand = { lo: c[j].h, hi: c[j - 2].l, j: j };
+          if (cand && cand.hi - cand.lo >= minG && (!g || cand.hi - cand.lo > g.hi - g.lo)) g = cand;
+        }
+        if (g){
+          var a = a14[i] || (g.hi - g.lo);
+          var entry = (g.lo + g.hi) / 2, stop = s.ext - s.dir * a * 0.1, risk = (entry - stop) * s.dir;
+          if (risk > a * 0.3 && risk < a * 4 && i >= from){
+            var cands = s.dir > 0 ? [dd.ahi, pd && pd.hi, s.dayHi] : [dd.alo, pd && pd.lo, s.dayLo];
+            var tgt = null;
+            cands.filter(function(x){ return x && isFinite(x); }).map(function(x){ return { p: x, rr: (x - entry) * s.dir / risk }; }).filter(function(x){ return x.rr >= 2 && x.rr <= 6; }).sort(function(x, y){ return x.rr - y.rr; }).slice(0, 1).forEach(function(x){ tgt = x; });
+            var target = tgt ? tgt.p : entry + s.dir * risk * 2.5;
+            if (!biasCache[day]) biasCache[day] = biasAt(opt.d1, day) || 'x';
+            var bias = biasCache[day] === 'x' ? 0 : biasCache[day];
+            out.push({ k: instr && instr.k, i: i, t: c[i].t + 15 * 60e3, day: day, dir: s.dir, entry: entry, stop: stop, target: target, rr: (target - entry) * s.dir / risk, risk: risk,
+              sweep: s.name, level: s.level, liqTarget: !!tgt, bias: bias, withBias: bias === s.dir, fvg: [g.lo, g.hi], expires: c[i].t + 15 * 60e3 + 3 * 3600e3 });
+          }
+          return false;
+        }
+        return i - s.broke < 3;
+      }
+      return true;
+    });
+    if (!inKz(b.min) || b.wd === 0 || b.wd === 6) continue;
+    var lv = [];
+    if (dd && isFinite(dd.alo) && b.min >= 480){ lv.push({ n: 'Asien-Tief', p: dd.alo, dir: 1 }, { n: 'Asien-Hoch', p: dd.ahi, dir: -1 }); }
+    if (pd){ lv.push({ n: 'Vortagestief', p: pd.lo, dir: 1 }, { n: 'Vortageshoch', p: pd.hi, dir: -1 }); }
+    // Tageshoch/-tief bis vor dieser Kerze
+    var dHi = -Infinity, dLo = Infinity;
+    for (var q = dd.first; q < i; q++){ if (c[q].h > dHi) dHi = c[q].h; if (c[q].l < dLo) dLo = c[q].l; }
+    lv.forEach(function(L){
+      var key = day + L.n;
+      if (swept[key]) return;
+      var pierced = L.dir > 0 ? c[i].l < L.p : c[i].h > L.p;
+      var back = L.dir > 0 ? c[i].c > L.p : c[i].c < L.p;
+      var prevPierce = L.dir > 0 ? c[i - 1].c < L.p && c[i - 1].l < L.p : c[i - 1].c > L.p && c[i - 1].h > L.p;
+      if (!(pierced && back) && !(prevPierce && back)) return;
+      swept[key] = 1;
+      var lo = Math.min(c[i].l, c[i - 1].l), hi = Math.max(c[i].h, c[i - 1].h);
+      // Referenz fuer den Strukturbruch: Extrem der letzten Kerzen vor dem Sweep
+      var ref = L.dir > 0 ? -Infinity : Infinity;
+      for (var r = Math.max(0, i - 5); r < i; r++) ref = L.dir > 0 ? Math.max(ref, c[r].h) : Math.min(ref, c[r].l);
+      pending.push({ i: i, day: day, dir: L.dir, name: L.n, level: L.p, ext: L.dir > 0 ? lo : hi, ref: ref, broke: 0, dayHi: dHi, dayLo: dLo });
+    });
+  }
+  return out;
+}
+// Ein Signal auf den folgenden Kerzen durchspielen (konservativ: Stop und Ziel in derselben Kerze = Stop)
+function simulate(sig, c, cost){
+  var fill = -1, n = c.length, r = { filled: false, r: null, mae: 0, mfe: 0, how: 'offen' };
+  var start = sig.i + 1, risk = sig.risk;
+  for (var i = start; i < n && c[i].t < sig.expires; i++){
+    if (sig.dir > 0 ? c[i].h >= sig.target : c[i].l <= sig.target){ r.how = 'verpasst'; return r; }
+    if (sig.dir > 0 ? c[i].l <= sig.entry : c[i].h >= sig.entry){ fill = i; break; }
+  }
+  if (fill < 0){ if (i < n) r.how = 'nicht gefüllt'; return r; }
+  r.filled = true; r.fillT = c[fill].t;
+  var day = berlinFast(c[fill].t).key;
+  for (i = fill; i < n; i++){
+    var x = c[i], bpx = berlinFast(x.t);
+    var adv = ((sig.dir > 0 ? x.l : x.h) - sig.entry) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - sig.entry) * sig.dir / risk;
+    if (i === fill) fav = Math.max(0, ((x.c - sig.entry) * sig.dir) / risk);
+    if (adv < r.mae) r.mae = adv;
+    if (adv <= -1){ r.r = -1; r.how = 'Stop'; r.exitT = x.t; break; }
+    if (fav > r.mfe) r.mfe = fav;
+    if (i > fill && fav >= sig.rr){ r.r = sig.rr; r.how = 'Ziel'; r.exitT = x.t; break; }
+    if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = ((x.o) - sig.entry) * sig.dir / risk; r.how = 'Tagesende'; r.exitT = x.t; break; }
+  }
+  if (r.r == null){ r.filled = true; r.how = 'läuft'; return r; }
+  r.mae = Math.max(r.mae, -1);
+  r.r -= (cost || 0) / risk;
+  return r;
+}
+// Rueckrechnung fuer ein Instrument: Signale finden, durchspielen, Ampel zum Signalzeitpunkt bestimmen
+function backtest(p){
+  var c = p.m15, sigs = scanSetups(c, { instr: p.instr, d1: p.d1 }), res = [];
+  var cost = costOf(p.instr, c.length ? c[c.length - 1].c : 0);
+  sigs.forEach(function(s){
+    var sim = simulate(s, c, cost);
+    if (!sim.filled || sim.r == null) return;
+    var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
+    var h1 = p.h1 ? p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300) : null;
+    var d1 = p.d1 ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
+    var chk = scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
+    var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
+    res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, exit: s.entry + s.dir * s.risk * sim.r,
+      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], r: sim.r, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
+  });
+  return res;
+}
+// Gewichte aus Ergebnissen ableiten: hilft eine Bestaetigung (Ø R mit minus ohne), zaehlt sie mehr
+function calibrate(trades, minN){
+  minN = minN || 8;
+  var a = analyzeTrades(trades), w = {}, info = [];
+  a.checks.forEach(function(x){
+    if (!x.yes || !x.no || x.yes.n < minN || x.no.n < minN) return;
+    var d = x.yes.mean - x.no.mean, m = Math.max(0.25, Math.min(2, 1 + d));
+    w[x.key] = Math.round(m * 100) / 100; info.push({ key: x.key, title: x.title, d: d, m: w[x.key], yes: x.yes.n, no: x.no.n });
+  });
+  return { wmul: w, info: info.sort(function(x, y){ return y.d - x.d; }), stats: a };
+}
+// Wie weit lief der Kurs waehrend eines Trades? (in R, aus 15-Min-Kerzen)
+function excursion(t, c){
+  var risk = Math.abs(t.entry - t.stop); if (!(risk > 0) || !c) return null;
+  var off = t.off || 0, end = t.closedAt || Infinity, mae = 0, mfe = 0, any = false;
+  c.forEach(function(x){
+    if (x.t + 15 * 60e3 <= t.at || x.t > end) return;
+    any = true;
+    var adv = ((t.dir > 0 ? x.l : x.h) + off - t.entry) * t.dir / risk, fav = ((t.dir > 0 ? x.h : x.l) + off - t.entry) * t.dir / risk;
+    if (adv < mae) mae = adv; if (fav > mfe) mfe = fav;
+  });
+  return any ? { mae: Math.max(mae, -1.5), mfe: mfe } : null;
+}
+// Hinweise aus MAE/MFE: Stops zu eng? Ziele zu kurz?
+function excursionAdvice(trades){
+  var t = trades.filter(function(x){ return x.mfe != null && tradeR(x) != null; });
+  if (t.length < 8) return null;
+  var losers = t.filter(function(x){ return tradeR(x) < 0; }), winners = t.filter(function(x){ return tradeR(x) > 0; });
+  var med = function(a){ if (!a.length) return null; var s = a.slice().sort(function(x, y){ return x - y; }); return s[Math.floor(s.length / 2)]; };
+  var out = { n: t.length, lossesWithProfit: losers.filter(function(x){ return x.mfe >= 1; }).length, losers: losers.length,
+    winMaeMed: med(winners.map(function(x){ return x.mae; })), winMfeMed: med(winners.map(function(x){ return x.mfe; })), mfeMed: med(t.map(function(x){ return x.mfe; })), tips: [] };
+  if (losers.length >= 3 && out.lossesWithProfit / losers.length >= 0.3) out.tips.push(out.lossesWithProfit + ' von ' + losers.length + ' Verlusttrades lagen vorher mindestens 1R im Plus. Ab 1R den Stop auf Einstand zu ziehen hätte sie gerettet.');
+  if (out.winMaeMed != null && out.winMaeMed > -0.3) out.tips.push('Deine Gewinner liefen im Mittel nur ' + fmtP(-out.winMaeMed, 2) + 'R gegen dich. Dein Stop könnte enger sein, das vergrößert die Position bei gleichem Risiko.');
+  if (out.winMfeMed != null && winners.length >= 4){
+    var rrMed = med(winners.map(function(x){ return tradeR(x); }));
+    if (out.winMfeMed > rrMed * 1.5) out.tips.push('Deine Gewinner liefen im Mittel bis ' + fmtP(out.winMfeMed, 1) + 'R, du nimmst ' + fmtP(rrMed, 1) + 'R mit. Ein Teil der Position mit weiterem Ziel lohnt sich.');
+  }
+  return out;
 }
 // END LOGIC
 

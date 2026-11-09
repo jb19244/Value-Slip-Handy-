@@ -1,0 +1,28 @@
+# Rueckrechnung fuer Trade Check mit echten Kursen der letzten 60 Tage (jeden Sonntag und bei Aenderungen am Scanner)
+name: Rueckrechnung
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 18 * * 0'
+  push:
+    branches: [main]
+    paths: ['trade/index.html', 'dienst/backtest.mjs']
+permissions:
+  contents: write
+concurrency: backtest
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Rechnen
+        run: node dienst/backtest.mjs
+      - name: Speichern
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dienst/backtest.json
+          git diff --cached --quiet || (git commit -m "Rueckrechnung aktualisiert [skip ci]" && git pull --rebase -q && git push)
