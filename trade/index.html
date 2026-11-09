@@ -1021,6 +1021,8 @@ function simulate(sig, c, cost){
 function backtest(p){
   var bar = p.bar || 15 * 60e3, c = p.m15, res = [], o = { instr: p.instr, d1: p.d1, bar: bar, any: p.any };
   var sigs = p.setup === 'all' ? scanAll(c, o) : (SETUPS[p.setup || 'sweep'] || SETUPS.sweep).fn(c, o).map(function(s){ s.type = s.type || p.setup || 'sweep'; return s; });
+  // Variante mit naeherem Ziel (z. B. 0,5 R): hohe Trefferquote, kleinere Gewinne
+  if (p.tgtR) sigs.forEach(function(s){ s.target = s.entry + s.dir * s.risk * p.tgtR; s.rr = p.tgtR; s.exit = null; });
   var cost = costOf(p.instr, c.length ? c[c.length - 1].c : 0), first = {};
   // OCO-Paare (Kauf- und Verkaufsstopp): nur die zuerst ausgeloeste Order zaehlt
   var sims = sigs.map(function(s){ var sim = simulate(s, c, cost); if (s.oco && sim.filled){ var k = s.type + s.oco; if (!first[k] || sim.fillT < first[k]) first[k] = sim.fillT; } return sim; });
