@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 const html = readFileSync(new URL('../trade/index.html', import.meta.url), 'utf8');
 const src = html.split('// BEGIN LOGIC')[1].split('// END LOGIC')[0];
-const L = new Function(src + '; return { INSTRUMENTS, scanUniverse, GRADES, SETUPS, setupName, gradeMatch, gradeName, parseYahoo, backtest, rStats, berlinFast };')();
+const L = new Function(src + '; return { INSTRUMENTS, scanUniverse, marketContext, GRADES, SETUPS, setupName, gradeMatch, gradeName, parseYahoo, backtest, rStats, berlinFast };')();
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; TradeCheck/1.0)' };
 async function chart(sym, iv, rg) {
   for (const host of ['query1', 'query2', 'query1']) {
@@ -17,11 +17,12 @@ async function chart(sym, iv, rg) {
   return [];
 }
 const all = [], info = {};
+const vix = await chart('^VIX', '1d', '5y'), dxy = await chart('DX-Y.NYB', '1d', '5y');
 for (const ins of L.scanUniverse()) {
   const h1 = await chart(ins.y, '60m', '730d'), d1 = await chart(ins.y, '1d', '5y');
   info[ins.k] = { h1: h1.length, d1: d1.length, from: h1.length ? new Date(h1[0].t).toISOString().slice(0, 10) : null };
   if (h1.length < 500) continue;
-  for (const setup of Object.keys(L.SETUPS)) all.push(...L.backtest({ instr: ins, m15: h1, h1, d1, bar: 3600e3, setup, any: true, be: setup === 'sweep' || setup === 'pullback', noCheck: setup !== 'sweep' && setup !== 'pullback' }).map((t) => Object.assign(t, { type: setup })));
+  for (const setup of Object.keys(L.SETUPS)) all.push(...L.backtest({ instr: ins, m15: h1, h1, d1, bar: 3600e3, setup, any: true, be: setup === 'sweep' || setup === 'pullback', noCheck: setup !== 'sweep' && setup !== 'pullback' }).map((t) => { Object.assign(t.sig, L.marketContext(t.sig.day, ins, t.sig.dir, vix, dxy)); return Object.assign(t, { type: setup }); }));
   await new Promise((r) => setTimeout(r, 400));
 }
 const ts = all.map((t) => t.at).sort((a, b) => a - b);
@@ -41,7 +42,10 @@ for (const type of Object.keys(L.SETUPS)) for (const g of L.GRADES) {
 const strong = grades.filter((g) => g.train.n >= 5 && g.test.n >= 10 && g.train.mean > 0.1 && g.test.mean > 0.1 && g.all.lo > 0).sort((a, b) => b.all.mean - a.all.mean);
 const chosen = strong[0] ? strong[0].id : null;
 const aIds = grades.filter((g) => g.id !== chosen && g.all.n >= 50 && g.train.mean > 0 && g.test.mean > 0 && g.all.mean >= 0.1).sort((a, b) => b.all.mean - a.all.mean).map((g) => g.id);
-const good = grades.filter((g) => g.id === chosen || aIds.includes(g.id));
+const good0 = grades.filter((g) => g.id === chosen || aIds.includes(g.id));
+// 60-%-Stufen: in BEIDEN Haelften mindestens 60 % Gewinner und im Plus, mindestens 30 Trades
+const w60 = grades.filter((g) => g.all.n >= 30 && g.train.n >= 10 && g.test.n >= 10 && g.train.win >= 0.6 && g.test.win >= 0.6 && g.train.mean > 0 && g.test.mean > 0).sort((a, b) => b.all.mean - a.all.mean).map((g) => g.id);
+const good = grades.filter((g) => good0.includes(g) || w60.includes(g.id));
 const inA = all.filter((t) => good.some((g) => L.gradeMatch(g.id, t.sig, t.ampel)));
 const inTop = chosen ? all.filter((t) => L.gradeMatch(chosen, t.sig, t.ampel)) : [];
 const byInstr = {}; inA.forEach((t) => { (byInstr[t.instr] = byInstr[t.instr] || []).push(t); });
@@ -49,7 +53,7 @@ const out = {
   at: new Date().toISOString(), data: info, split: new Date(split).toISOString().slice(0, 10), tradingDays: Math.round(tradingDays), markets: Object.keys(info).filter((k) => info[k].h1 >= 500).length,
   n: Object.assign({ all: all.length }, Object.fromEntries(Object.keys(L.SETUPS).map((k) => [k, all.filter((t) => t.type === k).length]))),
   byType: Object.fromEntries(Object.keys(L.SETUPS).map((k) => [k, { name: L.setupName(k), ...st(all.filter((t) => t.type === k)), train: st(all.filter((t) => t.type === k && t.at < split)), test: st(all.filter((t) => t.type === k && t.at >= split)) }])),
-  all: st(all), grades, passed: !!chosen, chosen, second: aIds[0] || null, aIds,
+  all: st(all), grades, passed: !!chosen, chosen, second: aIds[0] || null, aIds, w60, ctx: { vix: vix.length, dxy: dxy.length },
   top: { ...st(inTop), perDay: +(inTop.length / tradingDays).toFixed(2) },
   good: { ...st(inA), perDay: +(inA.length / tradingDays).toFixed(2), train: st(inA.filter((t) => t.at < split)), test: st(inA.filter((t) => t.at >= split)) },
   goodByInstr: Object.fromEntries(Object.entries(byInstr).map(([k, v]) => [k, st(v)]))
@@ -75,5 +79,5 @@ good.forEach((g) => {
     byInstr: Object.fromEntries(Object.entries(sel.reduce((m, t) => { (m[t.instr] = m[t.instr] || []).push(t); return m; }, {})).map(([k, v]) => [k, stR(v, 'r')])) };
 });
 writeFileSync(new URL('backtest-1h.json', import.meta.url), JSON.stringify(out) + '\n');
-console.log(JSON.stringify({ dossier: out.dossier, split: out.split, tradingDays: out.tradingDays, markets: out.markets, n: out.n, all: out.all, chosen, aIds, top: out.top, good: out.good,
+console.log(JSON.stringify({ w60, dossier: out.dossier, split: out.split, tradingDays: out.tradingDays, markets: out.markets, n: out.n, all: out.all, chosen, aIds, top: out.top, good: out.good,
   grades: grades.map((g) => [g.id, g.all.n, g.all.mean, g.train.n, g.train.mean, g.test.n, g.test.mean, g.all.lo, g.perDay]) }, null, 1));

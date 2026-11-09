@@ -649,6 +649,15 @@ function killzones(instr){
   return [[480, 660], [870, 1020]];
 }
 // Tagestendenz aus Tageskerzen: Schluss ueber/unter EMA 50 (nur Tage vor dem Stichtag)
+// Marktumfeld zum Handelstag (Schlusskurse des Vortags): VIX-Niveau und ob der Dollar-Index die Richtung stuetzt
+function usdSign(instr){ if (!instr || instr.type === 'idx' || instr.type === 'stock') return 0; if (instr.ccy[0] === 'USD' && instr.ccy.length > 1) return 1; return instr.quote === 'USD' || (instr.ccy.length === 1 && instr.ccy[0] === 'USD') ? -1 : 0; }
+function marketContext(dayKey, instr, dir, vix, dxy){
+  var out = {}, last = function(d){ var v = null; if (!d) return v; for (var i = 0; i < d.length; i++){ if (berlinFast(d[i].t + 12 * 3600e3).key >= dayKey) break; v = d[i].c; } return v; };
+  var v = last(vix); if (v != null){ out.vix = v; out.vixLo = v < 20; }
+  var us = usdSign(instr);
+  if (us && dxy){ var b = biasAt(dxy, dayKey); if (b) out.usdOk = b * us === dir; }
+  return out;
+}
 function biasAt(d1, dayKey){
   if (!d1 || d1.length < 60) return 0;
   var cl = [], i;
@@ -942,7 +951,15 @@ var GRADES = [
   { id: 'trend_pd', name: 'Trend + Vortages-Sweep', fn: function(s){ return s.withBias && s.prevDay; } },
   { id: 'trend_lon', name: 'Trend + London', fn: function(s){ return s.withBias && s.session === 'London'; } },
   { id: 'trend_ny', name: 'Trend + New York', fn: function(s){ return s.withBias && s.session === 'New York'; } },
-  { id: 'aplus', name: 'Trend + Liquiditätsziel + Verdrängung + Ampel grün', fn: function(s, a){ return s.withBias && s.liqTarget && s.gapAtr >= 0.6 && a === 'gruen'; } }
+  { id: 'aplus', name: 'Trend + Liquiditätsziel + Verdrängung + Ampel grün', fn: function(s, a){ return s.withBias && s.liqTarget && s.gapAtr >= 0.6 && a === 'gruen'; } },
+  // Marktumfeld wie bei Banken: Volatilitaets-Regime (VIX) und Dollar-Richtung (Dollar-Index) als Bestaetigung
+  { id: 'trend_vix', name: 'Trend + ruhiger Markt (VIX unter 20)', fn: function(s){ return s.withBias && s.vixLo === true; } },
+  { id: 'trend_liq_vix', name: 'Trend + Liquiditätsziel + VIX unter 20', fn: function(s){ return s.withBias && s.liqTarget && s.vixLo === true; } },
+  { id: 'trend_liq_rr_vix', name: 'Trend + Liquiditätsziel + CRV ab 2,5 + VIX unter 20', fn: function(s){ return s.withBias && s.liqTarget && s.rr >= 2.5 && s.vixLo === true; } },
+  { id: 'trend_usd', name: 'Trend + Dollar-Index bestätigt', fn: function(s){ return s.withBias && s.usdOk === true; } },
+  { id: 'trend_liq_usd', name: 'Trend + Liquiditätsziel + Dollar-Index bestätigt', fn: function(s){ return s.withBias && s.liqTarget && s.usdOk === true; } },
+  { id: 'trend_liq_rr_usd', name: 'Trend + Liquiditätsziel + CRV ab 2,5 + Dollar-Index bestätigt', fn: function(s){ return s.withBias && s.liqTarget && s.rr >= 2.5 && s.usdOk === true; } },
+  { id: 'trend_vixhi', name: 'Trend + unruhiger Markt (VIX ab 20)', fn: function(s){ return s.withBias && s.vixLo === false; } }
 ];
 function gradeById(id){ return GRADES.filter(function(g){ return g.id === id; })[0] || null; }
 // Stufe mit Setup-Typ, z. B. 'pullback:trend_liq' (ohne Typ: beide Setups)
