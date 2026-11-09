@@ -917,7 +917,8 @@ function scanGap(c, opt){
 }
 // 6) NR7-Ausbruch: Der Vortag hatte die kleinste Spanne der letzten 7 Tage; Stopp-Orders an seinem Hoch und Tief,
 //    Stop auf der anderen Seite, Ziel 2R.
-function scanNR7(c, opt){
+function scanNR7(c, opt){ return scanNR7raw(c, opt).map(function(s){ s.type = 'nr7'; return s; }); }
+function scanNR7raw(c, opt){
   opt = opt || {}; var instr = opt.instr, out = []; if (c.length < 40) return out;
   var P = prep(c, opt), td = P.order.filter(function(k){ var w = P.days[k].wd; return w !== 0 && w !== 6; });
   for (var x = 7; x < td.length; x++){
@@ -942,10 +943,99 @@ var SETUPS = {
   donch: { name: 'Donchian-Ausbruch', fn: scanDonchian },
   rsi2: { name: 'RSI-2 (Connors)', fn: scanRSI2 },
   gap: { name: 'Gap-Fade', fn: scanGap },
-  nr7: { name: 'NR7-Ausbruch', fn: scanNR7 }
+  nr7: { name: 'NR7-Ausbruch', fn: scanNR7 },
+  nr7r1: { name: 'NR7-Ausbruch (Ziel 1 R)', fn: function(c, o){ return scanNR7(c, o).map(function(s){ s.type = 'nr7r1'; s.target = s.entry + s.dir * s.risk; s.rr = 1; return s; }); } }
 };
 function setupName(type){ return (SETUPS[type || 'sweep'] || {}).name || type; }
 function scanAll(c, opt){ var out = []; Object.keys(SETUPS).forEach(function(k){ var o = Object.assign({}, opt, { any: true }); out = out.concat(SETUPS[k].fn(c, o).map(function(s){ s.type = s.type || 'sweep'; return s; })); }); return out; }
+// ================= Smart Money, Elliott und Fibonacci automatisch =================
+// Zickzack mit ATR-Schwelle: bestaetigte Wendepunkte + offener letzter Schenkel
+function zigzag(c, mult){
+  var a = atrSeries(c), piv = [], trend = 0, hi = { i: 0, p: c.length ? c[0].h : 0 }, lo = { i: 0, p: c.length ? c[0].l : 0 };
+  for (var i = 1; i < c.length; i++){
+    var th = (a[i] || (c[i].h - c[i].l)) * (mult || 2.5);
+    if (trend >= 0 && c[i].h > hi.p) hi = { i: i, p: c[i].h };
+    if (trend <= 0 && c[i].l < lo.p) lo = { i: i, p: c[i].l };
+    if (trend >= 0 && hi.i < i && hi.p - c[i].l >= th){ piv.push({ i: hi.i, p: hi.p, type: 'H', t: c[hi.i].t }); trend = -1; lo = { i: i, p: c[i].l }; }
+    else if (trend <= 0 && lo.i < i && c[i].h - lo.p >= th){ piv.push({ i: lo.i, p: lo.p, type: 'L', t: c[lo.i].t }); trend = 1; hi = { i: i, p: c[i].h }; }
+  }
+  var last = trend > 0 ? { i: hi.i, p: hi.p, type: 'H', open: true } : (trend < 0 ? { i: lo.i, p: lo.p, type: 'L', open: true } : null);
+  if (last) last.t = c[last.i].t;
+  return { piv: piv, last: last };
+}
+// Fibonacci des letzten abgeschlossenen Impulses (A -> B), Retracements, OTE und Ausdehnungen
+function autoFib(c, zz){
+  zz = zz || zigzag(c); var pv = zz.piv; if (pv.length < 1 || (pv.length < 2 && !zz.last)) return null;
+  // Impuls = der letzte grosse Schenkel; ist der offene Schenkel nur ein Ruecksetzer (< 78,6 %), gilt der davor
+  var A, B, prev = pv.length >= 2 ? Math.abs(pv[pv.length - 1].p - pv[pv.length - 2].p) : 0, open = zz.last ? Math.abs(zz.last.p - pv[pv.length - 1].p) : 0;
+  if (zz.last && (pv.length < 2 || open >= prev * 0.786)){ A = pv[pv.length - 1]; B = zz.last; } else { A = pv[pv.length - 2]; B = pv[pv.length - 1]; }
+  var leg = B.p - A.p, dir = leg > 0 ? 1 : -1;
+  return { a: A, b: B, dir: dir, leg: Math.abs(leg),
+    retr: [0.382, 0.5, 0.618, 0.705, 0.786].map(function(f){ return { f: f, p: B.p - leg * f }; }),
+    ote: [Math.min(B.p - leg * 0.62, B.p - leg * 0.79), Math.max(B.p - leg * 0.62, B.p - leg * 0.79)],
+    ext: [1.272, 1.618, 2].map(function(f){ return { f: f, p: A.p + leg * f }; }), eq: (A.p + B.p) / 2 };
+}
+// Elliott: laengste regelkonforme Zaehlung, die am juengsten Punkt endet (Welle 2 nie hinter Start, Welle 3 nie die kuerzeste, Welle 4 nicht im Bereich von Welle 1)
+function autoElliott(c, zz){
+  zz = zz || zigzag(c, 2); var pts = zz.piv.slice(-9); if (zz.last) pts.push(zz.last);
+  var best = null;
+  for (var s0 = 0; s0 < pts.length - 2; s0++){
+    var P = pts.slice(s0), d = P[1].p > P[0].p ? 1 : -1, ok = 1;
+    for (var k = 1; k < P.length && k <= 8; k++){
+      var mv = (P[k].p - P[k - 1].p) * d, impulse = k <= 5 ? k % 2 === 1 : k === 7;
+      if (impulse ? mv <= 0 : mv >= 0){ break; }
+      if (k === 2 && (P[2].p - P[0].p) * d <= 0) break;
+      if (k === 3){ var w1 = (P[1].p - P[0].p) * d, w3 = (P[3].p - P[2].p) * d; if ((P[3].p - P[1].p) * d <= 0) break; }
+      if (k === 4 && (P[4].p - P[1].p) * d <= 0) break;
+      if (k === 5){ var a1 = (P[1].p - P[0].p) * d, a3 = (P[3].p - P[2].p) * d, a5 = (P[5].p - P[4].p) * d; if (a3 < a1 && a3 < a5) break; }
+      ok = k;
+    }
+    if (s0 + ok === pts.length - 1 && ok >= 2 && (!best || ok > best.n)) best = { start: s0, n: ok, d: d };
+  }
+  if (!best) return null;
+  var P2 = pts.slice(best.start, best.start + best.n + 1), lastOpen = !!P2[P2.length - 1].open;
+  var labels = P2.map(function(q, k){ return { i: q.i, p: q.p, t: q.t, l: k <= 5 ? String(k) : 'ABC'[k - 6], open: !!q.open }; }).slice(1);
+  var n = best.n, phase, next;
+  // n = Anzahl Wellen bis zum juengsten Punkt; ist der letzte Punkt offen, laeuft diese Welle noch
+  var w = lastOpen ? n : n + 1;
+  phase = w > 8 ? 'ABC-Korrektur abgeschlossen' : 'Welle ' + (w <= 5 ? w : 'ABC'[w - 6]) + (lastOpen ? ' läuft' : ' beginnt');
+  next = w === 2 || w === 4 ? 'Korrektur. Danach ' + (w === 2 ? 'Welle 3, meist die stärkste' : 'Welle 5') + ' in Richtung ' + (best.d > 0 ? 'oben' : 'unten') + '.' : (w === 3 || w === 5 ? 'Impulswelle in Richtung ' + (best.d > 0 ? 'oben' : 'unten') + '.' : 'Nach fünf Wellen folgt meist eine ABC-Korrektur.');
+  if (w === 6 || w === 8) next = 'Korrektur gegen den Impuls (Welle ' + (w === 6 ? 'A' : 'C') + ').'; if (w === 7) next = 'Gegenbewegung B, danach meist Welle C.'; if (w > 8) next = 'Nach der ABC-Korrektur beginnt oft ein neuer Impuls in Richtung ' + (best.d > 0 ? 'oben' : 'unten') + '.';
+  return { dir: best.d, wave: w, phase: phase, next: next, labels: labels, impulseNow: (w === 3 || w === 5 || w === 7) ? best.d : ((w === 2 || w === 4 || w === 6 || w === 8) ? -best.d : (w > 8 ? best.d : 0)) };
+}
+// Order Blocks: letzte Gegenkerze vor einem Strukturbruch, noch nicht durchlaufen
+function orderBlocks(c, maxN){
+  var st = structure(c, 2), out = [];
+  st.events.slice(-8).forEach(function(e){
+    var d = e.dir, j;
+    for (j = e.i - 1; j >= Math.max(0, e.i - 12); j--) if ((c[j].c - c[j].o) * d < 0) break;
+    if (j < 0 || j < e.i - 12) return;
+    var z = { i: j, lo: c[j].l, hi: c[j].h, dir: d, kind: e.kind, t: c[j].t }, broken = false;
+    for (var q = e.i + 1; q < c.length; q++) if (d > 0 ? c[q].c < z.lo : c[q].c > z.hi){ broken = true; break; }
+    if (!broken) out.push(z);
+  });
+  return out.slice(-(maxN || 3));
+}
+// Konfluenz eines Signals: Smart Money, Elliott und Fibonacci zusammen
+function confluence(sig, c){
+  if (!c || c.length < 40) return null;
+  var a = atrSeries(c), at = a[c.length - 1] || (c[c.length - 1].h - c[c.length - 1].l);
+  var zz = zigzag(c), fib = autoFib(c, zz), ew = autoElliott(c, zigzag(c, 2)), obs = orderBlocks(c, 4), d = sig.dir, e = sig.entry;
+  var out = { items: [] }, add = function(k, ok, txt){ out[k] = !!ok; out.items.push({ k: k, ok: !!ok, txt: txt }); };
+  var imp = fib && fib.dir === d ? fib : null;
+  add('ote', imp && e >= imp.ote[0] - at * 0.1 && e <= imp.ote[1] + at * 0.1, imp ? 'Einstieg ' + (e >= imp.ote[0] - at * 0.1 && e <= imp.ote[1] + at * 0.1 ? 'in' : 'außerhalb') + ' der OTE-Zone (62–79 %)' : 'Kein passender Impuls für die OTE');
+  add('pd', fib && (d > 0 ? e <= fib.eq : e >= fib.eq), d > 0 ? (fib && e <= fib.eq ? 'Kauf im Discount' : 'Kauf im Premium') : (fib && e >= fib.eq ? 'Verkauf im Premium' : 'Verkauf im Discount'));
+  var ob = obs.filter(function(z){ return z.dir === d && e >= z.lo - at * 0.15 && e <= z.hi + at * 0.15; })[0];
+  add('ob', !!ob, ob ? 'Einstieg am Order Block (' + ob.kind + ')' : 'Kein Order Block am Einstieg');
+  add('fvgz', !!sig.fvg || !!(fvgs(c, 40).filter(function(g){ return g.dir === d && e >= g.lo && e <= g.hi; })[0]), 'Einstieg ' + (sig.fvg ? 'im' : 'ohne') + ' Fair Value Gap');
+  var ext = fib ? fib.ext.concat([{ f: 1, p: fib.b.p }]) : [], hit = ext.filter(function(x){ return Math.abs(x.p - sig.target) <= Math.max(sig.risk * 0.3, at * 0.3) && (x.p - e) * d > 0; })[0];
+  add('fib', !!hit, hit ? 'Ziel an Fibonacci ' + (hit.f === 1 ? 'Hoch/Tief B' : String(hit.f * 100).replace('.', ',') + ' %') : 'Ziel an keiner Fibonacci-Marke');
+  var ewOk = ew && ((ew.impulseNow === d && (ew.wave === 3 || ew.wave === 5)) || (ew.dir === d && (ew.wave === 2 || ew.wave === 4) && !ew.labels[ew.labels.length - 1].open) || (ew.dir === d && (ew.wave === 3 || ew.wave === 5)));
+  add('ew', ewOk, ew ? 'Elliott: ' + ew.phase + (ewOk ? ', passt zur Richtung' : ', passt nicht') : 'Keine eindeutige Elliott-Zählung');
+  out.score = out.items.filter(function(x){ return x.ok; }).length; out.max = out.items.length;
+  out.fib = fib; out.ew = ew; out.obs = obs;
+  return out;
+}
 // ---- Qualitaetsstufen: feste Liste, die Auswahl trifft die Rueckrechnung (Jahr 1), geprueft wird auf Jahr 2
 var GRADES = [
   { id: 'alle', name: 'Alle Signale', fn: function(s, a){ return true; } },
@@ -966,7 +1056,13 @@ var GRADES = [
   { id: 'trend_usd', name: 'Trend + Dollar-Index bestätigt', fn: function(s){ return s.withBias && s.usdOk === true; } },
   { id: 'trend_liq_usd', name: 'Trend + Liquiditätsziel + Dollar-Index bestätigt', fn: function(s){ return s.withBias && s.liqTarget && s.usdOk === true; } },
   { id: 'trend_liq_rr_usd', name: 'Trend + Liquiditätsziel + CRV ab 2,5 + Dollar-Index bestätigt', fn: function(s){ return s.withBias && s.liqTarget && s.rr >= 2.5 && s.usdOk === true; } },
-  { id: 'trend_vixhi', name: 'Trend + unruhiger Markt (VIX ab 20)', fn: function(s){ return s.withBias && s.vixLo === false; } }
+  { id: 'trend_vixhi', name: 'Trend + unruhiger Markt (VIX ab 20)', fn: function(s){ return s.withBias && s.vixLo === false; } },
+  { id: 'trend_conf3', name: 'Trend + mind. 3 von 6 SMC/Elliott/Fib', fn: function(s){ return s.withBias && s.conf >= 3; } },
+  { id: 'trend_conf4', name: 'Trend + mind. 4 von 6 SMC/Elliott/Fib', fn: function(s){ return s.withBias && s.conf >= 4; } },
+  { id: 'trend_ote', name: 'Trend + Einstieg in der OTE', fn: function(s){ return s.withBias && s.cOte === true; } },
+  { id: 'trend_ew', name: 'Trend + Elliott passt', fn: function(s){ return s.withBias && s.cEw === true; } },
+  { id: 'trend_ob', name: 'Trend + Order Block', fn: function(s){ return s.withBias && s.cOb === true; } },
+  { id: 'trend_vixhi_conf3', name: 'Trend + VIX ab 20 + mind. 3 SMC/Elliott/Fib', fn: function(s){ return s.withBias && s.vixLo === false && s.conf >= 3; } }
 ];
 function gradeById(id){ return GRADES.filter(function(g){ return g.id === id; })[0] || null; }
 // Stufe mit Setup-Typ, z. B. 'pullback:trend_liq' (ohne Typ: beide Setups)
@@ -1022,6 +1118,7 @@ function backtest(p){
   var bar = p.bar || 15 * 60e3, c = p.m15, res = [], o = { instr: p.instr, d1: p.d1, bar: bar, any: p.any };
   var sigs = p.setup === 'all' ? scanAll(c, o) : (SETUPS[p.setup || 'sweep'] || SETUPS.sweep).fn(c, o).map(function(s){ s.type = s.type || p.setup || 'sweep'; return s; });
   // Variante mit naeherem Ziel (z. B. 0,5 R): hohe Trefferquote, kleinere Gewinne
+  if (p.conf) sigs.forEach(function(s){ var cf = confluence(s, c.slice(Math.max(0, s.i - 300), s.i + 1)); if (cf){ s.conf = cf.score; s.cOte = cf.ote; s.cEw = cf.ew; s.cOb = cf.ob; s.cFib = cf.fib; s.cPd = cf.pd; } });
   if (p.tgtR) sigs.forEach(function(s){ s.target = s.entry + s.dir * s.risk * p.tgtR; s.rr = p.tgtR; s.exit = null; });
   var cost = costOf(p.instr, c.length ? c[c.length - 1].c : 0), first = {};
   // OCO-Paare (Kauf- und Verkaufsstopp): nur die zuerst ausgeloeste Order zaehlt
