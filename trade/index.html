@@ -803,6 +803,133 @@ function scanPullbacks(c, opt){
   }
   return out;
 }
+// ================= Klassische Profi-Strategien (alle auf 1-Std-Kerzen, Ausstieg spaetestens zum Tagesende) =================
+function atrSeries(c){ var a = [], trs = 0; for (var i = 0; i < c.length; i++){ var tr = i ? Math.max(c[i].h - c[i].l, Math.abs(c[i].h - c[i - 1].c), Math.abs(c[i].l - c[i - 1].c)) : c[i].h - c[i].l; trs = i < 14 ? trs + tr : trs; a.push(i < 13 ? null : (i === 13 ? trs / 14 : (a[i - 1] * 13 + tr) / 14)); } return a; }
+function rsiSeries(c, n){ var out = [], g = 0, l = 0; for (var i = 0; i < c.length; i++){ if (!i){ out.push(null); continue; } var d = c[i].c - c[i - 1].c, up = Math.max(d, 0), dn = Math.max(-d, 0); if (i <= n){ g += up / n; l += dn / n; out.push(i < n ? null : (l === 0 ? 100 : 100 - 100 / (1 + g / l))); } else { g = (g * (n - 1) + up) / n; l = (l * (n - 1) + dn) / n; out.push(l === 0 ? 100 : 100 - 100 / (1 + g / l)); } } return out; }
+function sessionMarket(instr){ return instr && (instr.type === 'stock' || instr.type === 'idx'); }
+// Gemeinsame Vorbereitung: Berlin-Zeit, ATR, Tage, Tagestendenz
+function prep(c, opt){
+  var bp = c.map(function(x){ return berlinFast(x.t); }), a = atrSeries(c), days = {}, order = [];
+  for (var i = 0; i < c.length; i++){ var k = bp[i].key, d = days[k]; if (!d){ d = days[k] = { first: i, last: i, hi: -Infinity, lo: Infinity, ahi: -Infinity, alo: Infinity, wd: bp[i].wd }; order.push(k); } d.last = i; if (c[i].h > d.hi) d.hi = c[i].h; if (c[i].l < d.lo) d.lo = c[i].l; if (bp[i].min < 480){ if (c[i].h > d.ahi) d.ahi = c[i].h; if (c[i].l < d.alo) d.alo = c[i].l; } }
+  var prevOf = {}, last = null; order.forEach(function(k){ prevOf[k] = last; if (days[k].wd !== 0 && days[k].wd !== 6) last = k; });
+  var bc = {}; var bias = function(day){ if (!bc[day]) bc[day] = biasAt(opt.d1, day) || 'x'; return bc[day] === 'x' ? 0 : bc[day]; };
+  return { bp: bp, a: a, days: days, order: order, prevOf: prevOf, bias: bias, bar: opt.bar || 3600e3, from: Math.max(20, opt.from || 0) };
+}
+function endOfDay(P, c, i){ var d = P.days[P.bp[i].key]; return c[d.last].t + P.bar; }
+function mk(P, instr, c, i, type, name, dir, mode, entry, stop, target, extra){
+  var risk = (entry - stop) * dir; if (!(risk > 0)) return null;
+  var day = P.bp[i].key, b = P.bias(day);
+  return Object.assign({ k: instr && instr.k, type: type, i: i, t: c[i].t + P.bar, day: day, dir: dir, mode: mode, entry: entry, stop: stop, target: target, rr: (target - entry) * dir / risk, risk: risk,
+    sweep: name, level: entry, liqTarget: false, bias: b, withBias: b === dir, fvg: null, expires: endOfDay(P, c, i), gapAtr: 0, depthAtr: 0, session: P.bp[i].min < 720 ? 'London' : 'New York', prevDay: false }, extra || {});
+}
+// 1) Opening Range Breakout (Toby Crabel): Spanne der ersten Handelsstunde, Kauf-/Verkaufsstopp knapp darueber/darunter,
+//    Stop auf der anderen Seite der Spanne, Ziel 2R. Fuer Indizes und Aktien (Daten nur zur Boersenzeit).
+function scanORB(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = []; if (!sessionMarket(instr) || c.length < 40) return out;
+  var P = prep(c, opt);
+  P.order.forEach(function(k){
+    var d = P.days[k], i = d.first; if (i < P.from || d.wd === 0 || d.wd === 6 || i + 1 > d.last) return;
+    var a = P.a[i]; if (!a) return;
+    var hi = c[i].h, lo = c[i].l, rng = hi - lo, buf = a * 0.05;
+    if (rng < a * 0.4 || rng > a * 3) return;
+    [1, -1].forEach(function(dir){
+      var e = dir > 0 ? hi + buf : lo - buf, st = dir > 0 ? lo - buf : hi + buf, r = Math.abs(e - st);
+      var s = mk(P, instr, c, i, 'orb', 'Eröffnungsspanne', dir, 'stop', e, st, e + dir * r * 2, { oco: k }); if (s) out.push(s);
+    });
+  });
+  return out;
+}
+// 2) London-Breakout: Asien-Spanne (0–8 Uhr), Stopp-Orders an Hoch und Tief ab 8 Uhr, Stop in der Mitte der Spanne, Ziel 2R, bis 12 Uhr.
+function scanLBO(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = []; if (sessionMarket(instr) || c.length < 40) return out;
+  var P = prep(c, opt);
+  for (var i = P.from; i < c.length; i++){
+    var b = P.bp[i]; if (b.min !== 480 || b.wd === 0 || b.wd === 6) continue;
+    var d = P.days[b.key], a = P.a[i - 1]; if (!a || !isFinite(d.alo)) continue;
+    var hi = d.ahi, lo = d.alo, rng = hi - lo, mid = (hi + lo) / 2;
+    if (rng < a * 1 || rng > a * 6) continue;
+    var j = i - 1; // Signal mit Schluss der letzten Asien-Kerze
+    [1, -1].forEach(function(dir){
+      var e = dir > 0 ? hi + a * 0.05 : lo - a * 0.05, r = Math.abs(e - mid);
+      var s = mk(P, instr, c, j, 'lbo', 'Asien-Spanne', dir, 'stop', e, mid, e + dir * r * 2, { oco: b.key, expires: c[i].t + 4 * 3600e3 }); if (s) out.push(s);
+    });
+  }
+  return out;
+}
+// 3) Donchian/Turtle-Ausbruch: Schluss ueber dem 20-Std-Hoch (bzw. unter dem Tief) in der Hauptzeit, Stop 2 ATR, Ziel 3 ATR.
+function scanDonchian(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = [], kz = killzones(instr); if (c.length < 40) return out;
+  var P = prep(c, opt), done = {};
+  for (var i = Math.max(21, P.from); i < c.length; i++){
+    var b = P.bp[i]; if (b.wd === 0 || b.wd === 6 || !kz.some(function(z){ return b.min >= z[0] && b.min < z[1]; })) continue;
+    var a = P.a[i]; if (!a) continue;
+    var hh = -Infinity, ll = Infinity; for (var q = i - 20; q < i; q++){ hh = Math.max(hh, c[q].h); ll = Math.min(ll, c[q].l); }
+    var dir = c[i].c > hh ? 1 : (c[i].c < ll ? -1 : 0); if (!dir || done[b.key + dir]) continue; done[b.key + dir] = 1;
+    var s = mk(P, instr, c, i, 'donch', '20-Std-Ausbruch', dir, 'market', c[i].c, c[i].c - dir * 2 * a, c[i].c + dir * 3 * a); if (s) out.push(s);
+  }
+  return out;
+}
+// 4) RSI-2 nach Larry Connors: im Tagestrend nach kurzem Ruecksetzer (RSI(2) unter 10 bzw. ueber 90) kaufen/verkaufen,
+//    Ausstieg, sobald der Kurs ueber/unter dem 5er-Schnitt schliesst; Notstop 2 ATR.
+function scanRSI2(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = [], kz = killzones(instr); if (c.length < 40) return out;
+  var P = prep(c, opt), rs = rsiSeries(c, 2), done = {};
+  for (var i = P.from; i < c.length; i++){
+    var b = P.bp[i]; if (b.wd === 0 || b.wd === 6 || !kz.some(function(z){ return b.min >= z[0] && b.min < z[1]; })) continue;
+    var a = P.a[i], r = rs[i]; if (!a || r == null) continue;
+    var dir = r < 10 ? 1 : (r > 90 ? -1 : 0); if (!dir || done[b.key + dir]) continue;
+    var bias = P.bias(b.key); if (bias !== dir && !opt.any) continue; done[b.key + dir] = 1;
+    var s = mk(P, instr, c, i, 'rsi2', 'RSI-2-Rücksetzer', dir, 'market', c[i].c, c[i].c - dir * 2 * a, c[i].c + dir * 4 * a, { exit: 'sma5' }); if (s) out.push(s);
+  }
+  return out;
+}
+// 5) Gap-Fade: Indizes/Aktien eroeffnen mit Luecke zum Vortagesschluss; bleibt die Luecke in der ersten Stunde offen,
+//    Handel Richtung Vortagesschluss (Ziel), Stop hinter dem Extrem der ersten Stunde.
+function scanGap(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = []; if (!sessionMarket(instr) || c.length < 40) return out;
+  var P = prep(c, opt);
+  P.order.forEach(function(k){
+    var d = P.days[k], i = d.first, pk = P.prevOf[k]; if (!pk || i < P.from || d.wd === 0 || d.wd === 6) return;
+    var prevClose = c[P.days[pk].last].c, a = P.a[i - 1] || P.a[i]; if (!a) return;
+    var gap = c[i].o - prevClose, dir = gap > 0 ? -1 : 1;
+    if (Math.abs(gap) < a * 1 || Math.abs(gap) > a * 5) return;
+    if ((c[i].c - prevClose) * -dir <= 0) return; // Luecke in der ersten Stunde schon zu
+    var st = dir < 0 ? c[i].h + a * 0.1 : c[i].l - a * 0.1;
+    var s = mk(P, instr, c, i, 'gap', 'Eröffnungslücke', dir, 'market', c[i].c, st, prevClose); if (s && s.rr >= 1) out.push(s);
+  });
+  return out;
+}
+// 6) NR7-Ausbruch: Der Vortag hatte die kleinste Spanne der letzten 7 Tage; Stopp-Orders an seinem Hoch und Tief,
+//    Stop auf der anderen Seite, Ziel 2R.
+function scanNR7(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = []; if (c.length < 40) return out;
+  var P = prep(c, opt), td = P.order.filter(function(k){ var w = P.days[k].wd; return w !== 0 && w !== 6; });
+  for (var x = 7; x < td.length; x++){
+    var k = td[x], y = P.days[td[x - 1]], d = P.days[k], i = d.first; if (i < P.from) continue;
+    var r = y.hi - y.lo, nr = true;
+    for (var q = 2; q <= 7; q++){ var z = P.days[td[x - q]]; if (z.hi - z.lo <= r){ nr = false; break; } }
+    if (!nr) continue;
+    var a = P.a[i]; if (!a || r < a * 1) continue;
+    var j = Math.max(0, i - 1);
+    [1, -1].forEach(function(dir){
+      var e = dir > 0 ? y.hi : y.lo, st = dir > 0 ? y.lo : y.hi;
+      var s = mk(P, instr, c, j, 'nr7', 'NR7-Ausbruch', dir, 'stop', e, st, e + dir * r * 2, { oco: k, day: k, expires: c[d.last].t + P.bar }); if (s) out.push(s);
+    });
+  }
+  return out;
+}
+var SETUPS = {
+  sweep: { name: 'Liquidity Sweep', fn: function(c, o){ return scanSetups(c, o); } },
+  pullback: { name: 'Trend-Pullback', fn: function(c, o){ return scanPullbacks(c, o); } },
+  orb: { name: 'Opening Range Breakout', fn: scanORB },
+  lbo: { name: 'London-Breakout', fn: scanLBO },
+  donch: { name: 'Donchian-Ausbruch', fn: scanDonchian },
+  rsi2: { name: 'RSI-2 (Connors)', fn: scanRSI2 },
+  gap: { name: 'Gap-Fade', fn: scanGap },
+  nr7: { name: 'NR7-Ausbruch', fn: scanNR7 }
+};
+function setupName(type){ return (SETUPS[type || 'sweep'] || {}).name || type; }
+function scanAll(c, opt){ var out = []; Object.keys(SETUPS).forEach(function(k){ var o = Object.assign({}, opt, { any: true }); out = out.concat(SETUPS[k].fn(c, o).map(function(s){ s.type = s.type || 'sweep'; return s; })); }); return out; }
 // ---- Qualitaetsstufen: feste Liste, die Auswahl trifft die Rueckrechnung (Jahr 1), geprueft wird auf Jahr 2
 var GRADES = [
   { id: 'alle', name: 'Alle Signale', fn: function(s, a){ return true; } },
@@ -825,46 +952,61 @@ function gradeMatch(id, sig, ampel){
   if (!g || (type && (sig.type || 'sweep') !== type)) return false;
   return !!g.fn(sig, ampel);
 }
-function gradeName(id){ var p = String(id || '').split(':'), g = gradeById(p.length > 1 ? p[1] : p[0]); return (p.length > 1 ? (p[0] === 'pullback' ? 'Trend-Pullback' : 'Liquidity Sweep') + ': ' : '') + (g ? g.name : id); }
+function gradeName(id){ var p = String(id || '').split(':'), g = gradeById(p.length > 1 ? p[1] : p[0]); return (p.length > 1 ? setupName(p[0]) + ': ' : '') + (g ? g.name : id); }
 // Ein Signal auf den folgenden Kerzen durchspielen (konservativ: Stop und Ziel in derselben Kerze = Stop)
 function simulate(sig, c, cost){
-  var fill = -1, n = c.length, r = { filled: false, r: null, mae: 0, mfe: 0, how: 'offen' };
-  var start = sig.i + 1, risk = sig.risk;
-  for (var i = start; i < n && c[i].t < sig.expires; i++){
+  var fill = -1, n = c.length, r = { filled: false, r: null, mae: 0, mfe: 0, how: 'offen' }, mode = sig.mode || 'limit';
+  var start = sig.i + 1, entry = sig.entry, i;
+  for (i = start; i < n && c[i].t < sig.expires; i++){
+    if (mode === 'market'){ fill = i; entry = c[i].o; break; }
+    if (mode === 'stop'){
+      if (sig.dir > 0 ? c[i].h >= sig.entry : c[i].l <= sig.entry){ fill = i; entry = sig.dir > 0 ? Math.max(sig.entry, c[i].o) : Math.min(sig.entry, c[i].o); break; }
+      continue;
+    }
     if (sig.dir > 0 ? c[i].h >= sig.target : c[i].l <= sig.target){ r.how = 'verpasst'; return r; }
     if (sig.dir > 0 ? c[i].l <= sig.entry : c[i].h >= sig.entry){ fill = i; break; }
   }
   if (fill < 0){ if (i < n) r.how = 'nicht gefüllt'; return r; }
-  r.filled = true; r.fillT = c[fill].t;
-  var day = berlinFast(c[fill].t).key;
+  var risk = (entry - sig.stop) * sig.dir;
+  if (!(risk > 0)){ r.how = 'ungültig'; return r; }
+  r.filled = true; r.fillT = c[fill].t; r.entry = entry;
+  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk;
   for (i = fill; i < n; i++){
     var x = c[i], bpx = berlinFast(x.t);
-    var adv = ((sig.dir > 0 ? x.l : x.h) - sig.entry) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - sig.entry) * sig.dir / risk;
-    if (i === fill) fav = Math.max(0, ((x.c - sig.entry) * sig.dir) / risk);
+    var adv = ((sig.dir > 0 ? x.l : x.h) - entry) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - entry) * sig.dir / risk;
+    if (i === fill && mode === 'limit') fav = Math.max(0, ((x.c - entry) * sig.dir) / risk);
     if (adv < r.mae) r.mae = adv;
     if (adv <= -1){ r.r = -1; r.how = 'Stop'; r.exitT = x.t; break; }
     if (fav > r.mfe) r.mfe = fav;
-    if (i > fill && fav >= sig.rr){ r.r = sig.rr; r.how = 'Ziel'; r.exitT = x.t; break; }
-    if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = ((x.o) - sig.entry) * sig.dir / risk; r.how = 'Tagesende'; r.exitT = x.t; break; }
+    if ((i > fill || mode !== 'limit') && fav >= rr){ r.r = rr; r.how = 'Ziel'; r.exitT = x.t; break; }
+    if (sig.exit === 'sma5' && i >= 4){
+      var m5 = (c[i].c + c[i - 1].c + c[i - 2].c + c[i - 3].c + c[i - 4].c) / 5;
+      if ((x.c - m5) * sig.dir > 0){ r.r = (x.c - entry) * sig.dir / risk; r.how = '5er-Schnitt'; r.exitT = x.t + 3600e3; break; }
+    }
+    if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = ((i > fill ? x.o : x.c) - entry) * sig.dir / risk; r.how = 'Tagesende'; r.exitT = x.t; break; }
   }
   if (r.r == null){ r.filled = true; r.how = 'läuft'; return r; }
   r.mae = Math.max(r.mae, -1);
-  r.r -= (cost || 0) / risk;
+  r.r -= (cost || 0) * (mode === 'limit' ? 1 : 1.5) / risk;
   return r;
 }
 // Rueckrechnung fuer ein Instrument: Signale finden, durchspielen, Ampel zum Signalzeitpunkt bestimmen
 function backtest(p){
-  var bar = p.bar || 15 * 60e3, c = p.m15, sigs = (p.setup === 'pullback' ? scanPullbacks : scanSetups)(c, { instr: p.instr, d1: p.d1, bar: bar, any: p.any }), res = [];
-  var cost = costOf(p.instr, c.length ? c[c.length - 1].c : 0);
-  sigs.forEach(function(s){
-    var sim = simulate(s, c, cost);
+  var bar = p.bar || 15 * 60e3, c = p.m15, res = [], o = { instr: p.instr, d1: p.d1, bar: bar, any: p.any };
+  var sigs = p.setup === 'all' ? scanAll(c, o) : (SETUPS[p.setup || 'sweep'] || SETUPS.sweep).fn(c, o).map(function(s){ s.type = s.type || p.setup || 'sweep'; return s; });
+  var cost = costOf(p.instr, c.length ? c[c.length - 1].c : 0), first = {};
+  // OCO-Paare (Kauf- und Verkaufsstopp): nur die zuerst ausgeloeste Order zaehlt
+  var sims = sigs.map(function(s){ var sim = simulate(s, c, cost); if (s.oco && sim.filled){ var k = s.type + s.oco; if (!first[k] || sim.fillT < first[k]) first[k] = sim.fillT; } return sim; });
+  sigs.forEach(function(s, ix){
+    var sim = sims[ix];
     if (!sim.filled || sim.r == null) return;
+    if (s.oco && sim.fillT !== first[s.type + s.oco]) return;
     var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
     var h1 = p.h1 ? (p.h1 === p.m15 ? c.slice(Math.max(0, s.i - 300), s.i + 1) : p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300)) : null;
     var d1 = p.d1 ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
     var chk = scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
-    res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, exit: s.entry + s.dir * s.risk * sim.r,
+    res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: sim.entry || s.entry, stop: s.stop, target: s.target, exit: (sim.entry || s.entry) + s.dir * ((sim.entry || s.entry) - s.stop) * s.dir * sim.r,
       at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
   });
   return res;
