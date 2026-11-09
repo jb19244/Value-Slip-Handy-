@@ -49,7 +49,9 @@ const aIds = grades.filter((g) => g.id !== chosen && g.all.n >= 50 && g.train.me
 const good0 = grades.filter((g) => g.id === chosen || aIds.includes(g.id));
 // 60-%-Stufen: insgesamt mindestens 60 % Gewinner, in keiner Haelfte unter 55 %, in beiden Haelften im Plus, mindestens 30 Trades
 const w60 = grades.filter((g) => g.all.n >= 30 && g.train.n >= 10 && g.test.n >= 10 && g.all.win >= 0.6 && g.train.win >= 0.55 && g.test.win >= 0.55 && g.train.mean > 0 && g.test.mean > 0).sort((a, b) => b.all.mean - a.all.mean).map((g) => g.id);
-const good = grades.filter((g) => good0.includes(g) || w60.includes(g.id));
+// Dreifach geprueft: im Plus in 1. Haelfte, 2. Haelfte UND im unberuehrten Zeitraum (ab jetzt ist die Live-Bilanz der einzige unberuehrte Test)
+const triple = grades.filter((g) => g.all.n >= 30 && g.hold.n >= 10 && g.train.mean > 0 && g.test.mean > 0 && g.hold.mean > 0).sort((a, b) => (b.all.mean + b.hold.mean) - (a.all.mean + a.hold.mean)).map((g) => g.id);
+const good = grades.filter((g) => good0.includes(g) || w60.includes(g.id) || triple.includes(g.id));
 const inA = all.filter((t) => good.some((g) => L.gradeMatch(g.id, t.sig, t.ampel)));
 const inTop = chosen ? all.filter((t) => L.gradeMatch(chosen, t.sig, t.ampel)) : [];
 const byInstr = {}; inA.forEach((t) => { (byInstr[t.instr] = byInstr[t.instr] || []).push(t); });
@@ -57,7 +59,7 @@ const out = {
   at: new Date().toISOString(), data: info, split: new Date(split).toISOString().slice(0, 10), tradingDays: Math.round(tradingDays), markets: Object.keys(info).filter((k) => info[k].h1 >= 500).length,
   n: Object.assign({ all: all.length }, Object.fromEntries(Object.keys(L.SETUPS).map((k) => [k, all.filter((t) => t.type === k).length]))),
   byType: Object.fromEntries(Object.keys(L.SETUPS).map((k) => [k, { name: L.setupName(k), ...st(all.filter((t) => t.type === k)), train: st(all.filter((t) => t.type === k && t.at < split)), test: st(all.filter((t) => t.type === k && t.at >= split)) }])),
-  all: st(all), holdFrom: new Date(cut).toISOString().slice(0, 10), holdAll: st(hold), tests: grades.length, grades, passed: !!chosen, chosen, second: aIds[0] || null, aIds, w60, ctx: { vix: vix.length, dxy: dxy.length },
+  all: st(all), holdFrom: new Date(cut).toISOString().slice(0, 10), holdAll: st(hold), tests: grades.length, grades, passed: !!chosen, chosen, second: aIds[0] || null, aIds, w60, triple, ctx: { vix: vix.length, dxy: dxy.length },
   top: { ...st(inTop), perDay: +(inTop.length / tradingDays).toFixed(2) },
   good: { ...st(inA), perDay: +(inA.length / tradingDays).toFixed(2), train: st(inA.filter((t) => t.at < split)), test: st(inA.filter((t) => t.at >= split)) },
   goodByInstr: Object.fromEntries(Object.entries(byInstr).map(([k, v]) => [k, st(v)]))
@@ -86,9 +88,9 @@ good.forEach((g) => {
     london: stR(sel.filter((t) => t.sig.session === 'London'), 'r'), ny: stR(sel.filter((t) => t.sig.session === 'New York'), 'r'),
     byInstr: Object.fromEntries(Object.entries(sel.reduce((m, t) => { (m[t.instr] = m[t.instr] || []).push(t); return m; }, {})).map(([k, v]) => [k, stR(v, 'r')])) };
 });
-out.holdTop = chosen ? holdOf([chosen]) : null; out.holdGood = holdOf(good.map((g) => g.id)); out.holdW60 = w60.length ? holdOf(w60) : null;
+out.holdTop = chosen ? holdOf([chosen]) : null; out.holdTriple = triple.length ? holdOf(triple) : null; out.holdGood = holdOf(good.map((g) => g.id)); out.holdW60 = w60.length ? holdOf(w60) : null;
 // Alle Trades der gemeldeten Stufen (R und Zeit) fuer die Risiko-Simulation in der App
-out.rSeries = full.filter((t) => good.some((g) => L.gradeMatch(g.id, t.sig, t.ampel))).sort((a, b) => a.at - b.at).map((t) => [Math.round(t.at / 60000), +t.r.toFixed(2), w60.some((id) => L.gradeMatch(id, t.sig, t.ampel)) ? 1 : 0]);
+out.rSeries = full.filter((t) => good.some((g) => L.gradeMatch(g.id, t.sig, t.ampel))).sort((a, b) => a.at - b.at).map((t) => [Math.round(t.at / 60000), +t.r.toFixed(2), w60.some((id) => L.gradeMatch(id, t.sig, t.ampel)) ? 1 : 0, triple.some((id) => L.gradeMatch(id, t.sig, t.ampel)) ? 1 : 0]);
 writeFileSync(new URL('backtest-1h.json', import.meta.url), JSON.stringify(out) + '\n');
-console.log(JSON.stringify({ hold: { from: out.holdFrom, all: out.holdAll, top: out.holdTop, good: out.holdGood, w60: out.holdW60 }, pAdj: grades.filter((g) => g.pAdj != null && g.pAdj < 0.5).map((g) => [g.id, g.p, g.pAdj]), w60, dossier: out.dossier, split: out.split, tradingDays: out.tradingDays, markets: out.markets, n: out.n, all: out.all, chosen, aIds, top: out.top, good: out.good,
+console.log(JSON.stringify({ triple, hold: { from: out.holdFrom, all: out.holdAll, top: out.holdTop, good: out.holdGood, w60: out.holdW60 }, pAdj: grades.filter((g) => g.pAdj != null && g.pAdj < 0.5).map((g) => [g.id, g.p, g.pAdj]), w60, dossier: out.dossier, split: out.split, tradingDays: out.tradingDays, markets: out.markets, n: out.n, all: out.all, chosen, aIds, top: out.top, good: out.good,
   grades: grades.map((g) => [g.id, g.all.n, g.all.mean, g.train.n, g.train.mean, g.test.n, g.test.mean, g.all.lo, g.perDay]) }, null, 1));
