@@ -1,6 +1,6 @@
 {
   "ok": true,
-  "at": "2026-11-09T15:48:49.527Z",
+  "at": "2026-11-09T16:10:46.766Z",
   "synced": true,
   "subscribed": true,
   "cfg": {
@@ -77,7 +77,7 @@
     "calls": 3
   },
   "autoMatched": 0,
-  "ownOdds": 3,
+  "ownOdds": 0,
   "openLegs": 0,
   "app": {
     "notes": "21 Spiele im Zeitraum, davon 10 mit Quoten. Referenz ist ausschließlich Pinnacle (10 Spiele mit Pinnacle-Quoten, 16 Ligen abgefragt). Die Quoten deines Anbieters (Betano oder bet365) trägst du selbst ein. Doppelte Chance, Beide treffen, Tore und Team-Tore: Chance aus Pinnacle 1X2 und Über/Unter berechnet (kein zusätzlicher Abruf), die Quote deines Anbieters aus deinen 1X2-Quoten geschätzt.",
@@ -135,26 +135,7 @@
       "icehockey_nhl"
     ]
   },
-  "leagues": {
-    "soccer_uefa_champs_league": {
-      "games": 9,
-      "withOdds": 9,
-      "lastOdds": "2026-11-03T15:47:28.013Z",
-      "next": "2026-11-03T17:45:00.000Z"
-    },
-    "soccer_spain_copa_del_rey": {
-      "games": 1,
-      "withOdds": 0,
-      "lastOdds": null,
-      "next": "2026-11-03T18:00:00.000Z"
-    },
-    "icehockey_nhl": {
-      "games": 11,
-      "withOdds": 0,
-      "lastOdds": null,
-      "next": "2026-11-04T00:10:00.000Z"
-    }
-  },
+  "leagues": {},
   "log": [
     {
       "at": "2026-11-01T18:50:39.017Z",
