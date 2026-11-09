@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '578c210df3';
+const WORKER_VER = '7979381094';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2440,7 +2440,8 @@ function scanGap(c, opt){
 }
 // 6) NR7-Ausbruch: Der Vortag hatte die kleinste Spanne der letzten 7 Tage; Stopp-Orders an seinem Hoch und Tief,
 //    Stop auf der anderen Seite, Ziel 2R.
-function scanNR7(c, opt){
+function scanNR7(c, opt){ return scanNR7raw(c, opt).map(function(s){ s.type = 'nr7'; return s; }); }
+function scanNR7raw(c, opt){
   opt = opt || {}; var instr = opt.instr, out = []; if (c.length < 40) return out;
   var P = prep(c, opt), td = P.order.filter(function(k){ var w = P.days[k].wd; return w !== 0 && w !== 6; });
   for (var x = 7; x < td.length; x++){
@@ -2465,10 +2466,99 @@ var SETUPS = {
   donch: { name: 'Donchian-Ausbruch', fn: scanDonchian },
   rsi2: { name: 'RSI-2 (Connors)', fn: scanRSI2 },
   gap: { name: 'Gap-Fade', fn: scanGap },
-  nr7: { name: 'NR7-Ausbruch', fn: scanNR7 }
+  nr7: { name: 'NR7-Ausbruch', fn: scanNR7 },
+  nr7r1: { name: 'NR7-Ausbruch (Ziel 1 R)', fn: function(c, o){ return scanNR7(c, o).map(function(s){ s.type = 'nr7r1'; s.target = s.entry + s.dir * s.risk; s.rr = 1; return s; }); } }
 };
 function setupName(type){ return (SETUPS[type || 'sweep'] || {}).name || type; }
 function scanAll(c, opt){ var out = []; Object.keys(SETUPS).forEach(function(k){ var o = Object.assign({}, opt, { any: true }); out = out.concat(SETUPS[k].fn(c, o).map(function(s){ s.type = s.type || 'sweep'; return s; })); }); return out; }
+// ================= Smart Money, Elliott und Fibonacci automatisch =================
+// Zickzack mit ATR-Schwelle: bestaetigte Wendepunkte + offener letzter Schenkel
+function zigzag(c, mult){
+  var a = atrSeries(c), piv = [], trend = 0, hi = { i: 0, p: c.length ? c[0].h : 0 }, lo = { i: 0, p: c.length ? c[0].l : 0 };
+  for (var i = 1; i < c.length; i++){
+    var th = (a[i] || (c[i].h - c[i].l)) * (mult || 2.5);
+    if (trend >= 0 && c[i].h > hi.p) hi = { i: i, p: c[i].h };
+    if (trend <= 0 && c[i].l < lo.p) lo = { i: i, p: c[i].l };
+    if (trend >= 0 && hi.i < i && hi.p - c[i].l >= th){ piv.push({ i: hi.i, p: hi.p, type: 'H', t: c[hi.i].t }); trend = -1; lo = { i: i, p: c[i].l }; }
+    else if (trend <= 0 && lo.i < i && c[i].h - lo.p >= th){ piv.push({ i: lo.i, p: lo.p, type: 'L', t: c[lo.i].t }); trend = 1; hi = { i: i, p: c[i].h }; }
+  }
+  var last = trend > 0 ? { i: hi.i, p: hi.p, type: 'H', open: true } : (trend < 0 ? { i: lo.i, p: lo.p, type: 'L', open: true } : null);
+  if (last) last.t = c[last.i].t;
+  return { piv: piv, last: last };
+}
+// Fibonacci des letzten abgeschlossenen Impulses (A -> B), Retracements, OTE und Ausdehnungen
+function autoFib(c, zz){
+  zz = zz || zigzag(c); var pv = zz.piv; if (pv.length < 1 || (pv.length < 2 && !zz.last)) return null;
+  // Impuls = der letzte grosse Schenkel; ist der offene Schenkel nur ein Ruecksetzer (< 78,6 %), gilt der davor
+  var A, B, prev = pv.length >= 2 ? Math.abs(pv[pv.length - 1].p - pv[pv.length - 2].p) : 0, open = zz.last ? Math.abs(zz.last.p - pv[pv.length - 1].p) : 0;
+  if (zz.last && (pv.length < 2 || open >= prev * 0.786)){ A = pv[pv.length - 1]; B = zz.last; } else { A = pv[pv.length - 2]; B = pv[pv.length - 1]; }
+  var leg = B.p - A.p, dir = leg > 0 ? 1 : -1;
+  return { a: A, b: B, dir: dir, leg: Math.abs(leg),
+    retr: [0.382, 0.5, 0.618, 0.705, 0.786].map(function(f){ return { f: f, p: B.p - leg * f }; }),
+    ote: [Math.min(B.p - leg * 0.62, B.p - leg * 0.79), Math.max(B.p - leg * 0.62, B.p - leg * 0.79)],
+    ext: [1.272, 1.618, 2].map(function(f){ return { f: f, p: A.p + leg * f }; }), eq: (A.p + B.p) / 2 };
+}
+// Elliott: laengste regelkonforme Zaehlung, die am juengsten Punkt endet (Welle 2 nie hinter Start, Welle 3 nie die kuerzeste, Welle 4 nicht im Bereich von Welle 1)
+function autoElliott(c, zz){
+  zz = zz || zigzag(c, 2); var pts = zz.piv.slice(-9); if (zz.last) pts.push(zz.last);
+  var best = null;
+  for (var s0 = 0; s0 < pts.length - 2; s0++){
+    var P = pts.slice(s0), d = P[1].p > P[0].p ? 1 : -1, ok = 1;
+    for (var k = 1; k < P.length && k <= 8; k++){
+      var mv = (P[k].p - P[k - 1].p) * d, impulse = k <= 5 ? k % 2 === 1 : k === 7;
+      if (impulse ? mv <= 0 : mv >= 0){ break; }
+      if (k === 2 && (P[2].p - P[0].p) * d <= 0) break;
+      if (k === 3){ var w1 = (P[1].p - P[0].p) * d, w3 = (P[3].p - P[2].p) * d; if ((P[3].p - P[1].p) * d <= 0) break; }
+      if (k === 4 && (P[4].p - P[1].p) * d <= 0) break;
+      if (k === 5){ var a1 = (P[1].p - P[0].p) * d, a3 = (P[3].p - P[2].p) * d, a5 = (P[5].p - P[4].p) * d; if (a3 < a1 && a3 < a5) break; }
+      ok = k;
+    }
+    if (s0 + ok === pts.length - 1 && ok >= 2 && (!best || ok > best.n)) best = { start: s0, n: ok, d: d };
+  }
+  if (!best) return null;
+  var P2 = pts.slice(best.start, best.start + best.n + 1), lastOpen = !!P2[P2.length - 1].open;
+  var labels = P2.map(function(q, k){ return { i: q.i, p: q.p, t: q.t, l: k <= 5 ? String(k) : 'ABC'[k - 6], open: !!q.open }; }).slice(1);
+  var n = best.n, phase, next;
+  // n = Anzahl Wellen bis zum juengsten Punkt; ist der letzte Punkt offen, laeuft diese Welle noch
+  var w = lastOpen ? n : n + 1;
+  phase = w > 8 ? 'ABC-Korrektur abgeschlossen' : 'Welle ' + (w <= 5 ? w : 'ABC'[w - 6]) + (lastOpen ? ' läuft' : ' beginnt');
+  next = w === 2 || w === 4 ? 'Korrektur. Danach ' + (w === 2 ? 'Welle 3, meist die stärkste' : 'Welle 5') + ' in Richtung ' + (best.d > 0 ? 'oben' : 'unten') + '.' : (w === 3 || w === 5 ? 'Impulswelle in Richtung ' + (best.d > 0 ? 'oben' : 'unten') + '.' : 'Nach fünf Wellen folgt meist eine ABC-Korrektur.');
+  if (w === 6 || w === 8) next = 'Korrektur gegen den Impuls (Welle ' + (w === 6 ? 'A' : 'C') + ').'; if (w === 7) next = 'Gegenbewegung B, danach meist Welle C.'; if (w > 8) next = 'Nach der ABC-Korrektur beginnt oft ein neuer Impuls in Richtung ' + (best.d > 0 ? 'oben' : 'unten') + '.';
+  return { dir: best.d, wave: w, phase: phase, next: next, labels: labels, impulseNow: (w === 3 || w === 5 || w === 7) ? best.d : ((w === 2 || w === 4 || w === 6 || w === 8) ? -best.d : (w > 8 ? best.d : 0)) };
+}
+// Order Blocks: letzte Gegenkerze vor einem Strukturbruch, noch nicht durchlaufen
+function orderBlocks(c, maxN){
+  var st = structure(c, 2), out = [];
+  st.events.slice(-8).forEach(function(e){
+    var d = e.dir, j;
+    for (j = e.i - 1; j >= Math.max(0, e.i - 12); j--) if ((c[j].c - c[j].o) * d < 0) break;
+    if (j < 0 || j < e.i - 12) return;
+    var z = { i: j, lo: c[j].l, hi: c[j].h, dir: d, kind: e.kind, t: c[j].t }, broken = false;
+    for (var q = e.i + 1; q < c.length; q++) if (d > 0 ? c[q].c < z.lo : c[q].c > z.hi){ broken = true; break; }
+    if (!broken) out.push(z);
+  });
+  return out.slice(-(maxN || 3));
+}
+// Konfluenz eines Signals: Smart Money, Elliott und Fibonacci zusammen
+function confluence(sig, c){
+  if (!c || c.length < 40) return null;
+  var a = atrSeries(c), at = a[c.length - 1] || (c[c.length - 1].h - c[c.length - 1].l);
+  var zz = zigzag(c), fib = autoFib(c, zz), ew = autoElliott(c, zigzag(c, 2)), obs = orderBlocks(c, 4), d = sig.dir, e = sig.entry;
+  var out = { items: [] }, add = function(k, ok, txt){ out[k] = !!ok; out.items.push({ k: k, ok: !!ok, txt: txt }); };
+  var imp = fib && fib.dir === d ? fib : null;
+  add('ote', imp && e >= imp.ote[0] - at * 0.1 && e <= imp.ote[1] + at * 0.1, imp ? 'Einstieg ' + (e >= imp.ote[0] - at * 0.1 && e <= imp.ote[1] + at * 0.1 ? 'in' : 'außerhalb') + ' der OTE-Zone (62–79 %)' : 'Kein passender Impuls für die OTE');
+  add('pd', fib && (d > 0 ? e <= fib.eq : e >= fib.eq), d > 0 ? (fib && e <= fib.eq ? 'Kauf im Discount' : 'Kauf im Premium') : (fib && e >= fib.eq ? 'Verkauf im Premium' : 'Verkauf im Discount'));
+  var ob = obs.filter(function(z){ return z.dir === d && e >= z.lo - at * 0.15 && e <= z.hi + at * 0.15; })[0];
+  add('ob', !!ob, ob ? 'Einstieg am Order Block (' + ob.kind + ')' : 'Kein Order Block am Einstieg');
+  add('fvgz', !!sig.fvg || !!(fvgs(c, 40).filter(function(g){ return g.dir === d && e >= g.lo && e <= g.hi; })[0]), 'Einstieg ' + (sig.fvg ? 'im' : 'ohne') + ' Fair Value Gap');
+  var ext = fib ? fib.ext.concat([{ f: 1, p: fib.b.p }]) : [], hit = ext.filter(function(x){ return Math.abs(x.p - sig.target) <= Math.max(sig.risk * 0.3, at * 0.3) && (x.p - e) * d > 0; })[0];
+  add('fib', !!hit, hit ? 'Ziel an Fibonacci ' + (hit.f === 1 ? 'Hoch/Tief B' : String(hit.f * 100).replace('.', ',') + ' %') : 'Ziel an keiner Fibonacci-Marke');
+  var ewOk = ew && ((ew.impulseNow === d && (ew.wave === 3 || ew.wave === 5)) || (ew.dir === d && (ew.wave === 2 || ew.wave === 4) && !ew.labels[ew.labels.length - 1].open) || (ew.dir === d && (ew.wave === 3 || ew.wave === 5)));
+  add('ew', ewOk, ew ? 'Elliott: ' + ew.phase + (ewOk ? ', passt zur Richtung' : ', passt nicht') : 'Keine eindeutige Elliott-Zählung');
+  out.score = out.items.filter(function(x){ return x.ok; }).length; out.max = out.items.length;
+  out.fib = fib; out.ew = ew; out.obs = obs;
+  return out;
+}
 // ---- Qualitaetsstufen: feste Liste, die Auswahl trifft die Rueckrechnung (Jahr 1), geprueft wird auf Jahr 2
 var GRADES = [
   { id: 'alle', name: 'Alle Signale', fn: function(s, a){ return true; } },
@@ -2489,7 +2579,13 @@ var GRADES = [
   { id: 'trend_usd', name: 'Trend + Dollar-Index bestätigt', fn: function(s){ return s.withBias && s.usdOk === true; } },
   { id: 'trend_liq_usd', name: 'Trend + Liquiditätsziel + Dollar-Index bestätigt', fn: function(s){ return s.withBias && s.liqTarget && s.usdOk === true; } },
   { id: 'trend_liq_rr_usd', name: 'Trend + Liquiditätsziel + CRV ab 2,5 + Dollar-Index bestätigt', fn: function(s){ return s.withBias && s.liqTarget && s.rr >= 2.5 && s.usdOk === true; } },
-  { id: 'trend_vixhi', name: 'Trend + unruhiger Markt (VIX ab 20)', fn: function(s){ return s.withBias && s.vixLo === false; } }
+  { id: 'trend_vixhi', name: 'Trend + unruhiger Markt (VIX ab 20)', fn: function(s){ return s.withBias && s.vixLo === false; } },
+  { id: 'trend_conf3', name: 'Trend + mind. 3 von 6 SMC/Elliott/Fib', fn: function(s){ return s.withBias && s.conf >= 3; } },
+  { id: 'trend_conf4', name: 'Trend + mind. 4 von 6 SMC/Elliott/Fib', fn: function(s){ return s.withBias && s.conf >= 4; } },
+  { id: 'trend_ote', name: 'Trend + Einstieg in der OTE', fn: function(s){ return s.withBias && s.cOte === true; } },
+  { id: 'trend_ew', name: 'Trend + Elliott passt', fn: function(s){ return s.withBias && s.cEw === true; } },
+  { id: 'trend_ob', name: 'Trend + Order Block', fn: function(s){ return s.withBias && s.cOb === true; } },
+  { id: 'trend_vixhi_conf3', name: 'Trend + VIX ab 20 + mind. 3 SMC/Elliott/Fib', fn: function(s){ return s.withBias && s.vixLo === false && s.conf >= 3; } }
 ];
 function gradeById(id){ return GRADES.filter(function(g){ return g.id === id; })[0] || null; }
 // Stufe mit Setup-Typ, z. B. 'pullback:trend_liq' (ohne Typ: beide Setups)
@@ -2544,6 +2640,9 @@ function simulate(sig, c, cost){
 function backtest(p){
   var bar = p.bar || 15 * 60e3, c = p.m15, res = [], o = { instr: p.instr, d1: p.d1, bar: bar, any: p.any };
   var sigs = p.setup === 'all' ? scanAll(c, o) : (SETUPS[p.setup || 'sweep'] || SETUPS.sweep).fn(c, o).map(function(s){ s.type = s.type || p.setup || 'sweep'; return s; });
+  // Variante mit naeherem Ziel (z. B. 0,5 R): hohe Trefferquote, kleinere Gewinne
+  if (p.conf) sigs.forEach(function(s){ var cf = confluence(s, c.slice(Math.max(0, s.i - 300), s.i + 1)); if (cf){ s.conf = cf.score; s.cOte = cf.ote; s.cEw = cf.ew; s.cOb = cf.ob; s.cFib = cf.fib; s.cPd = cf.pd; } });
+  if (p.tgtR) sigs.forEach(function(s){ s.target = s.entry + s.dir * s.risk * p.tgtR; s.rr = p.tgtR; s.exit = null; });
   var cost = costOf(p.instr, c.length ? c[c.length - 1].c : 0), first = {};
   // OCO-Paare (Kauf- und Verkaufsstopp): nur die zuerst ausgeloeste Order zaehlt
   var sims = sigs.map(function(s){ var sim = simulate(s, c, cost); if (s.oco && sim.filled){ var k = s.type + s.oco; if (!first[k] || sim.fillT < first[k]) first[k] = sim.fillT; } return sim; });
@@ -2601,7 +2700,7 @@ function excursionAdvice(trades){
   }
   return out;
 }
-  return { marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
+  return { confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
 const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
@@ -2754,7 +2853,7 @@ async function qualityCfg(env, nowMs) {
       // Kennzahlen ueber den ganzen Zeitraum (Auswahl + Haertetest)
       const stats = {}; (j.grades || []).forEach((g) => { const a = g.all || {}, h = g.hold || {}, n = (a.n || 0) + (h.n || 0); stats[g.id] = n ? { n, mean: ((a.mean || 0) * (a.n || 0) + (h.mean || 0) * (h.n || 0)) / n, win: ((a.win || 0) * (a.n || 0) + (h.win || 0) * (h.n || 0)) / n } : null; });
       const dossier = {}; Object.keys(j.dossier || {}).forEach((k) => { dossier[k] = { mgmt: j.dossier[k].mgmt }; });
-      return { chosen: j.passed ? j.chosen : null, aIds: j.passed ? (j.aIds || []) : [], w60: j.w60 || [], triple: j.triple || [], stats, top: j.top || null, good: j.good || null, dossier };
+      return { chosen: j.passed ? j.chosen : null, aIds: j.passed ? (j.aIds || []) : [], w60: j.w60 || [], triple: j.triple || [], extra: j.extra || [], stats, top: j.top || null, good: j.good || null, dossier };
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -2892,6 +2991,9 @@ async function runTrade(env, nowMs) {
         const ko = g.stop - g.dir * g.risk * 0.5;
         g.bias = bias; g.withBias = bias === g.dir;
         Object.assign(g, TL.marketContext(dayKey, ins, g.dir, await candlesOf('^VIX', '1d', '6mo'), await candlesOf('DX-Y.NYB', '1d', '1y')));
+        // Smart Money, Elliott und Fibonacci fuer dieses Signal
+        let cf = null; try { cf = TL.confluence(g, c.slice(Math.max(0, g.i - 300), g.i + 1)); } catch (e) { cf = null; }
+        if (cf) Object.assign(g, { conf: cf.score, cOte: cf.ote, cEw: cf.ew, cOb: cf.ob, cFib: cf.fib, cPd: cf.pd });
         const q = await qualityCfg(env, nowMs);
         const m15 = await candlesOf(ins.y, '15m', '5d');
         let calNow = null; try { calNow = (await getCalendar(env, nowMs)).data; } catch (e) { calNow = null; }
@@ -2902,14 +3004,15 @@ async function runTrade(env, nowMs) {
         const bHit = bIds.find((id) => TL.gradeMatch(id, g, ampel));
         const wHit = (q.w60 || []).find((id) => TL.gradeMatch(id, g, ampel));
         const tHit = (q.triple || []).find((id) => TL.gradeMatch(id, g, ampel));
+        const eHit = (q.extra || []).find((id) => TL.gradeMatch(id, g, ampel));
         const cls = newsSoon ? 'B' : (TL.gradeMatch(aId, g, ampel) ? 'A+' : (bHit ? 'A' : 'B'));
         const sig = { id, type: g.type || 'sweep', mode: g.mode || 'limit', k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, level: g.level, withBias: g.withBias, liqTarget: g.liqTarget, bias, expires: g.expires, filled: sim.filled,
-          ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', newsSoon, w60: !newsSoon && !!wHit, wGrade: wHit || null, triple: !newsSoon && !!tHit, tGrade: tHit || null, vix: g.vix != null ? Math.round(g.vix * 10) / 10 : null, usdOk: g.usdOk };
+          ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', conf: cf ? { score: cf.score, max: cf.max, items: cf.items, ew: cf.ew ? cf.ew.phase : null } : null, extra: !newsSoon && !!eHit, newsSoon, w60: !newsSoon && !!wHit, wGrade: wHit || null, triple: !newsSoon && !!tHit, tGrade: tHit || null, vix: g.vix != null ? Math.round(g.vix * 10) / 10 : null, usdOk: g.usdOk };
         t.signals.unshift(sig); t.signals = t.signals.slice(0, 30); dirty = true;
-        const mixLbl = sig.triple ? '3× geprüft' : (sig.w60 ? '60 %+' : (cls !== 'B' ? cls : null));
+        const mixLbl = sig.triple ? '3× geprüft' : (sig.w60 ? '60 %+' : (cls !== 'B' ? cls : (sig.extra ? 'NR7' : null)));
         const want = t.quality === 'mix' ? !!mixLbl : t.quality === 'triple' ? sig.triple : t.quality === 'w60' ? sig.w60 : t.quality === 'all' ? ((sig.type === 'sweep' || sig.type === 'pullback') && (sig.withBias || t.scanAll)) : (t.quality === 'a' ? cls !== 'B' : cls === 'A+');
-        if (want && (cls !== 'B' || sig.w60 || sig.triple)) {
-          const gSel = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : bHit))) : t.quality === 'triple' ? tHit : (sig.w60 && t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : bHit));
+        if (want && (cls !== 'B' || sig.w60 || sig.triple || sig.extra)) {
+          const gSel = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : eHit)))) : t.quality === 'triple' ? tHit : (sig.w60 && t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : bHit));
           const dz = q.dossier && q.dossier[gSel];
           t.track = Array.isArray(t.track) ? t.track : [];
           t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: g.mode || 'limit', entry: g.entry, stop: g.stop, target: g.target, ko, t: g.t, expires: g.expires, cls, grade: gSel,
@@ -2920,11 +3023,13 @@ async function runTrade(env, nowMs) {
           t.track = t.track.slice(-20);
         }
         if (want) {
-          const gid = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : bHit))) : t.quality === 'triple' ? tHit : t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : ''));
+          const gid = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : eHit)))) : t.quality === 'triple' ? tHit : t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : ''));
           const gs = q.stats && q.stats[gid];
+          const short = { ote: 'OTE', pd: g.dir > 0 ? 'Discount' : 'Premium', ob: 'Order Block', fvgz: 'FVG', fib: 'Fib-Ziel', ew: 'Elliott' };
+          const confTxt = cf ? ' SMC/Elliott/Fib ' + cf.score + '/' + cf.max + ': ' + cf.items.filter((x) => x.ok).map((x) => short[x.k] + (x.k === 'ew' && cf.ew ? ' (' + cf.ew.phase + ')' : '') + ' ✓').join(', ') + (cf.items.some((x) => !x.ok) ? '; fehlt: ' + cf.items.filter((x) => !x.ok).map((x) => short[x.k]).join(', ') : '') + '.' : '';
           const proof = gs && gs.n ? ' Bisher: ' + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Gewinner, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' + (gs.win < 0.6 ? ' ⚠️ Unter deiner 60-%-Marke.' : '') : '';
           sig.winRate = gs && gs.n ? Math.round(gs.win * 1000) / 1000 : null;
-          await send('s:' + id, { title: (t.quality === 'mix' ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + proof, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+          await send('s:' + id, { title: (t.quality === 'mix' ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
         }
       }
     }
