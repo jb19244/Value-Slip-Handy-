@@ -1,179 +1,179 @@
 {
-  "at": "2026-11-09T09:08:32.562Z",
+  "at": "2026-11-09T11:39:50.193Z",
   "url": "https://value-slip.75rk4v4jg4.workers.dev",
   "checks": [
     {
       "what": "EURUSD=X 15m",
       "status": 200,
-      "ms": 198,
-      "n": 422,
-      "last": 1.1192,
+      "ms": 221,
+      "n": 432,
+      "last": 1.1198,
       "err": ""
     },
     {
       "what": "EURUSD=X 60m",
       "status": 200,
-      "ms": 226,
+      "ms": 114,
       "n": 506,
-      "last": 1.1192,
+      "last": 1.1198,
       "err": ""
     },
     {
       "what": "EURUSD=X 1d",
       "status": 200,
-      "ms": 127,
+      "ms": 85,
       "n": 521,
-      "last": 1.1192,
+      "last": 1.1198,
       "err": ""
     },
     {
       "what": "GBPUSD=X 15m",
       "status": 200,
-      "ms": 110,
-      "n": 422,
-      "last": 1.3412,
+      "ms": 122,
+      "n": 432,
+      "last": 1.3422,
       "err": ""
     },
     {
       "what": "GBPUSD=X 60m",
       "status": 200,
-      "ms": 132,
+      "ms": 119,
       "n": 506,
-      "last": 1.3412,
+      "last": 1.3422,
       "err": ""
     },
     {
       "what": "GBPUSD=X 1d",
       "status": 200,
-      "ms": 161,
+      "ms": 96,
       "n": 521,
-      "last": 1.3412,
+      "last": 1.3422,
       "err": ""
     },
     {
       "what": "JPY=X 15m",
       "status": 200,
-      "ms": 95,
-      "n": 422,
-      "last": 158.024,
+      "ms": 98,
+      "n": 432,
+      "last": 157.908,
       "err": ""
     },
     {
       "what": "JPY=X 60m",
       "status": 200,
-      "ms": 98,
+      "ms": 87,
       "n": 506,
-      "last": 158.024,
+      "last": 157.908,
       "err": ""
     },
     {
       "what": "JPY=X 1d",
       "status": 200,
-      "ms": 133,
+      "ms": 111,
       "n": 521,
-      "last": 158.024,
+      "last": 157.908,
       "err": ""
     },
     {
       "what": "GC=F 15m",
       "status": 200,
-      "ms": 100,
-      "n": 401,
-      "last": 4103.6,
+      "ms": 107,
+      "n": 411,
+      "last": 4114.3,
       "err": ""
     },
     {
       "what": "GC=F 60m",
       "status": 200,
-      "ms": 93,
-      "n": 626,
-      "last": 4103.6,
+      "ms": 91,
+      "n": 627,
+      "last": 4114.3,
       "err": ""
     },
     {
       "what": "GC=F 1d",
       "status": 200,
-      "ms": 87,
+      "ms": 70,
       "n": 504,
-      "last": 4103.6,
+      "last": 4114.3,
       "err": ""
     },
     {
       "what": "SI=F 15m",
       "status": 200,
-      "ms": 91,
-      "n": 401,
-      "last": 52.48,
+      "ms": 79,
+      "n": 411,
+      "last": 52.67,
       "err": ""
     },
     {
       "what": "SI=F 60m",
       "status": 200,
-      "ms": 97,
-      "n": 626,
-      "last": 52.48,
+      "ms": 111,
+      "n": 627,
+      "last": 52.67,
       "err": ""
     },
     {
       "what": "SI=F 1d",
       "status": 200,
-      "ms": 130,
+      "ms": 80,
       "n": 504,
-      "last": 52.48,
+      "last": 52.67,
       "err": ""
     },
     {
       "what": "CL=F 15m",
       "status": 200,
-      "ms": 91,
-      "n": 401,
-      "last": 89.76,
+      "ms": 84,
+      "n": 411,
+      "last": 88.37,
       "err": ""
     },
     {
       "what": "CL=F 60m",
       "status": 200,
-      "ms": 95,
-      "n": 626,
-      "last": 89.76,
+      "ms": 70,
+      "n": 627,
+      "last": 88.37,
       "err": ""
     },
     {
       "what": "CL=F 1d",
       "status": 200,
-      "ms": 119,
+      "ms": 98,
       "n": 504,
-      "last": 89.76,
+      "last": 88.37,
       "err": ""
     },
     {
       "what": "^GDAXI 15m",
       "status": 200,
-      "ms": 90,
-      "n": 141,
-      "last": 25991.33,
+      "ms": 148,
+      "n": 151,
+      "last": 26073.12,
       "err": ""
     },
     {
       "what": "^GDAXI 60m",
       "status": 200,
-      "ms": 113,
-      "n": 190,
-      "last": 25991.33,
+      "ms": 89,
+      "n": 191,
+      "last": 26073.12,
       "err": ""
     },
     {
       "what": "^GDAXI 1d",
       "status": 200,
-      "ms": 133,
+      "ms": 80,
       "n": 505,
-      "last": 25991.33,
+      "last": 26073.12,
       "err": ""
     },
     {
       "what": "^NDX 15m",
       "status": 200,
-      "ms": 96,
+      "ms": 73,
       "n": 131,
       "last": 26989.992,
       "err": ""
@@ -181,7 +181,7 @@
     {
       "what": "^NDX 60m",
       "status": 200,
-      "ms": 124,
+      "ms": 117,
       "n": 162,
       "last": 26989.992,
       "err": ""
@@ -189,7 +189,7 @@
     {
       "what": "^NDX 1d",
       "status": 200,
-      "ms": 113,
+      "ms": 88,
       "n": 501,
       "last": 26989.992,
       "err": ""
@@ -197,7 +197,7 @@
     {
       "what": "^GSPC 15m",
       "status": 200,
-      "ms": 91,
+      "ms": 113,
       "n": 131,
       "last": 7376.86,
       "err": ""
@@ -205,7 +205,7 @@
     {
       "what": "^GSPC 60m",
       "status": 200,
-      "ms": 104,
+      "ms": 108,
       "n": 162,
       "last": 7376.86,
       "err": ""
@@ -213,7 +213,7 @@
     {
       "what": "^GSPC 1d",
       "status": 200,
-      "ms": 130,
+      "ms": 127,
       "n": 501,
       "last": 7376.86,
       "err": ""
@@ -221,31 +221,31 @@
     {
       "what": "SAP.DE 15m",
       "status": 200,
-      "ms": 91,
-      "n": 141,
-      "last": 215.25,
+      "ms": 99,
+      "n": 151,
+      "last": 214.55,
       "err": ""
     },
     {
       "what": "SAP.DE 60m",
       "status": 200,
-      "ms": 93,
-      "n": 190,
-      "last": 215.25,
+      "ms": 70,
+      "n": 191,
+      "last": 214.55,
       "err": ""
     },
     {
       "what": "SAP.DE 1d",
       "status": 200,
-      "ms": 148,
+      "ms": 146,
       "n": 505,
-      "last": 215.25,
+      "last": 214.55,
       "err": ""
     },
     {
       "what": "NVDA 15m",
       "status": 200,
-      "ms": 91,
+      "ms": 73,
       "n": 131,
       "last": 186.64,
       "err": ""
@@ -253,7 +253,7 @@
     {
       "what": "NVDA 60m",
       "status": 200,
-      "ms": 111,
+      "ms": 74,
       "n": 162,
       "last": 186.64,
       "err": ""
@@ -261,7 +261,7 @@
     {
       "what": "NVDA 1d",
       "status": 200,
-      "ms": 108,
+      "ms": 103,
       "n": 501,
       "last": 186.64,
       "err": ""
