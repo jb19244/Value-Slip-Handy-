@@ -43,8 +43,8 @@ const strong = grades.filter((g) => g.train.n >= 5 && g.test.n >= 10 && g.train.
 const chosen = strong[0] ? strong[0].id : null;
 const aIds = grades.filter((g) => g.id !== chosen && g.all.n >= 50 && g.train.mean > 0 && g.test.mean > 0 && g.all.mean >= 0.1).sort((a, b) => b.all.mean - a.all.mean).map((g) => g.id);
 const good0 = grades.filter((g) => g.id === chosen || aIds.includes(g.id));
-// 60-%-Stufen: in BEIDEN Haelften mindestens 60 % Gewinner und im Plus, mindestens 30 Trades
-const w60 = grades.filter((g) => g.all.n >= 30 && g.train.n >= 10 && g.test.n >= 10 && g.train.win >= 0.6 && g.test.win >= 0.6 && g.train.mean > 0 && g.test.mean > 0).sort((a, b) => b.all.mean - a.all.mean).map((g) => g.id);
+// 60-%-Stufen: insgesamt mindestens 60 % Gewinner, in keiner Haelfte unter 55 %, in beiden Haelften im Plus, mindestens 30 Trades
+const w60 = grades.filter((g) => g.all.n >= 30 && g.train.n >= 10 && g.test.n >= 10 && g.all.win >= 0.6 && g.train.win >= 0.55 && g.test.win >= 0.55 && g.train.mean > 0 && g.test.mean > 0).sort((a, b) => b.all.mean - a.all.mean).map((g) => g.id);
 const good = grades.filter((g) => good0.includes(g) || w60.includes(g.id));
 const inA = all.filter((t) => good.some((g) => L.gradeMatch(g.id, t.sig, t.ampel)));
 const inTop = chosen ? all.filter((t) => L.gradeMatch(chosen, t.sig, t.ampel)) : [];
