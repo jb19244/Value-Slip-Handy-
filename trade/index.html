@@ -650,7 +650,7 @@ function costOf(instr, px){
 // c = 15-Min-Kerzen, opt = { instr, d1, from (Index ab dem gesucht wird) }
 function scanSetups(c, opt){
   opt = opt || {};
-  var instr = opt.instr, kz = killzones(instr), out = [], n = c.length;
+  var instr = opt.instr, kz = killzones(instr), out = [], n = c.length, bar = opt.bar || 15 * 60e3, win = Math.max(4, Math.round(3 * 3600e3 / bar));
   if (n < 40) return out;
   var bp = c.map(function(x){ return berlinFast(x.t); });
   // Tageswerte vorbereiten
@@ -673,7 +673,7 @@ function scanSetups(c, opt){
     var b = bp[i], day = b.key, pk = prevOf[day], dd = days[day], pd = pk && days[pk];
     // offene Kandidaten weiterfuehren (CHoCH und FVG suchen)
     pending = pending.filter(function(s){
-      if (i - s.i > 12 || bp[i].key !== s.day) return false;
+      if (i - s.i > win || bp[i].key !== s.day) return false;
       if (s.dir > 0 ? c[i].l < s.ext - (a14[i] || 0) * 0.05 && !s.broke : c[i].h > s.ext + (a14[i] || 0) * 0.05 && !s.broke){ s.ext = s.dir > 0 ? Math.min(s.ext, c[i].l) : Math.max(s.ext, c[i].h); if (Math.abs(c[i].c - s.level) > (a14[i] || 0) * 0.8 && (c[i].c - s.level) * s.dir < 0) return false; }
       if (!s.broke && (c[i].c - s.ref) * s.dir > 0){ s.broke = i; }
       if (s.broke){
@@ -696,8 +696,9 @@ function scanSetups(c, opt){
             var target = tgt ? tgt.p : entry + s.dir * risk * 2.5;
             if (!biasCache[day]) biasCache[day] = biasAt(opt.d1, day) || 'x';
             var bias = biasCache[day] === 'x' ? 0 : biasCache[day];
-            out.push({ k: instr && instr.k, i: i, t: c[i].t + 15 * 60e3, day: day, dir: s.dir, entry: entry, stop: stop, target: target, rr: (target - entry) * s.dir / risk, risk: risk,
-              sweep: s.name, level: s.level, liqTarget: !!tgt, bias: bias, withBias: bias === s.dir, fvg: [g.lo, g.hi], expires: c[i].t + 15 * 60e3 + 3 * 3600e3 });
+            out.push({ k: instr && instr.k, i: i, t: c[i].t + bar, day: day, dir: s.dir, entry: entry, stop: stop, target: target, rr: (target - entry) * s.dir / risk, risk: risk,
+              sweep: s.name, level: s.level, liqTarget: !!tgt, bias: bias, withBias: bias === s.dir, fvg: [g.lo, g.hi], expires: c[i].t + bar + 3 * 3600e3,
+              gapAtr: (g.hi - g.lo) / a, depthAtr: Math.abs(s.ext - s.level) / a, session: s.min < 720 ? 'London' : 'New York', prevDay: /Vortag/.test(s.name) });
           }
           return false;
         }
@@ -724,11 +725,26 @@ function scanSetups(c, opt){
       // Referenz fuer den Strukturbruch: Extrem der letzten Kerzen vor dem Sweep
       var ref = L.dir > 0 ? -Infinity : Infinity;
       for (var r = Math.max(0, i - 5); r < i; r++) ref = L.dir > 0 ? Math.max(ref, c[r].h) : Math.min(ref, c[r].l);
-      pending.push({ i: i, day: day, dir: L.dir, name: L.n, level: L.p, ext: L.dir > 0 ? lo : hi, ref: ref, broke: 0, dayHi: dHi, dayLo: dLo });
+      pending.push({ min: b.min, i: i, day: day, dir: L.dir, name: L.n, level: L.p, ext: L.dir > 0 ? lo : hi, ref: ref, broke: 0, dayHi: dHi, dayLo: dLo });
     });
   }
   return out;
 }
+// ---- Qualitaetsstufen: feste Liste, die Auswahl trifft die Rueckrechnung (Jahr 1), geprueft wird auf Jahr 2
+var GRADES = [
+  { id: 'alle', name: 'Alle Signale', fn: function(s, a){ return true; } },
+  { id: 'trend', name: 'Mit Tagestrend', fn: function(s){ return s.withBias; } },
+  { id: 'trend_liq', name: 'Trend + Ziel an Liquidität', fn: function(s){ return s.withBias && s.liqTarget; } },
+  { id: 'trend_liq_rr', name: 'Trend + Liquiditätsziel + CRV ab 2,5', fn: function(s){ return s.withBias && s.liqTarget && s.rr >= 2.5; } },
+  { id: 'trend_disp', name: 'Trend + starke Verdrängung', fn: function(s){ return s.withBias && s.gapAtr >= 0.6; } },
+  { id: 'trend_green', name: 'Trend + Ampel grün', fn: function(s, a){ return s.withBias && a === 'gruen'; } },
+  { id: 'trend_liq_green', name: 'Trend + Liquiditätsziel + Ampel grün', fn: function(s, a){ return s.withBias && s.liqTarget && a === 'gruen'; } },
+  { id: 'trend_pd', name: 'Trend + Vortages-Sweep', fn: function(s){ return s.withBias && s.prevDay; } },
+  { id: 'trend_lon', name: 'Trend + London', fn: function(s){ return s.withBias && s.session === 'London'; } },
+  { id: 'trend_ny', name: 'Trend + New York', fn: function(s){ return s.withBias && s.session === 'New York'; } },
+  { id: 'aplus', name: 'Trend + Liquiditätsziel + Verdrängung + Ampel grün', fn: function(s, a){ return s.withBias && s.liqTarget && s.gapAtr >= 0.6 && a === 'gruen'; } }
+];
+function gradeById(id){ return GRADES.filter(function(g){ return g.id === id; })[0] || null; }
 // Ein Signal auf den folgenden Kerzen durchspielen (konservativ: Stop und Ziel in derselben Kerze = Stop)
 function simulate(sig, c, cost){
   var fill = -1, n = c.length, r = { filled: false, r: null, mae: 0, mfe: 0, how: 'offen' };
@@ -757,13 +773,13 @@ function simulate(sig, c, cost){
 }
 // Rueckrechnung fuer ein Instrument: Signale finden, durchspielen, Ampel zum Signalzeitpunkt bestimmen
 function backtest(p){
-  var c = p.m15, sigs = scanSetups(c, { instr: p.instr, d1: p.d1 }), res = [];
+  var bar = p.bar || 15 * 60e3, c = p.m15, sigs = scanSetups(c, { instr: p.instr, d1: p.d1, bar: bar }), res = [];
   var cost = costOf(p.instr, c.length ? c[c.length - 1].c : 0);
   sigs.forEach(function(s){
     var sim = simulate(s, c, cost);
     if (!sim.filled || sim.r == null) return;
     var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
-    var h1 = p.h1 ? p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300) : null;
+    var h1 = p.h1 ? (p.h1 === p.m15 ? c.slice(Math.max(0, s.i - 300), s.i + 1) : p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300)) : null;
     var d1 = p.d1 ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
     var chk = scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
