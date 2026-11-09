@@ -36,10 +36,12 @@ for (const type of ['sweep', 'pullback']) for (const g of L.GRADES) {
   const sel = f(all);
   grades.push({ id, type, name: L.gradeName(id), all: st(sel), train: st(sel.filter((t) => t.at < split)), test: st(sel.filter((t) => t.at >= split)), perDay: +(sel.length / tradingDays).toFixed(2) });
 }
-const good = grades.filter((g) => g.train.n >= 5 && g.test.n >= 10 && g.train.mean > 0.1 && g.test.mean > 0.1 && g.all.lo > 0).sort((a, b) => b.all.mean - a.all.mean);
-// A+ = beste gute Stufe; A = alle anderen guten Stufen (Vereinigung, je Trade nur einmal gezaehlt)
-const chosen = good[0] ? good[0].id : null;
-const aIds = good.slice(1).map((g) => g.id);
+// A+ = Stufe, die in beiden Haelften klar im Plus liegt UND insgesamt mit 95 % ueber null (beste davon).
+// A  = weitere Stufen, die in beiden Haelften im Plus liegen und im Schnitt mindestens +0,1 R bringen (noch nicht sicher belegt).
+const strong = grades.filter((g) => g.train.n >= 5 && g.test.n >= 10 && g.train.mean > 0.1 && g.test.mean > 0.1 && g.all.lo > 0).sort((a, b) => b.all.mean - a.all.mean);
+const chosen = strong[0] ? strong[0].id : null;
+const aIds = grades.filter((g) => g.id !== chosen && g.all.n >= 50 && g.train.mean > 0 && g.test.mean > 0 && g.all.mean >= 0.1).sort((a, b) => b.all.mean - a.all.mean).map((g) => g.id);
+const good = grades.filter((g) => g.id === chosen || aIds.includes(g.id));
 const inA = all.filter((t) => good.some((g) => L.gradeMatch(g.id, t.sig, t.ampel)));
 const inTop = chosen ? all.filter((t) => L.gradeMatch(chosen, t.sig, t.ampel)) : [];
 const byInstr = {}; inA.forEach((t) => { (byInstr[t.instr] = byInstr[t.instr] || []).push(t); });
