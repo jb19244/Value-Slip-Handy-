@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '0939eea2e9';
+const WORKER_VER = '3bcd045bb1';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2500,14 +2500,17 @@ function simulate(sig, c, cost){
   var risk = (entry - sig.stop) * sig.dir;
   if (!(risk > 0)){ r.how = 'ungültig'; return r; }
   r.filled = true; r.fillT = c[fill].t; r.entry = entry;
-  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk;
+  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk, beOn = false;
   for (i = fill; i < n; i++){
     var x = c[i], bpx = berlinFast(x.t);
     var adv = ((sig.dir > 0 ? x.l : x.h) - entry) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - entry) * sig.dir / risk;
     if (i === fill && mode === 'limit') fav = Math.max(0, ((x.c - entry) * sig.dir) / risk);
     if (adv < r.mae) r.mae = adv;
+    // Stop auf Einstand, sobald 1R erreicht war (gilt ab der Kerze danach)
+    if (beOn && adv <= 0){ r.r = 0; r.how = 'Einstand'; r.exitT = x.t; break; }
     if (adv <= -1){ r.r = -1; r.how = 'Stop'; r.exitT = x.t; break; }
     if (fav > r.mfe) r.mfe = fav;
+    if (sig.be && fav >= 1 && !beOn && rr > 1) beOn = true;
     if ((i > fill || mode !== 'limit') && fav >= rr){ r.r = rr; r.how = 'Ziel'; r.exitT = x.t; break; }
     if (sig.exit === 'sma5' && i >= 4){
       var m5 = (c[i].c + c[i - 1].c + c[i - 2].c + c[i - 3].c + c[i - 4].c) / 5;
@@ -2531,13 +2534,14 @@ function backtest(p){
     var sim = sims[ix];
     if (!sim.filled || sim.r == null) return;
     if (s.oco && sim.fillT !== first[s.type + s.oco]) return;
+    if (p.be){ var s2 = Object.assign({}, s, { be: true }), simBe = simulate(s2, c, cost); sim.rBe = simBe.r != null ? simBe.r : sim.r; }
     var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
     var h1 = p.h1 ? (p.h1 === p.m15 ? c.slice(Math.max(0, s.i - 300), s.i + 1) : p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300)) : null;
     var d1 = p.d1 && !p.noCheck ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
     var chk = p.noCheck ? { ampel: null, score: null, items: [] } : scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
     res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: sim.entry || s.entry, stop: s.stop, target: s.target, exit: (sim.entry || s.entry) + s.dir * ((sim.entry || s.entry) - s.stop) * s.dir * sim.r,
-      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
+      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, rBe: sim.rBe, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
   });
   return res;
 }
@@ -2677,7 +2681,7 @@ function normTrade(x) {
   if (!x || typeof x !== 'object' || typeof x.id !== 'string' || !TL.instrumentByKey(x.k)) return null;
   const n = (v) => +v;
   if (!(n(x.entry) > 0) || !(n(x.stop) > 0) || !(n(x.target) > 0) || (x.dir !== 1 && x.dir !== -1)) return null;
-  return { id: x.id.slice(0, 24), k: x.k, name: String(x.name || x.k).slice(0, 30), dir: x.dir, entry: n(x.entry), stop: n(x.stop), target: n(x.target), off: +x.off || 0, at: +x.at || 0, ko: +x.ko > 0 ? +x.ko : 0 };
+  return { id: x.id.slice(0, 24), k: x.k, name: String(x.name || x.k).slice(0, 30), dir: x.dir, entry: n(x.entry), stop: n(x.stop), target: n(x.target), off: +x.off || 0, at: +x.at || 0, ko: +x.ko > 0 ? +x.ko : 0, sig: typeof x.sig === 'string' ? x.sig.slice(0, 60) : null };
 }
 async function tradeRoute(request, headers, env, nowMs) {
   if (!env.VS) return json(500, 'KV-Speicher fehlt', headers);
@@ -2701,11 +2705,11 @@ async function tradeRoute(request, headers, env, nowMs) {
       watch: (Array.isArray(b.watch) ? b.watch : []).filter((k) => typeof k === 'string' && TL.instrumentByKey(k)).slice(0, 8),
       scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top'].includes(b.quality) ? b.quality : 'top',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
-      tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [] };
+      tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [] };
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
-    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, log: (t.log || []).slice(-10), now: nowMs }, headers);
+    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), log: (t.log || []).slice(-10), now: nowMs }, headers);
   }
   if (path === '/trade/test') {
     if (!validSub(t.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in Trade Check ein.', headers);
@@ -2731,7 +2735,8 @@ async function qualityCfg(env, nowMs) {
       if (!r.ok) return {};
       const j = await r.json();
       const stats = {}; (j.grades || []).forEach((g) => { stats[g.id] = g.all && g.all.n ? { n: g.all.n, mean: g.all.mean, win: g.all.win } : null; });
-      return { chosen: j.passed ? j.chosen : null, aIds: j.passed ? (j.aIds || []) : [], stats, top: j.top || null, good: j.good || null };
+      const dossier = {}; Object.keys(j.dossier || {}).forEach((k) => { dossier[k] = { mgmt: j.dossier[k].mgmt }; });
+      return { chosen: j.passed ? j.chosen : null, aIds: j.passed ? (j.aIds || []) : [], stats, top: j.top || null, good: j.good || null, dossier };
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -2881,6 +2886,13 @@ async function runTrade(env, nowMs) {
           ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', newsSoon };
         t.signals.unshift(sig); t.signals = t.signals.slice(0, 30); dirty = true;
         const want = t.quality === 'all' ? ((sig.type === 'sweep' || sig.type === 'pullback') && (sig.withBias || t.scanAll)) : (t.quality === 'a' ? cls !== 'B' : cls === 'A+');
+        if (want && cls !== 'B') {
+          const dz = q.dossier && q.dossier[cls === 'A+' ? aId : bHit];
+          t.track = Array.isArray(t.track) ? t.track : [];
+          t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: g.mode || 'limit', entry: g.entry, stop: g.stop, target: g.target, ko, t: g.t, expires: g.expires, cls, grade: cls === 'A+' ? aId : bHit,
+            be: !!(dz && dz.mgmt === 'be'), state: 'wartet', at: nowMs });
+          t.track = t.track.slice(-20);
+        }
         if (want) {
           const gs = q.stats && q.stats[cls === 'A+' ? aId : (cls === 'A' ? bHit : '')];
           const proof = gs && gs.n ? ' Rückrechnung: ' + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Treffer, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' : '';
@@ -2890,6 +2902,33 @@ async function runTrade(env, nowMs) {
     }
     t.signals = t.signals.filter((x) => nowMs - x.t < 3 * 86400e3);
   }
+  // 6) Gemeldete Signale verfolgen: ausgeloest, 1R, Ziel, Stop, Einstand, Tagesende, verfallen
+  const live = (t.track || []).filter((x) => x.state === 'wartet' || x.state === 'offen');
+  for (const x of live) {
+    const c5 = await candlesOf(x.y, '5m', '5d');
+    if (!c5 || !c5.length) continue;
+    rep.tracked = (rep.tracked || 0) + 1;
+    let i0 = -1; for (let i = 0; i < c5.length; i++) { if (c5[i].t < x.t) i0 = i; else break; }
+    const sim = TL.simulate({ i: i0, dir: x.dir, mode: x.mode, entry: x.entry, stop: x.stop, target: x.target, expires: x.expires, be: x.be }, c5, 0);
+    const mine = (t.trades || []).some((tr) => tr.sig === x.id); // eigener Tagebuch-Trade meldet sich schon selbst
+    const nm = x.name + ' ' + (x.dir > 0 ? 'Long' : 'Short') + ' (' + x.cls + ')';
+    const done = (state, txt) => { x.state = state; x.r = sim.r; x.exitAt = sim.exitT || nowMs; dirty = true; t.trackLog = (t.trackLog || []).concat([{ id: x.id, k: x.k, name: x.name, dir: x.dir, cls: x.cls, grade: x.grade, t: x.t, fillT: x.fillT || null, state, r: sim.r != null ? Math.round(sim.r * 100) / 100 : null }]).slice(-200); return txt; };
+    if (sim.filled && x.state === 'wartet') { x.state = 'offen'; x.fillT = sim.fillT; dirty = true; if (!mine) await send('k:' + x.id + ':fill', { body: nm + ': Order ausgelöst bei ' + fmtp(sim.entry, x.k) + '. SL ' + fmtp(x.stop, x.k) + ' · TP ' + fmtp(x.target, x.k) + '. Ich melde mich bei TP oder SL.', tag: 'trk-' + x.id }); }
+    if (sim.filled && sim.mfe >= 1 && !x.r1) { x.r1 = nowMs; dirty = true; if (!mine && (sim.r == null || sim.r > 0)) await send('k:' + x.id + ':r1', { body: nm + ' liegt 1R im Plus.' + (x.be ? ' Laut Rückrechnung lohnt es sich jetzt, den Stop auf Einstand ' + fmtp(sim.entry, x.k) + ' zu ziehen.' : ' Laut Rückrechnung ist es besser, den Stop stehen zu lassen.'), tag: 'trk-' + x.id }); }
+    if (sim.filled && sim.r != null) {
+      const how = sim.how === 'Ziel' ? 'ziel' : (sim.how === 'Stop' ? 'stop' : (sim.how === 'Einstand' ? 'einstand' : 'tagesende'));
+      const txt = how === 'ziel' ? '✅ TP erreicht: ' + nm + ' bei ' + fmtp(x.target, x.k) + ' (+' + sim.r.toFixed(1).replace('.', ',') + 'R).'
+        : how === 'stop' ? '❌ SL erreicht: ' + nm + ' bei ' + fmtp(x.stop, x.k) + ' (−1R).'
+        : how === 'einstand' ? 'Einstand: ' + nm + ' wurde bei ' + fmtp(sim.entry, x.k) + ' ausgestoppt (0R).'
+        : 'Tagesende: ' + nm + ' jetzt schließen, Stand ' + (sim.r >= 0 ? '+' : '') + sim.r.toFixed(1).replace('.', ',') + 'R.';
+      done(how, txt);
+      if (!mine) await send('k:' + x.id + ':done', { body: txt, tag: 'trk-' + x.id });
+    } else if (!sim.filled && (sim.how === 'verpasst' || nowMs > x.expires)) {
+      done(sim.how === 'verpasst' ? 'verpasst' : 'verfallen');
+      if (!mine) await send('k:' + x.id + ':exp', { body: nm + ': ' + (sim.how === 'verpasst' ? 'Kurs lief ohne Ausführung zum Ziel. Order löschen.' : 'Order nicht ausgelöst und jetzt verfallen. Order löschen.'), tag: 'trk-' + x.id });
+    }
+  }
+  if (t.track) t.track = t.track.filter((x) => x.state === 'wartet' || x.state === 'offen' || nowMs - (x.exitAt || x.at) < 86400e3);
   // Aufraeumen: alte Sendungen vergessen
   for (const k of Object.keys(t.sent)) if (nowMs - t.sent[k] > 3 * 86400e3) { delete t.sent[k]; dirty = true; }
   if (dirty) await env.VS.put('trade', JSON.stringify(t));
