@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '966149c3fd';
+const WORKER_VER = '3c82611950';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -1744,8 +1744,21 @@ var INSTRUMENTS = [
   { k: 'WTI', name: 'Öl (WTI)', y: 'CL=F', type: 'cmd', ccy: ['USD'], quote: 'USD', cot: '067651', cotSign: 1, dec: 2, zone: 'us', basis: true, kw: /crude|oil|opec/i },
   { k: 'DAX', name: 'DAX', y: '^GDAXI', type: 'idx', ccy: ['EUR'], quote: 'EUR', cot: null, dec: 1, zone: 'eu' },
   { k: 'NDX', name: 'Nasdaq 100', y: '^NDX', type: 'idx', ccy: ['USD'], quote: 'USD', cot: '209742', cotSign: 1, dec: 1, zone: 'us' },
-  { k: 'SPX', name: 'S&P 500', y: '^GSPC', type: 'idx', ccy: ['USD'], quote: 'USD', cot: '13874A', cotSign: 1, dec: 1, zone: 'us' }
+  { k: 'SPX', name: 'S&P 500', y: '^GSPC', type: 'idx', ccy: ['USD'], quote: 'USD', cot: '13874A', cotSign: 1, dec: 1, zone: 'us' },
+  { k: 'DJI', name: 'Dow Jones', y: '^DJI', type: 'idx', ccy: ['USD'], quote: 'USD', cot: null, dec: 1, zone: 'us' },
+  { k: 'AUDUSD', name: 'AUD/USD', y: 'AUDUSD=X', type: 'fx', ccy: ['AUD', 'USD'], quote: 'USD', cot: '232741', cotSign: 1, dec: 5, zone: 'eu' },
+  { k: 'USDCAD', name: 'USD/CAD', y: 'CAD=X', type: 'fx', ccy: ['USD', 'CAD'], quote: 'CAD', cot: '090741', cotSign: -1, dec: 5, zone: 'us' },
+  { k: 'USDCHF', name: 'USD/CHF', y: 'CHF=X', type: 'fx', ccy: ['USD', 'CHF'], quote: 'CHF', cot: '092741', cotSign: -1, dec: 5, zone: 'eu' },
+  { k: 'NZDUSD', name: 'NZD/USD', y: 'NZDUSD=X', type: 'fx', ccy: ['NZD', 'USD'], quote: 'USD', cot: '112741', cotSign: 1, dec: 5, zone: 'eu' },
+  { k: 'EURJPY', name: 'EUR/JPY', y: 'EURJPY=X', type: 'fx', ccy: ['EUR', 'JPY'], quote: 'JPY', cot: null, dec: 3, zone: 'eu' },
+  { k: 'GBPJPY', name: 'GBP/JPY', y: 'GBPJPY=X', type: 'fx', ccy: ['GBP', 'JPY'], quote: 'JPY', cot: null, dec: 3, zone: 'eu' },
+  { k: 'EURGBP', name: 'EUR/GBP', y: 'EURGBP=X', type: 'fx', ccy: ['EUR', 'GBP'], quote: 'GBP', cot: null, dec: 5, zone: 'eu' },
+  { k: 'BRENT', name: 'Öl (Brent)', y: 'BZ=F', type: 'cmd', ccy: ['USD'], quote: 'USD', cot: null, dec: 2, zone: 'us', basis: true, kw: /crude|oil|opec/i },
+  { k: 'COPPER', name: 'Kupfer', y: 'HG=F', type: 'cmd', ccy: ['USD'], quote: 'USD', cot: '085692', cotSign: 1, dec: 4, zone: 'us', basis: true }
 ];
+// Liquide Aktien, die der Scanner zusaetzlich durchsucht (alle bei Trade Republic mit Knock-outs handelbar)
+var SCAN_STOCKS = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'GOOGL', 'AMD', 'SAP.DE', 'RHM.DE', 'SIE.DE', 'ALV.DE'];
+function scanUniverse(){ return INSTRUMENTS.concat(SCAN_STOCKS.map(stockInstrument)); }
 // Eigene Aktie: Symbol wie bei Yahoo (AAPL, NVDA, SAP.DE, RHM.DE)
 function stockInstrument(sym){
   var s = String(sym || '').trim().toUpperCase();
@@ -1901,6 +1914,8 @@ function eurPer(ccy, rates){
   if (ccy === 'USD') return 1 / rates.EURUSD;
   if (ccy === 'JPY') return rates.USDJPY > 0 ? 1 / (rates.EURUSD * rates.USDJPY) : null;
   if (ccy === 'GBP') return rates.GBPUSD > 0 ? rates.GBPUSD / rates.EURUSD : null;
+  if (ccy === 'CAD') return rates.USDCAD > 0 ? 1 / (rates.EURUSD * rates.USDCAD) : null;
+  if (ccy === 'CHF') return rates.USDCHF > 0 ? 1 / (rates.EURUSD * rates.USDCHF) : null;
   return null;
 }
 // Positionsgroesse: Risiko in Euro geteilt durch Verlust je Einheit bis zum Stop; optional Knock-out mit Bezugsverhaeltnis
@@ -2173,7 +2188,7 @@ function biasAt(d1, dayKey){
 }
 // Typische Kosten (Spread des Knock-outs) in Kurspunkten
 function costOf(instr, px){
-  var c = { EURUSD: 0.0001, GBPUSD: 0.00015, USDJPY: 0.015, XAUUSD: 0.5, XAGUSD: 0.03, WTI: 0.04, DAX: 3, NDX: 4, SPX: 1 }[instr.k];
+  var c = { EURUSD: 0.0001, GBPUSD: 0.00015, USDJPY: 0.015, XAUUSD: 0.5, XAGUSD: 0.03, WTI: 0.04, DAX: 3, NDX: 4, SPX: 1, DJI: 4, AUDUSD: 0.00012, USDCAD: 0.00015, USDCHF: 0.00015, NZDUSD: 0.00015, EURJPY: 0.02, GBPJPY: 0.03, EURGBP: 0.0001, BRENT: 0.04, COPPER: 0.002 }[instr.k];
   return c != null ? c : px * 0.0006;
 }
 
@@ -2188,12 +2203,13 @@ function scanSetups(c, opt){
   var days = {}, order = [];
   for (var i = 0; i < n; i++){
     var k = bp[i].key, d = days[k];
-    if (!d){ d = days[k] = { hi: -Infinity, lo: Infinity, ahi: -Infinity, alo: Infinity, wd: bp[i].wd, first: i }; order.push(k); }
+    if (!d){ d = days[k] = { hi: -Infinity, lo: Infinity, ahi: -Infinity, alo: Infinity, lhi: -Infinity, llo: Infinity, wd: bp[i].wd, first: i, wk: Math.floor((Date.UTC(+k.slice(0, 4), +k.slice(5, 7) - 1, +k.slice(8, 10)) / 864e5 + 3) / 7) }; order.push(k); }
     if (c[i].h > d.hi) d.hi = c[i].h; if (c[i].l < d.lo) d.lo = c[i].l;
     if (bp[i].min < 480){ if (c[i].h > d.ahi) d.ahi = c[i].h; if (c[i].l < d.alo) d.alo = c[i].l; }
+    if (bp[i].min >= 480 && bp[i].min < 720){ if (c[i].h > d.lhi) d.lhi = c[i].h; if (c[i].l < d.llo) d.llo = c[i].l; }
   }
-  var prevOf = {}, last = null;
-  order.forEach(function(k){ prevOf[k] = last; if (days[k].wd !== 0 && days[k].wd !== 6) last = k; });
+  var prevOf = {}, last = null, weeks = {};
+  order.forEach(function(k){ prevOf[k] = last; if (days[k].wd !== 0 && days[k].wd !== 6) last = k; var w = weeks[days[k].wk] || (weeks[days[k].wk] = { hi: -Infinity, lo: Infinity }); w.hi = Math.max(w.hi, days[k].hi); w.lo = Math.min(w.lo, days[k].lo); });
   var biasCache = {};
   var a14 = [], trs = 0;
   for (i = 0; i < n; i++){ var tr = i ? Math.max(c[i].h - c[i].l, Math.abs(c[i].h - c[i - 1].c), Math.abs(c[i].l - c[i - 1].c)) : c[i].h - c[i].l; trs = i < 14 ? trs + tr : trs; a14.push(i < 13 ? null : (i === 13 ? (trs) / 14 : (a14[i - 1] * 13 + tr) / 14)); }
@@ -2227,7 +2243,7 @@ function scanSetups(c, opt){
             var target = tgt ? tgt.p : entry + s.dir * risk * 2.5;
             if (!biasCache[day]) biasCache[day] = biasAt(opt.d1, day) || 'x';
             var bias = biasCache[day] === 'x' ? 0 : biasCache[day];
-            out.push({ k: instr && instr.k, i: i, t: c[i].t + bar, day: day, dir: s.dir, entry: entry, stop: stop, target: target, rr: (target - entry) * s.dir / risk, risk: risk,
+            out.push({ k: instr && instr.k, type: 'sweep', i: i, t: c[i].t + bar, day: day, dir: s.dir, entry: entry, stop: stop, target: target, rr: (target - entry) * s.dir / risk, risk: risk,
               sweep: s.name, level: s.level, liqTarget: !!tgt, bias: bias, withBias: bias === s.dir, fvg: [g.lo, g.hi], expires: c[i].t + bar + 3 * 3600e3,
               gapAtr: (g.hi - g.lo) / a, depthAtr: Math.abs(s.ext - s.level) / a, session: s.min < 720 ? 'London' : 'New York', prevDay: /Vortag/.test(s.name) });
           }
@@ -2241,6 +2257,10 @@ function scanSetups(c, opt){
     var lv = [];
     if (dd && isFinite(dd.alo) && b.min >= 480){ lv.push({ n: 'Asien-Tief', p: dd.alo, dir: 1 }, { n: 'Asien-Hoch', p: dd.ahi, dir: -1 }); }
     if (pd){ lv.push({ n: 'Vortagestief', p: pd.lo, dir: 1 }, { n: 'Vortageshoch', p: pd.hi, dir: -1 }); }
+    // in der New Yorker Zeit: Hoch/Tief der Londoner Sitzung; immer: Vorwochenhoch/-tief
+    if (dd && b.min >= 870 && isFinite(dd.llo)){ lv.push({ n: 'London-Tief', p: dd.llo, dir: 1 }, { n: 'London-Hoch', p: dd.lhi, dir: -1 }); }
+    var pw = weeks[dd.wk - 1];
+    if (pw && isFinite(pw.lo)){ lv.push({ n: 'Vorwochentief', p: pw.lo, dir: 1 }, { n: 'Vorwochenhoch', p: pw.hi, dir: -1 }); }
     // Tageshoch/-tief bis vor dieser Kerze
     var dHi = -Infinity, dLo = Infinity;
     for (var q = dd.first; q < i; q++){ if (c[q].h > dHi) dHi = c[q].h; if (c[q].l < dLo) dLo = c[q].l; }
@@ -2261,6 +2281,58 @@ function scanSetups(c, opt){
   }
   return out;
 }
+// ---- Setup 2: Trend-Pullback. In der Hauptzeit bricht der Kurs mit Verdraengung ein Swing-Hoch (Long) bzw. -Tief (Short)
+// in Richtung Tagestrend (BOS). Einstieg per Limit im FVG der Verdraengung, Stop hinter dem letzten Gegen-Swing.
+function scanPullbacks(c, opt){
+  opt = opt || {};
+  var instr = opt.instr, kz = killzones(instr), out = [], n = c.length, bar = opt.bar || 3600e3, from = Math.max(30, opt.from || 0);
+  if (n < 60) return out;
+  var bp = c.map(function(x){ return berlinFast(x.t); }), inKz = function(m){ return kz.some(function(z){ return m >= z[0] && m < z[1]; }); };
+  var a14 = [], trs = 0;
+  for (var i = 0; i < n; i++){ var tr = i ? Math.max(c[i].h - c[i].l, Math.abs(c[i].h - c[i - 1].c), Math.abs(c[i].l - c[i - 1].c)) : c[i].h - c[i].l; trs = i < 14 ? trs + tr : trs; a14.push(i < 13 ? null : (i === 13 ? trs / 14 : (a14[i - 1] * 13 + tr) / 14)); }
+  // Tageswerte fuer Ziele (Vortageshoch/-tief)
+  var days = {}, order = [];
+  for (i = 0; i < n; i++){ var k = bp[i].key, d = days[k]; if (!d){ d = days[k] = { hi: -Infinity, lo: Infinity, wd: bp[i].wd }; order.push(k); } if (c[i].h > d.hi) d.hi = c[i].h; if (c[i].l < d.lo) d.lo = c[i].l; }
+  var prevOf = {}, last = null; order.forEach(function(k){ prevOf[k] = last; if (days[k].wd !== 0 && days[k].wd !== 6) last = k; });
+  var sw = swings(c, 2), hiIdx = 0, loIdx = 0, refH = null, refL = null, biasCache = {}, used = {};
+  var lastHi = function(j){ var r = null; for (var q = 0; q < sw.hi.length && sw.hi[q].i + 2 <= j; q++) r = sw.hi[q]; return r; };
+  var lastLo = function(j){ var r = null; for (var q = 0; q < sw.lo.length && sw.lo[q].i + 2 <= j; q++) r = sw.lo[q]; return r; };
+  for (i = 2; i < n; i++){
+    while (hiIdx < sw.hi.length && sw.hi[hiIdx].i + 2 <= i){ refH = sw.hi[hiIdx]; hiIdx++; }
+    while (loIdx < sw.lo.length && sw.lo[loIdx].i + 2 <= i){ refL = sw.lo[loIdx]; loIdx++; }
+    var dir = 0;
+    if (refH && c[i].c > refH.p && !used['h' + refH.i]){ dir = 1; used['h' + refH.i] = 1; }
+    else if (refL && c[i].c < refL.p && !used['l' + refL.i]){ dir = -1; used['l' + refL.i] = 1; }
+    if (!dir || i < from) continue;
+    var b = bp[i]; if (!inKz(b.min) || b.wd === 0 || b.wd === 6) continue;
+    var day = b.key;
+    if (!biasCache[day]) biasCache[day] = biasAt(opt.d1, day) || 'x';
+    var bias = biasCache[day] === 'x' ? 0 : biasCache[day];
+    if (bias !== dir && !opt.any) continue;
+    var a = a14[i]; if (!a) continue;
+    var g = null;
+    for (var j = Math.max(2, i - 2); j <= i; j++){
+      var cand = null;
+      if (dir > 0 && c[j].l > c[j - 2].h) cand = { lo: c[j - 2].h, hi: c[j].l };
+      if (dir < 0 && c[j].h < c[j - 2].l) cand = { lo: c[j].h, hi: c[j - 2].l };
+      if (cand && cand.hi - cand.lo >= a * 0.3 && (!g || cand.hi - cand.lo > g.hi - g.lo)) g = cand;
+    }
+    if (!g) continue;
+    var opp = dir > 0 ? lastLo(i) : lastHi(i); if (!opp) continue;
+    var entry = (g.lo + g.hi) / 2, stop = opp.p - dir * a * 0.1, risk = (entry - stop) * dir;
+    if (!(risk > a * 0.3 && risk < a * 4)) continue;
+    var pd = prevOf[day] && days[prevOf[day]], cands = [];
+    if (pd) cands.push(dir > 0 ? pd.hi : pd.lo);
+    for (var q = sw.hi.length - 1, m = 0; dir > 0 && q >= 0 && m < 6; q--) if (sw.hi[q].i + 2 <= i && sw.hi[q].i > i - 120){ cands.push(sw.hi[q].p); m++; }
+    for (q = sw.lo.length - 1, m = 0; dir < 0 && q >= 0 && m < 6; q--) if (sw.lo[q].i + 2 <= i && sw.lo[q].i > i - 120){ cands.push(sw.lo[q].p); m++; }
+    var tgt = cands.map(function(x){ return { p: x, rr: (x - entry) * dir / risk }; }).filter(function(x){ return x.rr >= 2 && x.rr <= 6; }).sort(function(x, y){ return x.rr - y.rr; })[0];
+    var target = tgt ? tgt.p : entry + dir * risk * 2.5;
+    out.push({ k: instr && instr.k, type: 'pullback', i: i, t: c[i].t + bar, day: day, dir: dir, entry: entry, stop: stop, target: target, rr: (target - entry) * dir / risk, risk: risk,
+      sweep: 'Trend-Pullback', level: dir > 0 ? refH.p : refL.p, liqTarget: !!tgt, bias: bias, withBias: bias === dir, fvg: [g.lo, g.hi], expires: c[i].t + bar + 4 * 3600e3,
+      gapAtr: (g.hi - g.lo) / a, depthAtr: 0, session: b.min < 720 ? 'London' : 'New York', prevDay: false });
+  }
+  return out;
+}
 // ---- Qualitaetsstufen: feste Liste, die Auswahl trifft die Rueckrechnung (Jahr 1), geprueft wird auf Jahr 2
 var GRADES = [
   { id: 'alle', name: 'Alle Signale', fn: function(s, a){ return true; } },
@@ -2276,6 +2348,14 @@ var GRADES = [
   { id: 'aplus', name: 'Trend + Liquiditätsziel + Verdrängung + Ampel grün', fn: function(s, a){ return s.withBias && s.liqTarget && s.gapAtr >= 0.6 && a === 'gruen'; } }
 ];
 function gradeById(id){ return GRADES.filter(function(g){ return g.id === id; })[0] || null; }
+// Stufe mit Setup-Typ, z. B. 'pullback:trend_liq' (ohne Typ: beide Setups)
+function gradeMatch(id, sig, ampel){
+  if (!id) return false;
+  var p = String(id).split(':'), type = p.length > 1 ? p[0] : null, g = gradeById(p.length > 1 ? p[1] : p[0]);
+  if (!g || (type && (sig.type || 'sweep') !== type)) return false;
+  return !!g.fn(sig, ampel);
+}
+function gradeName(id){ var p = String(id || '').split(':'), g = gradeById(p.length > 1 ? p[1] : p[0]); return (p.length > 1 ? (p[0] === 'pullback' ? 'Trend-Pullback' : 'Liquidity Sweep') + ': ' : '') + (g ? g.name : id); }
 // Ein Signal auf den folgenden Kerzen durchspielen (konservativ: Stop und Ziel in derselben Kerze = Stop)
 function simulate(sig, c, cost){
   var fill = -1, n = c.length, r = { filled: false, r: null, mae: 0, mfe: 0, how: 'offen' };
@@ -2304,7 +2384,7 @@ function simulate(sig, c, cost){
 }
 // Rueckrechnung fuer ein Instrument: Signale finden, durchspielen, Ampel zum Signalzeitpunkt bestimmen
 function backtest(p){
-  var bar = p.bar || 15 * 60e3, c = p.m15, sigs = scanSetups(c, { instr: p.instr, d1: p.d1, bar: bar }), res = [];
+  var bar = p.bar || 15 * 60e3, c = p.m15, sigs = (p.setup === 'pullback' ? scanPullbacks : scanSetups)(c, { instr: p.instr, d1: p.d1, bar: bar, any: p.any }), res = [];
   var cost = costOf(p.instr, c.length ? c[c.length - 1].c : 0);
   sigs.forEach(function(s){
     var sim = simulate(s, c, cost);
@@ -2315,7 +2395,7 @@ function backtest(p){
     var chk = scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
     res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, exit: s.entry + s.dir * s.risk * sim.r,
-      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], r: sim.r, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
+      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
   });
   return res;
 }
@@ -2358,7 +2438,7 @@ function excursionAdvice(trades){
   }
   return out;
 }
-  return { scanSetups, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
+  return { scanSetups, scanPullbacks, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
 const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
@@ -2509,7 +2589,7 @@ async function qualityCfg(env, nowMs) {
       if (!r.ok) return {};
       const j = await r.json();
       const stats = {}; (j.grades || []).forEach((g) => { stats[g.id] = g.all && g.all.n ? { n: g.all.n, mean: g.all.mean, win: g.all.win } : null; });
-      return { chosen: j.passed ? j.chosen : null, second: j.passed ? j.second : null, stats };
+      return { chosen: j.passed ? j.chosen : null, aIds: j.passed ? (j.aIds || []) : [], stats, top: j.top || null, good: j.good || null };
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -2628,9 +2708,9 @@ async function runTrade(env, nowMs) {
   // 5) Setup-Scanner in den Hauptzeiten: Sweep -> CHoCH -> FVG auf 1-Std-Kerzen (in der Rueckrechnung ueber 2 Jahre deutlich besser als 15 Min)
   if (t.scan !== false && weekday) {
     t.scanAt = t.scanAt || {}; t.bias = t.bias || {}; t.signals = Array.isArray(t.signals) ? t.signals : [];
-    const keys = TL.INSTRUMENTS.map((i) => i.k).concat((t.watch || []).filter((k) => /^S:/.test(k)));
+    const keys = [...new Set(TL.scanUniverse().map((i) => i.k).concat((t.watch || []).filter((k) => /^S:/.test(k))))];
     const due = keys.map((k) => TL.instrumentByKey(k)).filter((ins) => ins && TL.killzones(ins).some((z) => clk.min >= z[0] && clk.min < z[1] + 75) && nowMs - (t.scanAt[ins.k] || 0) >= 14 * 60e3)
-      .sort((a, b) => (t.scanAt[a.k] || 0) - (t.scanAt[b.k] || 0)).slice(0, 3);
+      .sort((a, b) => (t.scanAt[a.k] || 0) - (t.scanAt[b.k] || 0)).slice(0, 6);
     for (const ins of due) {
       t.scanAt[ins.k] = nowMs; dirty = true; rep.scanned = (rep.scanned || 0) + 1;
       const d1 = await candlesOf(ins.y, '1d', '1y');
@@ -2638,11 +2718,11 @@ async function runTrade(env, nowMs) {
       const bias = t.bias[ins.k] ? t.bias[ins.k].b : 0;
       const c = await candlesOf(ins.y, '60m', '1mo');
       if (!c || c.length < 60) continue;
-      const sigs = TL.scanSetups(c, { instr: ins, d1: null, bar: 3600e3, from: c.length - 3 }).filter((g) => g.day === dayKey && nowMs - g.t < 80 * 60e3 && g.t < nowMs + 60e3);
+      const sigs = TL.scanSetups(c, { instr: ins, d1: null, bar: 3600e3, from: c.length - 3 }).concat(TL.scanPullbacks(c, { instr: ins, d1: null, bar: 3600e3, from: c.length - 3, any: true })).filter((g) => g.day === dayKey && nowMs - g.t < 80 * 60e3 && g.t < nowMs + 60e3);
       for (const g of sigs) {
         const sim = TL.simulate(g, c, 0);
         if (sim.how === 'verpasst' || (sim.filled && sim.r != null)) continue;
-        const id = ins.k + ':' + g.t;
+        const id = ins.k + ':' + (g.type || 'sweep') + ':' + g.t;
         if (t.signals.some((x) => x.id === id)) continue;
         const ko = g.stop - g.dir * g.risk * 0.5;
         g.bias = bias; g.withBias = bias === g.dir;
@@ -2652,16 +2732,17 @@ async function runTrade(env, nowMs) {
         let chk = null; try { chk = TL.scoreCheck({ instr: ins, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, now: nowMs, d1, h1: c, m15: m15 && m15.length ? m15 : null, events: calNow }); } catch (e) { chk = null; }
         const ampel = chk && !chk.error ? chk.ampel : null;
         const newsSoon = (calNow || []).some((e) => e.impact === 'High' && ins.ccy.includes(e.country) && Date.parse(e.date) > nowMs - 15 * 60e3 && Date.parse(e.date) - nowMs < 60 * 60e3);
-        const gA = TL.gradeById(q.chosen || 'trend_liq_rr'), gB = TL.gradeById(q.second || 'trend_liq');
-        const cls = newsSoon ? 'B' : (gA && gA.fn(g, ampel) ? 'A+' : (gB && gB.fn(g, ampel) ? 'A' : 'B'));
-        const sig = { id, k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, level: g.level, withBias: g.withBias, liqTarget: g.liqTarget, bias, expires: g.expires, filled: sim.filled,
+        const aId = q.chosen || 'sweep:trend_liq_rr', bIds = q.chosen ? (q.aIds || []) : ['sweep:trend_liq'];
+        const bHit = bIds.find((id) => TL.gradeMatch(id, g, ampel));
+        const cls = newsSoon ? 'B' : (TL.gradeMatch(aId, g, ampel) ? 'A+' : (bHit ? 'A' : 'B'));
+        const sig = { id, type: g.type || 'sweep', k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, level: g.level, withBias: g.withBias, liqTarget: g.liqTarget, bias, expires: g.expires, filled: sim.filled,
           ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', newsSoon };
         t.signals.unshift(sig); t.signals = t.signals.slice(0, 30); dirty = true;
         const want = t.quality === 'all' ? (sig.withBias || t.scanAll) : (t.quality === 'a' ? cls !== 'B' : cls === 'A+');
         if (want) {
-          const gs = q.stats && q.stats[cls === 'A+' ? gA.id : (cls === 'A' ? gB.id : '')];
+          const gs = q.stats && q.stats[cls === 'A+' ? aId : (cls === 'A' ? bHit : '')];
           const proof = gs && gs.n ? ' Rückrechnung: ' + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Treffer, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' : '';
-          await send('s:' + id, { title: (cls !== 'B' ? cls + ' Setup' : 'Setup') + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. Limit ' + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + proof, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+          await send('s:' + id, { title: (cls !== 'B' ? cls + ' Setup' : 'Setup') + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std') + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. Limit ' + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + proof, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
         }
       }
     }
