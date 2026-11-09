@@ -58,7 +58,7 @@ input,select{font:inherit;color:var(--fg)}
 .dot.good{background:var(--good)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
 main{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 .page{display:flex;flex-direction:column;gap:14px;padding-block:16px 28px}
-.tabs{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);background:var(--surface);padding-top:6px;padding-bottom:max(6px,env(safe-area-inset-bottom,0px))}
+.tabs{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);background:var(--surface);padding-top:6px;padding-bottom:max(6px,env(safe-area-inset-bottom,0px))}
 .tab{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 4px;font-size:12px;font-weight:500;color:var(--muted)}
 .tab svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .tab[aria-selected="true"]{color:var(--accent)}
@@ -128,6 +128,12 @@ details.more[open] summary::after{content:"−"}
 .lv{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
 .lv:last-child{border-bottom:0}
 .lv .n{font-size:13px;overflow-wrap:anywhere} .lv .p{font-family:var(--font-d);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+.hero{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.hero div{background:var(--bg);border-radius:12px;padding:10px;min-width:0}
+.hero dt{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.hero dd{margin:2px 0 0;font-family:var(--font-d);font-size:20px;white-space:nowrap;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.guard{margin-top:10px;padding:10px 12px;border-radius:12px;font-size:14px;font-weight:600}
+.guard.ok{background:var(--good-bg);color:var(--good)} .guard.stop{background:var(--bad-bg);color:var(--bad)}
 .lv .acts{display:flex;gap:4px}
 .lv .acts button{width:30px;height:30px;border-radius:8px;background:var(--surface2);font-size:12px;font-weight:700;color:var(--muted)}
 .lv.now{background:color-mix(in srgb,var(--accent) 10%,transparent);border-radius:8px;padding-inline:8px;margin-inline:-8px}
@@ -194,6 +200,7 @@ table.st td:first-child{overflow-wrap:anywhere;padding-right:8px}
   </header>
   <main id="main"><div class="page gutter" id="page"></div></main>
   <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="heute"><svg viewBox="0 0 24 24"><path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/><circle cx="12" cy="12" r="4"/></svg>Heute</button>
     <button class="tab" role="tab" data-tab="check"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>Check</button>
     <button class="tab" role="tab" data-tab="markt"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 15l3-4 3 2 5-6"/></svg>Markt</button>
     <button class="tab" role="tab" data-tab="buch"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11M9 8h6"/></svg>Tagebuch</button>
@@ -1078,9 +1085,9 @@ var LS = 'tradecheck.v1';
 var SMC_TAGS = ['Order Block', 'Fair Value Gap', 'Liquidity Sweep', 'BOS', 'CHoCH', 'Breaker', 'Premium/Discount', 'OTE (62–79 %)'];
 var EW_TAGS = ['Welle 3', 'Welle 5', 'Welle C', 'ABC-Korrektur', 'Fib-Ziel'];
 function defaults(){
-  return { cfg: { account: 5000, risk: 1, fee: 1, url: '', token: '', push: { on: false, lead: 15, kz: true, scan: true, scanAll: false, quality: 'w60', qv2: true } },
+  return { cfg: { account: 5000, risk: 1, fee: 1, maxTrades: 2, maxLossR: 2, url: '', token: '', push: { on: false, lead: 15, kz: true, scan: true, scanAll: false, quality: 'triple', qv2: true, qv3: true } },
     form: { k: 'EURUSD', dir: 1, entry: '', stop: '', target: '', setups: [], ratio: '', ko: '' },
-    watch: ['EURUSD', 'XAUUSD', 'DAX', 'NDX'], names: {}, trades: [], alerts: [], tab: 'check', fib: { a: '', b: '', c: '' }, ko: {}, tf: '15m' };
+    watch: ['EURUSD', 'XAUUSD', 'DAX', 'NDX'], names: {}, trades: [], alerts: [], tab: 'heute', fib: { a: '', b: '', c: '' }, ko: {}, tf: '15m' };
 }
 function load(){
   var d = defaults();
@@ -1088,7 +1095,7 @@ function load(){
   return d;
 }
 var S = load();
-if (!S.cfg.push.qv2){ S.cfg.push.quality = 'w60'; S.cfg.push.qv2 = true; }
+if (!S.cfg.push.qv3){ S.cfg.push.quality = 'triple'; S.cfg.push.qv2 = S.cfg.push.qv3 = true; }
 var V = { signals: [], tev: {}, bt: null, pick: null, dienst: null, check: null, checkErr: '', busy: false, data: {}, rates: null, cal: null, calErr: '', cot: {}, lastSync: 0, pushMsg: '' };
 function save(){ try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {} }
 function $(s, r){ return (r || document).querySelector(s); }
@@ -1165,7 +1172,8 @@ function render(){
   $$('.tab').forEach(function(b){ b.setAttribute('aria-selected', String(b.dataset.tab === S.tab)); });
   renderSess();
   var p = $('#page');
-  if (S.tab === 'check') p.innerHTML = viewCheck();
+  if (S.tab === 'heute') p.innerHTML = viewHeute();
+  else if (S.tab === 'check') p.innerHTML = viewCheck();
   else if (S.tab === 'markt') p.innerHTML = viewMarkt();
   else if (S.tab === 'buch') p.innerHTML = viewBuch();
   else p.innerHTML = viewMehr();
@@ -1174,7 +1182,8 @@ function render(){
 function after(){
   // nur einmal je Instrument automatisch laden (nach einem Fehler erst wieder per Knopf oder Wechsel)
   if (S.tab === 'check' && !V.data[S.form.k] && !V.loading && V.tried !== S.form.k + '|' + base()){ V.tried = S.form.k + '|' + base(); loadInst(S.form.k); }
-  if (S.tab === 'markt') loadMarkt();
+  if (S.tab === 'markt' || S.tab === 'heute') loadMarkt();
+  if (S.tab === 'heute'){ loadOpen(); loadCtx(); }
   if (S.tab === 'buch') loadOpen();
 }
 
@@ -1349,6 +1358,7 @@ function runCheck(){
       var ov = overlap(exposure(i, f.dir), S.trades.filter(function(x){ return x.status === 'open'; }));
       if (ov.length){ var seen = {}; ov = ov.filter(function(o){ return seen[o.name + o.what] ? false : (seen[o.name + o.what] = 1); });
         res.items.unshift({ key: 'expo', title: 'Gebündeltes Risiko', verdict: 'warn', weight: 0, text: 'Offen: ' + ov.map(function(o){ return o.name + ' (setzt auf ' + o.what + ')'; }).join(', ') + '. Dieser Trade setzt in dieselbe Richtung. Geht es schief, verlierst du doppelt. Risiko aufteilen.' }); }
+      var tsd = todayState(); if (tsd.stop) res.items.unshift({ key: 'tag', title: 'Tagesgrenze', verdict: 'contra', weight: 0, text: tsd.stop });
       if (!V.cal) res.items.push({ key: 'newsx', title: 'News', verdict: 'neutral', weight: 0, text: 'Kalender gerade nicht erreichbar. Prüfe die Termine selbst.' });
     }
     V.check = res; V.busy = false; render();
@@ -1446,7 +1456,8 @@ function localSignals(){
     scanAll(d.h1, { instr: i, d1: d.d1, bar: 3600e3 }).filter(function(g){ return g.day === today; }).forEach(function(g){
       var sim = simulate(g, d.h1, 0);
       var w60 = V.bt1 && (V.bt1.w60 || []).some(function(id){ return gradeMatch(id, g); });
-      out.push({ w60: !!w60, id: k + ':' + (g.type || 'sweep') + ':' + g.t, type: g.type, mode: g.mode || 'limit', k: k, name: i.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko: g.stop - g.dir * g.risk * 0.5, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, withBias: g.withBias, liqTarget: g.liqTarget, cls: classify(g), expires: g.expires, status: sim.how === 'verpasst' ? 'verpasst' : (sim.filled ? (sim.r == null ? 'läuft' : (sim.r > 0 ? 'Ziel' : 'Stop')) : null) });
+      var tri = V.bt1 && (V.bt1.triple || []).some(function(id){ return gradeMatch(id, g); });
+      out.push({ triple: !!tri, w60: !!w60, id: k + ':' + (g.type || 'sweep') + ':' + g.t, type: g.type, mode: g.mode || 'limit', k: k, name: i.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko: g.stop - g.dir * g.risk * 0.5, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, withBias: g.withBias, liqTarget: g.liqTarget, cls: classify(g), expires: g.expires, status: sim.how === 'verpasst' ? 'verpasst' : (sim.filled ? (sim.r == null ? 'läuft' : (sim.r > 0 ? 'Ziel' : 'Stop')) : null) });
     });
   });
   return out;
@@ -1464,14 +1475,14 @@ function gradeLine(){
 }
 function viewSignals(limit){
   var now = Date.now(), all = allSignals().filter(function(g){ return now - g.t < 26 * 3600e3; });
-  var list = (V.sigAll ? all : all.filter(function(g){ return g.cls === 'A+' || g.cls === 'A' || g.w60; })).slice(0, limit || 12), hidden = all.length - (V.sigAll ? all.length : list.length);
+  var list = (V.sigAll ? all : all.filter(function(g){ return g.cls === 'A+' || g.cls === 'A' || g.w60 || g.triple; })).slice(0, limit || 12), hidden = all.length - (V.sigAll ? all.length : list.length);
   var h = '<section class="card" id="sigs"><div class="row"><h2>Signale</h2><span class="muted small">1 Std · 8 Strategien, 31 Märkte</span></div>';
   var more = hidden > 0 ? '<p class="hint">' + hidden + ' schwächere Signale ausgeblendet. <button class="link" data-act="sigall">Zeigen</button></p>' : (V.sigAll && all.length ? '<p class="hint"><button class="link" data-act="sigall">Nur A+ und A zeigen</button></p>' : '');
   if (!list.length) return h + '<p class="hint">Heute noch kein A+ oder A Setup. Der Scanner prüft in der Londoner und New Yorker Hauptzeit alle 15 Minuten alle Märkte' + (S.cfg.push.on && S.cfg.push.scan !== false ? ' und meldet sich per Mitteilung.' : '. Schalte unter Mehr die Benachrichtigungen ein, dann meldet er sich von selbst.') + '</p>' + more + gradeLine() + '</section>';
   return h + list.map(function(g){
     var i = instr(g.k) || { dec: 2 }, live = now < g.expires && !g.status, st = g.status || (live ? 'aktiv bis ' + hm(g.expires) : 'abgelaufen');
     var cls = g.status === 'Ziel' ? 'good' : (g.status === 'Stop' ? 'bad' : (live ? 'warn' : ''));
-    var gp = (g.w60 ? '<span class="pill good">60 %+</span> ' : '') + (g.cls === 'A+' || g.cls === 'A' ? '<span class="pill good">' + g.cls + '</span> ' : '');
+    var gp = (g.triple ? '<span class="pill good">3× geprüft</span> ' : '') + (g.w60 ? '<span class="pill good">60 %+</span> ' : '') + (g.cls === 'A+' || g.cls === 'A' ? '<span class="pill good">' + g.cls + '</span> ' : '');
     return '<button class="sig" data-act="usesig" data-id="' + esc(g.id) + '"><span>' + gp + '<b>' + esc(g.name) + '</b> <span class="' + (g.dir > 0 ? 'good' : 'bad') + '">' + (g.dir > 0 ? 'Long' : 'Short') + '</span> <span class="muted small">' + hm(g.t) + '</span></span><span class="pill ' + cls + '">' + esc(st) + '</span>' +
       '<span class="sub">' + (g.type && g.type !== 'sweep' ? esc(setupName(g.type)) : 'Sweep ' + esc(g.sweep)) + ' · ' + ({ stop: g.dir > 0 ? 'Kauf-Stopp' : 'Verkaufs-Stopp', market: 'Markt' }[g.mode] || 'Limit') + ' ' + fmt(g.entry, i.dec) + ' · Stop ' + fmt(g.stop, i.dec) + ' · CRV ' + fmt(g.rr, 1) + (g.withBias ? ' · mit Tagestrend' : ' · gegen Tagestrend') + '</span><span></span></button>';
   }).join('') + more + gradeLine() + '</section>';
@@ -1524,13 +1535,89 @@ function viewDossier(r){
   return '<section class="card"><div class="row"><h2>Dossier</h2><span class="pill good">' + esc(g.cls || '') + '</span></div><p class="hint" style="margin-top:4px">' + esc(ctx.grade ? gradeName(ctx.grade) : setupName(g.type)) + (trk ? ' · Status: ' + esc({ wartet: 'Order wartet', offen: 'Position offen', ziel: 'TP erreicht', stop: 'SL erreicht', einstand: 'Einstand', tagesende: 'zum Tagesende geschlossen', verfallen: 'verfallen', verpasst: 'verpasst' }[trk.state] || trk.state) : '') + '</p>' +
     '<div class="label" style="margin-top:10px">Plan</div>' + plan + stats + sc + '</section>';
 }
+// ===================== Heute =====================
+function riskEur(){ return (+S.cfg.account || 0) * (+S.cfg.risk || 0) / 100; }
+function todayState(){
+  var day = berlinParts(Date.now()).key, mine = S.trades.filter(function(t){ return berlinParts(t.at).key === day; });
+  var closedR = mine.filter(function(t){ return t.status === 'closed'; }).reduce(function(a, t){ return a + (tradeR(t) || 0); }, 0);
+  var open = S.trades.filter(function(t){ return t.status === 'open'; });
+  var stop = mine.length >= (+S.cfg.maxTrades || 2) ? 'Heute schon ' + mine.length + ' Trades. Dein Limit ist erreicht, keine neuen Trades mehr.' : (closedR <= -(+S.cfg.maxLossR || 2) ? 'Tagesverlust von ' + fmt(-closedR, 1) + 'R erreicht. Für heute Schluss, morgen ist ein neuer Tag.' : '');
+  return { n: mine.length, r: closedR, open: open, stop: stop };
+}
+function loadCtx(){
+  if (V.ctx || V.ctxLoading) return; V.ctxLoading = true;
+  Promise.all([candles('^VIX', '1d', '1mo').catch(function(){ return []; }), candles('DX-Y.NYB', '1d', '6mo').catch(function(){ return []; })]).then(function(r){
+    var v = r[0].length ? r[0][r[0].length - 1].c : null, d = r[1], db = d.length > 55 ? (d[d.length - 1].c > ema(d.map(function(x){ return x.c; }), 50).pop() ? 1 : -1) : 0;
+    V.ctx = { vix: v, dxy: d.length ? d[d.length - 1].c : null, dxyDir: db }; V.ctxLoading = false; if (S.tab === 'heute') rerender();
+  });
+}
+function viewHeute(){
+  var now = Date.now(), b = berlinParts(now), s = sessionInfo(now, instr(S.form.k) || INSTRUMENTS[0]), ts = todayState(), ctx = V.ctx;
+  var next = [{ n: 'London', a: 480 }, { n: 'New York', a: 870 }].filter(function(x){ return x.a > b.min; })[0];
+  var weekend = b.wd === 'Sat' || (b.wd === 'Sun' && b.min < 23 * 60);
+  var paper = paperStats();
+  var h = '<section class="card"><div class="row"><h2>' + esc(new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(now))) + '</h2><span class="pill ' + (s.q > 0 ? 'good' : (s.q < 0 ? 'warn' : '')) + '">' + esc(s.label) + '</span></div>' +
+    '<p class="hint" style="margin-top:4px">' + (weekend ? 'Wochenende. Der Scanner startet Montag mit London um 8 Uhr.' : (next ? 'Nächste Hauptzeit: ' + next.n + ' in ' + dur((next.a - b.min) * 60000) + '.' : 'Hauptzeiten für heute vorbei. Offene Trades spätestens 21:45 schließen.')) + '</p>' +
+    '<dl class="hero"><div><dt>VIX</dt><dd class="' + (ctx && ctx.vix >= 20 ? 'warn' : '') + '">' + (ctx && ctx.vix ? fmt(ctx.vix, 1) : '…') + '</dd></div><div><dt>Dollar</dt><dd>' + (ctx && ctx.dxyDir ? (ctx.dxyDir > 0 ? '↑ stark' : '↓ schwach') : '…') + '</dd></div><div><dt>Heute</dt><dd class="' + (ts.r >= 0 ? 'good' : 'bad') + '">' + (ts.n ? sgn(ts.r, 1) + 'R' : '–') + '</dd></div></dl>' +
+    (ctx && ctx.vix ? '<p class="hint">' + (ctx.vix >= 20 ? 'Der Markt ist unruhig (VIX ab 20). In dieser Lage lief die Sweep-Stufe mit Tagestrend in der Rückrechnung am besten.' : 'Der Markt ist ruhig (VIX unter 20). Die Stufe für unruhige Märkte meldet sich gerade nicht, es kommen nur A+-Signale.') + '</p>' : '') +
+    '<div class="guard ' + (ts.stop ? 'stop' : 'ok') + '">' + esc(ts.stop || 'Tagesrisiko im Rahmen: ' + ts.n + ' von ' + (S.cfg.maxTrades || 2) + ' Trades, Verlustgrenze ' + fmt(S.cfg.maxLossR || 2, 0) + 'R.') + '</div></section>';
+  // aktive Signale
+  var act = allSignals().filter(function(g){ return now < g.expires && !g.status && (g.triple || g.w60 || g.cls === 'A+' || g.cls === 'A'); });
+  var trk = (V.track || []).filter(function(x){ return x.state === 'wartet' || x.state === 'offen'; });
+  h += '<section class="card"><div class="row"><h2>Jetzt handeln?</h2><span class="muted small">' + act.length + ' aktiv</span></div>' +
+    (act.length ? act.map(function(g){ var i = instr(g.k) || { dec: 2 }; return '<button class="sig" data-act="usesig" data-id="' + esc(g.id) + '"><span>' + (g.triple ? '<span class="pill good">3× geprüft</span> ' : '') + (g.w60 ? '<span class="pill good">60 %+</span> ' : '') + (g.cls !== 'B' ? '<span class="pill good">' + esc(g.cls) + '</span> ' : '') + '<b>' + esc(g.name) + '</b> <span class="' + (g.dir > 0 ? 'good' : 'bad') + '">' + (g.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="pill warn">bis ' + hm(g.expires) + '</span><span class="sub">' + (ts.stop ? 'Tageslimit erreicht, nur ansehen' : 'Tippen für Dossier und Orders') + '</span><span></span></button>'; }).join('')
+      : '<p class="hint">Gerade kein Setup, das die Hürde nimmt. Das ist gut so: Kein Trade ist besser als ein schlechter. ' + (S.cfg.push.on ? 'Du bekommst eine Mitteilung, sobald eins kommt.' : '<button class="link" data-act="tab" data-t="mehr">Benachrichtigungen einschalten</button>, dann kommt es zu dir.') + '</p>') + '</section>';
+  // offene Positionen
+  var open = ts.open;
+  if (open.length || trk.length){
+    h += '<section class="card"><div class="row"><h2>Offen</h2><span class="muted small">live</span></div>' + open.map(function(t){ var r = liveR(t), i = instr(t.instr) || { dec: 2 }; return '<div class="trade"><div class="row"><span><b>' + esc(t.name) + '</b> <span class="' + (t.dir > 0 ? 'good' : 'bad') + '">' + (t.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="num ' + (r == null ? 'muted' : (r >= 0 ? 'good' : 'bad')) + '" style="font-size:20px">' + (r == null ? '…' : sgn(r, 2) + 'R · ' + sgn(r * ((t.size && t.size.risk) || riskEur()), 0) + ' €') + '</span></div><div class="muted small">SL ' + fmt(t.stop, i.dec) + ' · TP ' + fmt(t.target, i.dec) + '</div>' + tevBanner(t) + '</div>'; }).join('') +
+      trk.filter(function(x){ return !open.some(function(t){ return t.sig === x.id; }); }).map(function(x){ return '<div class="trade"><div class="row"><span><span class="pill good">' + esc(x.cls) + '</span> <b>' + esc(x.name) + '</b></span><span class="muted small">' + (x.state === 'offen' ? 'Signal läuft' : 'Order wartet') + '</span></div><div class="muted small">verfolgt, nicht im Tagebuch</div></div>'; }).join('') + '</section>';
+  }
+  // Termine heute
+  h += '<section class="card"><div class="row"><h2>Termine</h2><button class="link small" data-act="tab" data-t="markt">alle</button></div>' +  (V.cal ? viewCal(4) : '<div class="loading"><span class="spin"></span> lädt …</div>') + '</section>';
+  // Papierkonto
+  h += '<section class="card"><div class="row"><h2>Papierkonto</h2><span class="muted small">alle Signale mit ' + fmt(S.cfg.risk, 1) + ' % Risiko</span></div>' +
+    (paper.n ? '<dl class="hero"><div><dt>Signale</dt><dd>' + paper.n + '</dd></div><div><dt>Ergebnis</dt><dd class="' + (paper.eur >= 0 ? 'good' : 'bad') + '">' + sgn(paper.eur, 0) + ' €</dd></div><div><dt>Treffer</dt><dd>' + fmt(paper.win * 100, 0) + ' %</dd></div></dl>' + spark(paper.curve)
+      : '<p class="hint">Hier siehst du, was du verdient oder verloren hättest, wenn du jedes gemeldete Signal mit deiner Positionsgröße gehandelt hättest. Es füllt sich mit dem ersten Signal.</p>') + '</section>';
+  return h;
+}
+function paperStats(){
+  var L2 = (V.trackLog || []).filter(function(x){ return x.r != null; }); if (!L2.length) return { n: 0 };
+  var re = riskEur(), cost = (+S.cfg.fee || 0) * 2, eq = 0, curve = [0], w = 0;
+  L2.forEach(function(x){ eq += x.r * re - cost; curve.push(eq); if (x.r > 0) w++; });
+  return { n: L2.length, eur: eq, win: w / L2.length, curve: curve };
+}
+// ---------- Risiko-Simulation (Monte Carlo aus den Rueckrechnungs-Trades)
+function simRisk(rs, perYear, riskPct, runs){
+  if (!rs || rs.length < 20) return null;
+  var seed = 12345, rnd = function(){ seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  var ret = [], dd = [], streak = [];
+  for (var k = 0; k < (runs || 2000); k++){
+    var eq = 1, peak = 1, md = 0, ls = 0, ms = 0;
+    for (var j = 0; j < perYear; j++){ var r = rs[Math.floor(rnd() * rs.length)]; eq *= 1 + r * riskPct / 100; if (eq > peak) peak = eq; md = Math.max(md, 1 - eq / peak); ls = r < 0 ? ls + 1 : 0; ms = Math.max(ms, ls); }
+    ret.push(eq - 1); dd.push(md); streak.push(ms);
+  }
+  var q = function(a, p){ var b = a.slice().sort(function(x, y){ return x - y; }); return b[Math.floor(p * (b.length - 1))]; };
+  return { med: q(ret, 0.5), p5: q(ret, 0.05), p95: q(ret, 0.95), dd50: q(dd, 0.5), dd95: q(dd, 0.95), lossP: ret.filter(function(x){ return x < 0; }).length / ret.length, streak: q(streak, 0.5), streak95: q(streak, 0.95) };
+}
+function viewSim(){
+  var b = V.bt1; if (!b || !b.rSeries || !b.rSeries.length) return '';
+  var q = S.cfg.push.quality, rs = b.rSeries.filter(function(x){ return q === 'triple' ? x[3] : (q === 'w60' ? x[2] : true); }).map(function(x){ return x[1]; });
+  var span = (b.rSeries[b.rSeries.length - 1][0] - b.rSeries[0][0]) / (60 * 24 * 365.25) || 1, perYear = Math.max(1, Math.round(rs.length / span));
+  var rows = [0.5, 1, 2].map(function(rp){ var m = simRisk(rs, perYear, rp); return m ? '<tr' + (+S.cfg.risk === rp ? ' style="font-weight:700"' : '') + '><td>' + fmt(rp, rp % 1 ? 1 : 0) + ' %</td><td class="' + (m.med >= 0 ? 'good' : 'bad') + '">' + sgn(m.med * 100, 0) + ' %</td><td>' + sgn(m.p5 * 100, 0) + ' %</td><td class="bad">−' + fmt(m.dd95 * 100, 0) + ' %</td><td>' + fmt(m.lossP * 100, 0) + ' %</td></tr>' : ''; }).join('');
+  var m1 = simRisk(rs, perYear, +S.cfg.risk || 1);
+  return '<section class="card"><h2>Was ein Jahr bringen kann</h2><p class="hint" style="margin-top:4px">2.000 simulierte Jahre aus den ' + rs.length + ' Trades der Rückrechnung' + (q === 'triple' ? ' (dreifach geprüfte Stufen)' : (q === 'w60' ? ' (Stufen ab 60 % Treffer)' : '')) + ', etwa ' + perYear + ' Trades pro Jahr, Gewinne werden reinvestiert.</p>' +
+    '<table class="st"><tr><th>Risiko</th><th>typisch</th><th>schlechtes Jahr (5 %)</th><th>tiefster Einbruch (5 %)</th><th>Jahr im Minus</th></tr>' + rows + '</table>' +
+    (m1 ? '<p class="hint">Rechne mit Verlustserien von ' + m1.streak + ' Trades, in jedem zwanzigsten Jahr sogar ' + m1.streak95 + '. Das gehört dazu und ist kein Zeichen, dass die Strategie kaputt ist.</p>' : '') + '</section>';
+}
 // ---------- Live-Bilanz der gemeldeten Signale (echte Ergebnisse seit dem Start)
 function viewLive(){
   var L2 = (V.trackLog || []).filter(function(x){ return x.r != null; }), open = (V.track || []).filter(function(x){ return x.state === 'wartet' || x.state === 'offen'; });
   if (!L2.length && !open.length) return '<section class="card"><h2>Live-Bilanz</h2><p class="hint">Hier stehen die echten Ergebnisse aller gemeldeten A+- und A-Signale, ob du sie gehandelt hast oder nicht. Das ist der ehrliche Test, ob der Vorteil auch nach der Rückrechnung hält.' + (S.cfg.push.on ? '' : ' Dafür müssen die Benachrichtigungen an sein.') + '</p></section>';
   var s = L2.length ? rStats(L2.map(function(x){ return x.r; })) : null;
   var st = { wartet: 'Order wartet', offen: 'offen', ziel: 'TP', stop: 'SL', einstand: 'Einstand', tagesende: 'Tagesende', verfallen: 'verfallen', verpasst: 'verpasst' };
-  return '<section class="card"><div class="row"><h2>Live-Bilanz</h2><span class="muted small">gemeldete Signale</span></div>' +
+  var pe = paperStats();
+  return '<section class="card"><div class="row"><h2>Live-Bilanz</h2><span class="muted small">gemeldete Signale' + (pe.n ? ' · ' + sgn(pe.eur, 0) + ' € auf Papier' : '') + '</span></div>' +
     (s ? '<dl class="kv"><div><dt>Trades</dt><dd>' + s.n + '</dd></div><div><dt>Summe</dt><dd class="' + (s.sum >= 0 ? 'good' : 'bad') + '">' + sgn(s.sum, 1) + ' R</dd></div><div><dt>Treffer</dt><dd>' + fmt(s.win * 100, 0) + ' %</dd></div><div><dt>Ø je Trade</dt><dd class="' + (s.mean >= 0 ? 'good' : 'bad') + '">' + sgn(s.mean, 2) + ' R</dd></div></dl>' : '') +
     '<ul class="list-plain">' + open.concat((V.trackLog || []).slice().reverse().slice(0, 15)).map(function(x){ var i = instr(x.k) || { name: x.name }; return '<li><div class="row"><span><span class="pill good">' + esc(x.cls) + '</span> <b>' + esc(x.name) + '</b> <span class="' + (x.dir > 0 ? 'good' : 'bad') + '">' + (x.dir > 0 ? 'Long' : 'Short') + '</span> <span class="muted">' + dm(x.t) + ' ' + hm(x.t) + '</span></span><span class="' + (x.r == null ? 'muted' : (x.r >= 0 ? 'good' : 'bad')) + ' num">' + (x.r != null ? sgn(x.r, 2) + ' R' : esc(st[x.state] || x.state)) + '</span></div></li>'; }).join('') + '</ul></section>';
 }
@@ -1554,12 +1641,12 @@ function viewMarkt(){
   return h;
 }
 function ccyList(){ var c = {}; watchKeys().forEach(function(k){ var i = instr(k); if (i) i.ccy.forEach(function(x){ c[x] = 1; }); }); return Object.keys(c); }
-function viewCal(){
+function viewCal(max){
   if (!V.cal) return V.calErr ? '<p class="err">' + esc(V.calErr) + '</p>' : '<div class="loading"><span class="spin"></span> Kalender lädt …</div>';
   var ccys = ccyList(), now = Date.now(), today = berlinParts(now).key;
   var oil = watchKeys().some(function(k){ return k === 'WTI'; });
   var ev = V.cal.map(function(e){ return Object.assign({}, e, { t: Date.parse(e.date) }); }).filter(function(e){ return isFinite(e.t) && (e.impact === 'High' || e.impact === 'Medium') && (ccys.indexOf(e.country) >= 0 || (oil && /crude|oil/i.test(e.title))); })
-    .filter(function(e){ return e.t > now - 3 * 3600e3; }).sort(function(a, b){ return a.t - b.t; }).slice(0, 14);
+    .filter(function(e){ return e.t > now - (max ? 0 : 3 * 3600e3); }).sort(function(a, b){ return a.t - b.t; }).slice(0, max || 14);
   if (!ev.length) return '<p class="hint">Keine wichtigen Termine für deine Märkte in den nächsten Tagen.</p>';
   var lastDay = '';
   return '<ul class="list-plain" style="margin-top:4px">' + ev.map(function(e){
@@ -1650,9 +1737,18 @@ function viewTrade(t){
       : (t.mfe != null ? '<div class="muted tiny">lief bis ' + sgn(t.mfe, 1) + 'R für dich, ' + sgn(t.mae, 1) + 'R gegen dich</div>' : '') + '<div style="margin-top:4px"><button class="link tiny" data-act="tdel" data-id="' + t.id + '">löschen</button></div>') + '</div>';
 }
 function btFrom(b){ var f = Object.keys(b.data || {}).map(function(k){ return b.data[k].from; }).filter(Boolean).sort()[0]; return f ? new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric' }).format(new Date(f)) : '2 Jahren'; }
+function hardTest(b, picked){
+  if (!b.holdFrom) return '';
+  var hs = [['Gemeldete Stufen zusammen', b.holdGood], ['A+', b.holdTop], ['Ab 60 % Treffer', b.holdW60], ['3× geprüft', b.holdTriple]].filter(function(x){ return x[1] && x[1].n; });
+  var pz = picked.filter(function(g){ return g.pAdj != null; });
+  return '<div class="label" style="margin-top:14px">Härtetest: unberührter Zeitraum ab ' + esc(dm(Date.parse(b.holdFrom))) + '</div>' +
+    '<p class="hint">Diese Wochen hat die Auswahl nie gesehen. Hier zeigt sich, ob die Stufen auch auf neuen Daten halten.</p>' +
+    (hs.length ? '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th></tr>' + hs.map(function(x){ return '<tr><td>' + esc(x[0]) + '</td><td>' + x[1].n + '</td><td>' + fmt(x[1].win * 100, 0) + ' %</td><td class="' + (x[1].mean >= 0 ? 'good' : 'bad') + '">' + sgn(x[1].mean, 2) + '</td></tr>'; }).join('') + '</table>' : '<p class="hint">Im Härtetest gab es noch keine Trades dieser Stufen.</p>') +
+    (pz.length ? '<p class="hint"><b>Zufalls-Check:</b> Es wurden ' + (b.tests || '') + ' Kombinationen getestet. Bereinigt um diese Zahl ist ' + pz.map(function(g){ return esc(g.name.split(': ').pop()) + (g.pAdj < 0.05 ? ' sehr wahrscheinlich kein Zufall' : (g.pAdj < 0.5 ? ' eher kein Zufall, aber nicht sicher' : ' noch nicht vom Zufall zu unterscheiden')); }).join('; ') + '.</p>' : '');
+}
 function viewBt(){
   var b1 = V.bt1; if (!b1 || !b1.grades) return '';
-  var ids = gradeIds(), w = b1.w60 || [], tagOf = function(id){ var t = []; if (id === ids.a) t.push('A+'); else if (ids.list.indexOf(id) >= 0) t.push('A'); if (w.indexOf(id) >= 0) t.push('60 %+'); return t; };
+  var ids = gradeIds(), w = b1.w60 || [], tagOf = function(id){ var t = []; if (id === ids.a) t.push('A+'); else if (ids.list.indexOf(id) >= 0) t.push('A'); if (w.indexOf(id) >= 0) t.push('60 %+'); if ((b1.triple || []).indexOf(id) >= 0) t.push('3× geprüft'); return t; };
   var picked = b1.grades.filter(function(g){ return g.all && g.all.n && tagOf(g.id).length; }).sort(function(x, y){ return y.all.mean - x.all.mean; });
   var types = b1.byType ? Object.keys(b1.byType).map(function(k){ return Object.assign({ key: b1.byType[k].name }, b1.byType[k]); }) : [];
   var row = function(name, x, tr, te){ return '<tr><td>' + name + '</td><td>' + x.n + '</td><td>' + fmt(x.win * 100, 0) + ' %</td><td class="' + ((tr && tr.mean) >= 0 ? 'good' : 'bad') + '">' + (tr && tr.n ? sgn(tr.mean, 2) : '–') + '</td><td class="' + ((te && te.mean) >= 0 ? 'good' : 'bad') + '">' + (te && te.n ? sgn(te.mean, 2) : '–') + '</td></tr>'; };
@@ -1663,6 +1759,7 @@ function viewBt(){
     (picked.length ? '<table class="st">' + head + picked.map(function(g){ return row('<b>' + tagOf(g.id).join(' · ') + '</b> ' + esc(g.name), g.all, g.train, g.test); }).join('') + '</table>' : '<p class="hint">Diese Woche hat keine Stufe bestanden. Dann kommt auch kein Signal.</p>') +
     (w.length ? '' : '<p class="hint">Keine Stufe hatte in beiden Hälften mindestens 60 % Gewinner. Im Modus „Ab 60 % Treffer“ kommt deshalb gerade nichts.</p>') +
     (types.length ? '<div class="label" style="margin-top:12px">Alle Strategien ungefiltert</div><table class="st">' + head + types.map(function(x){ return row(esc(x.key), x, x.train, x.test); }).join('') + '</table>' : '') +
+    hardTest(b1, picked) +
     '<p class="hint">Treffer = Anteil der Trades mit Gewinn (auch kleine Gewinne zum Tagesende).</p></section>';
 }
 function viewBt15(){
@@ -1701,7 +1798,7 @@ function loadOpen(){
   if (!todo.length) return;
   todo.forEach(function(k){ V.openTried[k] = Date.now(); });
   openLoading = true;
-  Promise.all(todo.map(function(k){ return instData(k, true).catch(function(){}); })).then(function(){ openLoading = false; if (S.tab === 'buch') rerender(); });
+  Promise.all(todo.map(function(k){ return instData(k, true).catch(function(){}); })).then(function(){ openLoading = false; if (S.tab === 'buch' || S.tab === 'heute') rerender(); });
 }
 function closeTrade(id, exit){
   var t = S.trades.filter(function(x){ return x.id === id; })[0]; if (!t || !(exit > 0)) return;
@@ -1727,7 +1824,9 @@ function viewMehr(){
   var risks = [0.5, 1, 1.5, 2];
   var h = '<section class="card"><h2>Konto</h2><div class="fields f2"><label class="field"><span>Kontogröße (€)</span><input inputmode="decimal" data-cfg="account" value="' + esc(fmtIn(c.account, 0)) + '"></label><label class="field"><span>Gebühr je Order (€)</span><input inputmode="decimal" data-cfg="fee" value="' + esc(fmtIn(c.fee, 2)) + '"></label></div>' +
     '<div class="label" style="margin-top:14px">Risiko pro Trade</div><div class="seg" style="margin-top:6px">' + risks.map(function(r){ return '<button data-act="risk" data-r="' + r + '" aria-pressed="' + (+c.risk === r) + '">' + fmt(r, r % 1 ? 1 : 0) + ' %</button>'; }).join('') + '</div>' +
-    '<p class="hint">Bei ' + eur(c.account) + ' riskierst du ' + eur(c.account * c.risk / 100) + ' pro Trade. Die Positionsgröße im Check richtet sich danach.</p></section>';
+    '<p class="hint">Bei ' + eur(c.account) + ' riskierst du ' + eur(c.account * c.risk / 100) + ' pro Trade. Die Positionsgröße im Check richtet sich danach.</p>' +
+    '<div class="label" style="margin-top:14px">Tagesgrenzen</div><div class="fields f2"><label class="field"><span>Max. Trades pro Tag</span><input inputmode="numeric" data-cfg="maxTrades" value="' + esc(c.maxTrades || 2) + '"></label><label class="field"><span>Schluss bei Tagesverlust (R)</span><input inputmode="decimal" data-cfg="maxLossR" value="' + esc(fmtIn(c.maxLossR || 2, 1)) + '"></label></div>' +
+    '<p class="hint">Profis hören nach einem schlechten Tag auf. Unter „Heute“ siehst du, wenn die Grenze erreicht ist.</p></section>' + viewSim();
   h += '<section class="card"><h2>Watchlist</h2><p class="hint" style="margin-top:4px">Diese Märkte siehst du im Check und im Marktüberblick. Ihre Währungen bestimmen, welche Termine du siehst.</p><ul class="list-plain">' +
     INSTRUMENTS.concat(Object.keys(S.names).map(function(k){ return instr(k); }).filter(Boolean)).map(function(i){ return '<li><label class="switch" style="padding:0"><span>' + esc(i.name) + (i.type === 'stock' ? ' <span class="muted tiny">' + esc(i.y) + '</span>' : '') + '</span><input type="checkbox" data-watch="' + esc(i.k) + '"' + (S.watch.indexOf(i.k) >= 0 ? ' checked' : '') + '></label></li>'; }).join('') + '</ul><p class="hint">Aktien fügst du im Check über „＋ Andere“ hinzu.</p></section>';
   var standalone = window.navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
@@ -1736,7 +1835,7 @@ function viewMehr(){
     '<p class="hint" style="margin-top:4px">Neue Setups aus dem Scanner, Betreuung offener Trades (1R erreicht, nahe Stop oder KO-Schwelle, Ziel oder Stop erreicht), Warnung vor wichtigen Terminen und deine Kurs-Alarme.</p>' +
     (!canPush || !standalone ? '<p class="hint warn">Auf dem iPhone gehen Mitteilungen nur, wenn Trade Check auf dem Home-Bildschirm liegt: Teilen → „Zum Home-Bildschirm“, dann von dort öffnen.</p>' : '') +
     (p.on ? '<label class="switch"><span>Setups melden (Scanner)</span><input type="checkbox" data-push="scan"' + (p.scan !== false ? ' checked' : '') + '></label>' +
-      (p.scan !== false ? '<div class="label" style="margin-top:6px">Welche Setups melden</div><div class="seg" style="margin-top:6px">' + [['w60', 'Ab 60 % Treffer'], ['top', 'Nur A+'], ['a', 'A+ und A']].map(function(q){ return '<button data-act="quality" data-q="' + q[0] + '" aria-pressed="' + ((p.quality || 'top') === q[0]) + '">' + q[1] + '</button>'; }).join('') + '</div>' : '') +
+      (p.scan !== false ? '<div class="label" style="margin-top:6px">Welche Setups melden</div><div class="seg" style="margin-top:6px">' + [['triple', '3× geprüft'], ['w60', '60 %+'], ['top', 'A+'], ['a', 'A+ und A']].map(function(q){ return '<button data-act="quality" data-q="' + q[0] + '" aria-pressed="' + ((p.quality || 'top') === q[0]) + '">' + q[1] + '</button>'; }).join('') + '</div>' : '') +
       '<label class="switch"><span>Hauptzeiten (08:00 und 14:30)</span><input type="checkbox" data-push="kz"' + (p.kz ? ' checked' : '') + '></label>' +
       '<div class="label" style="margin-top:6px">News-Warnung vorher</div><div class="seg" style="margin-top:6px">' + [10, 15, 30].map(function(m){ return '<button data-act="lead" data-m="' + m + '" aria-pressed="' + (p.lead === m) + '">' + m + ' Min</button>'; }).join('') + '</div>' +
       '<div class="btns"><button class="btn ghost block" data-act="ptest">Test senden</button><button class="btn ghost block" data-act="poff">Ausschalten</button></div>'
@@ -1758,7 +1857,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'w60', trades: trades, alerts: S.alerts.map(function(a){ return { id: a.id, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit }; }) }, extra || {});
+  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'triple', trades: trades, alerts: S.alerts.map(function(a){ return { id: a.id, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);

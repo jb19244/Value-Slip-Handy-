@@ -50,7 +50,7 @@ const good0 = grades.filter((g) => g.id === chosen || aIds.includes(g.id));
 // 60-%-Stufen: insgesamt mindestens 60 % Gewinner, in keiner Haelfte unter 55 %, in beiden Haelften im Plus, mindestens 30 Trades
 const w60 = grades.filter((g) => g.all.n >= 30 && g.train.n >= 10 && g.test.n >= 10 && g.all.win >= 0.6 && g.train.win >= 0.55 && g.test.win >= 0.55 && g.train.mean > 0 && g.test.mean > 0).sort((a, b) => b.all.mean - a.all.mean).map((g) => g.id);
 // Dreifach geprueft: im Plus in 1. Haelfte, 2. Haelfte UND im unberuehrten Zeitraum (ab jetzt ist die Live-Bilanz der einzige unberuehrte Test)
-const triple = grades.filter((g) => g.all.n >= 30 && g.hold.n >= 10 && g.train.mean > 0 && g.test.mean > 0 && g.hold.mean > 0).sort((a, b) => (b.all.mean + b.hold.mean) - (a.all.mean + a.hold.mean)).map((g) => g.id);
+const triple = grades.filter((g) => g.all.n >= 30 && g.hold.n >= 10 && g.train.mean >= 0.05 && g.test.mean >= 0.05 && g.hold.mean >= 0.05).sort((a, b) => (b.all.mean + b.hold.mean) - (a.all.mean + a.hold.mean)).map((g) => g.id);
 const good = grades.filter((g) => good0.includes(g) || w60.includes(g.id) || triple.includes(g.id));
 const inA = all.filter((t) => good.some((g) => L.gradeMatch(g.id, t.sig, t.ampel)));
 const inTop = chosen ? all.filter((t) => L.gradeMatch(chosen, t.sig, t.ampel)) : [];

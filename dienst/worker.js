@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'a47a71d906';
+const WORKER_VER = '180d3d0c0f';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2720,7 +2720,7 @@ async function tradeRoute(request, headers, env, nowMs) {
       kw: (Array.isArray(b.kw) ? b.kw : []).filter((k) => /^[a-z|]{2,40}$/.test(k)).slice(0, 5),
       lead: num(b.lead, 5, 60, 15), kz: b.kz !== false, alerts, sent: t.sent || {},
       watch: (Array.isArray(b.watch) ? b.watch : []).filter((k) => typeof k === 'string' && TL.instrumentByKey(k)).slice(0, 8),
-      scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60'].includes(b.quality) ? b.quality : 'w60',
+      scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple'].includes(b.quality) ? b.quality : 'triple',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [] };
     // Ereignisse nur fuer noch offene Trades behalten
@@ -2753,7 +2753,7 @@ async function qualityCfg(env, nowMs) {
       const j = await r.json();
       const stats = {}; (j.grades || []).forEach((g) => { stats[g.id] = g.all && g.all.n ? { n: g.all.n, mean: g.all.mean, win: g.all.win } : null; });
       const dossier = {}; Object.keys(j.dossier || {}).forEach((k) => { dossier[k] = { mgmt: j.dossier[k].mgmt }; });
-      return { chosen: j.passed ? j.chosen : null, aIds: j.passed ? (j.aIds || []) : [], w60: j.w60 || [], stats, top: j.top || null, good: j.good || null, dossier };
+      return { chosen: j.passed ? j.chosen : null, aIds: j.passed ? (j.aIds || []) : [], w60: j.w60 || [], triple: j.triple || [], stats, top: j.top || null, good: j.good || null, dossier };
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -2900,24 +2900,27 @@ async function runTrade(env, nowMs) {
         const aId = q.chosen || 'sweep:trend_liq_rr', bIds = q.chosen ? (q.aIds || []) : ['sweep:trend_liq'];
         const bHit = bIds.find((id) => TL.gradeMatch(id, g, ampel));
         const wHit = (q.w60 || []).find((id) => TL.gradeMatch(id, g, ampel));
+        const tHit = (q.triple || []).find((id) => TL.gradeMatch(id, g, ampel));
         const cls = newsSoon ? 'B' : (TL.gradeMatch(aId, g, ampel) ? 'A+' : (bHit ? 'A' : 'B'));
         const sig = { id, type: g.type || 'sweep', mode: g.mode || 'limit', k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, level: g.level, withBias: g.withBias, liqTarget: g.liqTarget, bias, expires: g.expires, filled: sim.filled,
-          ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', newsSoon, w60: !newsSoon && !!wHit, wGrade: wHit || null, vix: g.vix != null ? Math.round(g.vix * 10) / 10 : null, usdOk: g.usdOk };
+          ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', newsSoon, w60: !newsSoon && !!wHit, wGrade: wHit || null, triple: !newsSoon && !!tHit, tGrade: tHit || null, vix: g.vix != null ? Math.round(g.vix * 10) / 10 : null, usdOk: g.usdOk };
         t.signals.unshift(sig); t.signals = t.signals.slice(0, 30); dirty = true;
-        const want = t.quality === 'w60' ? sig.w60 : t.quality === 'all' ? ((sig.type === 'sweep' || sig.type === 'pullback') && (sig.withBias || t.scanAll)) : (t.quality === 'a' ? cls !== 'B' : cls === 'A+');
-        if (want && (cls !== 'B' || sig.w60)) {
-          const dz = q.dossier && q.dossier[sig.w60 && t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : bHit)];
+        const want = t.quality === 'triple' ? sig.triple : t.quality === 'w60' ? sig.w60 : t.quality === 'all' ? ((sig.type === 'sweep' || sig.type === 'pullback') && (sig.withBias || t.scanAll)) : (t.quality === 'a' ? cls !== 'B' : cls === 'A+');
+        if (want && (cls !== 'B' || sig.w60 || sig.triple)) {
+          const gSel = t.quality === 'triple' ? tHit : (sig.w60 && t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : bHit));
+          const dz = q.dossier && q.dossier[gSel];
           t.track = Array.isArray(t.track) ? t.track : [];
-          t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: g.mode || 'limit', entry: g.entry, stop: g.stop, target: g.target, ko, t: g.t, expires: g.expires, cls, grade: sig.w60 && t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : bHit),
+          t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: g.mode || 'limit', entry: g.entry, stop: g.stop, target: g.target, ko, t: g.t, expires: g.expires, cls, grade: gSel,
             be: !!(dz && dz.mgmt === 'be'), state: 'wartet', at: nowMs });
           if (t.quality === 'w60') t.track[t.track.length - 1].cls = '60 %+';
+          if (t.quality === 'triple') t.track[t.track.length - 1].cls = '3× geprüft';
           t.track = t.track.slice(-20);
         }
         if (want) {
-          const gid = t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : ''));
+          const gid = t.quality === 'triple' ? tHit : t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : ''));
           const gs = q.stats && q.stats[gid];
           const proof = gs && gs.n ? ' Rückrechnung: ' + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Treffer, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' : '';
-          await send('s:' + id, { title: (t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + proof, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+          await send('s:' + id, { title: (t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + proof, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
         }
       }
     }
