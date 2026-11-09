@@ -970,14 +970,17 @@ function simulate(sig, c, cost){
   var risk = (entry - sig.stop) * sig.dir;
   if (!(risk > 0)){ r.how = 'ungültig'; return r; }
   r.filled = true; r.fillT = c[fill].t; r.entry = entry;
-  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk;
+  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk, beOn = false;
   for (i = fill; i < n; i++){
     var x = c[i], bpx = berlinFast(x.t);
     var adv = ((sig.dir > 0 ? x.l : x.h) - entry) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - entry) * sig.dir / risk;
     if (i === fill && mode === 'limit') fav = Math.max(0, ((x.c - entry) * sig.dir) / risk);
     if (adv < r.mae) r.mae = adv;
+    // Stop auf Einstand, sobald 1R erreicht war (gilt ab der Kerze danach)
+    if (beOn && adv <= 0){ r.r = 0; r.how = 'Einstand'; r.exitT = x.t; break; }
     if (adv <= -1){ r.r = -1; r.how = 'Stop'; r.exitT = x.t; break; }
     if (fav > r.mfe) r.mfe = fav;
+    if (sig.be && fav >= 1 && !beOn && rr > 1) beOn = true;
     if ((i > fill || mode !== 'limit') && fav >= rr){ r.r = rr; r.how = 'Ziel'; r.exitT = x.t; break; }
     if (sig.exit === 'sma5' && i >= 4){
       var m5 = (c[i].c + c[i - 1].c + c[i - 2].c + c[i - 3].c + c[i - 4].c) / 5;
@@ -1001,13 +1004,14 @@ function backtest(p){
     var sim = sims[ix];
     if (!sim.filled || sim.r == null) return;
     if (s.oco && sim.fillT !== first[s.type + s.oco]) return;
+    if (p.be){ var s2 = Object.assign({}, s, { be: true }), simBe = simulate(s2, c, cost); sim.rBe = simBe.r != null ? simBe.r : sim.r; }
     var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
     var h1 = p.h1 ? (p.h1 === p.m15 ? c.slice(Math.max(0, s.i - 300), s.i + 1) : p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300)) : null;
     var d1 = p.d1 && !p.noCheck ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
     var chk = p.noCheck ? { ampel: null, score: null, items: [] } : scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
     res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: sim.entry || s.entry, stop: s.stop, target: s.target, exit: (sim.entry || s.entry) + s.dir * ((sim.entry || s.entry) - s.stop) * s.dir * sim.r,
-      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
+      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, rBe: sim.rBe, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
   });
   return res;
 }
