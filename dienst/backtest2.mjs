@@ -21,7 +21,7 @@ for (const ins of L.scanUniverse()) {
   const h1 = await chart(ins.y, '60m', '730d'), d1 = await chart(ins.y, '1d', '5y');
   info[ins.k] = { h1: h1.length, d1: d1.length, from: h1.length ? new Date(h1[0].t).toISOString().slice(0, 10) : null };
   if (h1.length < 500) continue;
-  for (const setup of Object.keys(L.SETUPS)) all.push(...L.backtest({ instr: ins, m15: h1, h1, d1, bar: 3600e3, setup, any: true }).map((t) => Object.assign(t, { type: setup })));
+  for (const setup of Object.keys(L.SETUPS)) all.push(...L.backtest({ instr: ins, m15: h1, h1, d1, bar: 3600e3, setup, any: true, noCheck: setup !== 'sweep' && setup !== 'pullback' }).map((t) => Object.assign(t, { type: setup })));
   await new Promise((r) => setTimeout(r, 400));
 }
 const ts = all.map((t) => t.at).sort((a, b) => a - b);

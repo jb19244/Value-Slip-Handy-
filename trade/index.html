@@ -1003,8 +1003,8 @@ function backtest(p){
     if (s.oco && sim.fillT !== first[s.type + s.oco]) return;
     var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
     var h1 = p.h1 ? (p.h1 === p.m15 ? c.slice(Math.max(0, s.i - 300), s.i + 1) : p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300)) : null;
-    var d1 = p.d1 ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
-    var chk = scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
+    var d1 = p.d1 && !p.noCheck ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
+    var chk = p.noCheck ? { ampel: null, score: null, items: [] } : scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
     res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: sim.entry || s.entry, stop: s.stop, target: s.target, exit: (sim.entry || s.entry) + s.dir * ((sim.entry || s.entry) - s.stop) * s.dir * sim.r,
       at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
@@ -1405,9 +1405,9 @@ function localSignals(){
   var out = [], today = berlinParts(Date.now()).key;
   S.watch.forEach(function(k){
     var i = instr(k), d = V.data[k]; if (!i || !d || !d.h1 || d.h1.length < 60) return;
-    scanSetups(d.h1, { instr: i, d1: d.d1, bar: 3600e3 }).concat(scanPullbacks(d.h1, { instr: i, d1: d.d1, bar: 3600e3, any: true })).filter(function(g){ return g.day === today; }).forEach(function(g){
+    scanAll(d.h1, { instr: i, d1: d.d1, bar: 3600e3 }).filter(function(g){ return g.day === today; }).forEach(function(g){
       var sim = simulate(g, d.h1, 0);
-      out.push({ id: k + ':' + (g.type || 'sweep') + ':' + g.t, type: g.type, k: k, name: i.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko: g.stop - g.dir * g.risk * 0.5, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, withBias: g.withBias, liqTarget: g.liqTarget, cls: classify(g), expires: g.expires, status: sim.how === 'verpasst' ? 'verpasst' : (sim.filled ? (sim.r == null ? 'läuft' : (sim.r > 0 ? 'Ziel' : 'Stop')) : null) });
+      out.push({ id: k + ':' + (g.type || 'sweep') + ':' + g.t, type: g.type, mode: g.mode || 'limit', k: k, name: i.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko: g.stop - g.dir * g.risk * 0.5, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, withBias: g.withBias, liqTarget: g.liqTarget, cls: classify(g), expires: g.expires, status: sim.how === 'verpasst' ? 'verpasst' : (sim.filled ? (sim.r == null ? 'läuft' : (sim.r > 0 ? 'Ziel' : 'Stop')) : null) });
     });
   });
   return out;
@@ -1426,7 +1426,7 @@ function gradeLine(){
 function viewSignals(limit){
   var now = Date.now(), all = allSignals().filter(function(g){ return now - g.t < 26 * 3600e3; });
   var list = (V.sigAll ? all : all.filter(function(g){ return g.cls === 'A+' || g.cls === 'A'; })).slice(0, limit || 12), hidden = all.length - (V.sigAll ? all.length : list.length);
-  var h = '<section class="card" id="sigs"><div class="row"><h2>Signale</h2><span class="muted small">1 Std · Sweep oder Pullback ins FVG</span></div>';
+  var h = '<section class="card" id="sigs"><div class="row"><h2>Signale</h2><span class="muted small">1 Std · 8 Strategien, 31 Märkte</span></div>';
   var more = hidden > 0 ? '<p class="hint">' + hidden + ' schwächere Signale ausgeblendet. <button class="link" data-act="sigall">Zeigen</button></p>' : (V.sigAll && all.length ? '<p class="hint"><button class="link" data-act="sigall">Nur A+ und A zeigen</button></p>' : '');
   if (!list.length) return h + '<p class="hint">Heute noch kein A+ oder A Setup. Der Scanner prüft in der Londoner und New Yorker Hauptzeit alle 15 Minuten alle Märkte' + (S.cfg.push.on && S.cfg.push.scan !== false ? ' und meldet sich per Mitteilung.' : '. Schalte unter Mehr die Benachrichtigungen ein, dann meldet er sich von selbst.') + '</p>' + more + gradeLine() + '</section>';
   return h + list.map(function(g){
@@ -1434,14 +1434,14 @@ function viewSignals(limit){
     var cls = g.status === 'Ziel' ? 'good' : (g.status === 'Stop' ? 'bad' : (live ? 'warn' : ''));
     var gp = g.cls === 'A+' || g.cls === 'A' ? '<span class="pill good">' + g.cls + '</span> ' : '';
     return '<button class="sig" data-act="usesig" data-id="' + esc(g.id) + '"><span>' + gp + '<b>' + esc(g.name) + '</b> <span class="' + (g.dir > 0 ? 'good' : 'bad') + '">' + (g.dir > 0 ? 'Long' : 'Short') + '</span> <span class="muted small">' + hm(g.t) + '</span></span><span class="pill ' + cls + '">' + esc(st) + '</span>' +
-      '<span class="sub">' + (g.type === 'pullback' ? 'Trend-Pullback' : 'Sweep ' + esc(g.sweep)) + ' · Limit ' + fmt(g.entry, i.dec) + ' · Stop ' + fmt(g.stop, i.dec) + ' · CRV ' + fmt(g.rr, 1) + (g.withBias ? ' · mit Tagestrend' : ' · gegen Tagestrend') + '</span><span></span></button>';
+      '<span class="sub">' + (g.type && g.type !== 'sweep' ? esc(setupName(g.type)) : 'Sweep ' + esc(g.sweep)) + ' · ' + ({ stop: g.dir > 0 ? 'Kauf-Stopp' : 'Verkaufs-Stopp', market: 'Markt' }[g.mode] || 'Limit') + ' ' + fmt(g.entry, i.dec) + ' · Stop ' + fmt(g.stop, i.dec) + ' · CRV ' + fmt(g.rr, 1) + (g.withBias ? ' · mit Tagestrend' : ' · gegen Tagestrend') + '</span><span></span></button>';
   }).join('') + more + gradeLine() + '</section>';
 }
 function useSignal(id){
   var g = allSignals().filter(function(x){ return x.id === id; })[0]; if (!g) return;
   var i = instr(g.k);
   S.form.k = g.k; S.form.dir = g.dir; S.form.entry = fmtIn(g.entry, i.dec); S.form.stop = fmtIn(g.stop, i.dec); S.form.target = fmtIn(g.target, i.dec);
-  S.form.ko = fmtIn(g.ko, i.dec); S.form.ratio = S.ko[g.k] || ''; S.form.setups = g.type === 'pullback' ? ['BOS', 'Fair Value Gap'] : ['Liquidity Sweep', 'CHoCH', 'Fair Value Gap'];
+  S.form.ko = fmtIn(g.ko, i.dec); S.form.ratio = S.ko[g.k] || ''; S.form.setups = g.type === 'pullback' ? ['BOS', 'Fair Value Gap'] : (g.type && g.type !== 'sweep' ? [setupName(g.type)] : ['Liquidity Sweep', 'CHoCH', 'Fair Value Gap']);
   V.check = null; V.fromSig = g.id; V.pick = null; save(); S.tab = 'check'; render(); $('#main').scrollTop = 0; runCheck();
 }
 
