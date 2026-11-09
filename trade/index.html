@@ -1085,7 +1085,7 @@ var LS = 'tradecheck.v1';
 var SMC_TAGS = ['Order Block', 'Fair Value Gap', 'Liquidity Sweep', 'BOS', 'CHoCH', 'Breaker', 'Premium/Discount', 'OTE (62–79 %)'];
 var EW_TAGS = ['Welle 3', 'Welle 5', 'Welle C', 'ABC-Korrektur', 'Fib-Ziel'];
 function defaults(){
-  return { cfg: { account: 5000, risk: 1, fee: 1, maxTrades: 2, maxLossR: 2, url: '', token: '', push: { on: false, lead: 15, kz: true, scan: true, scanAll: false, quality: 'triple', qv2: true, qv3: true } },
+  return { cfg: { account: 5000, risk: 1, fee: 1, maxTrades: 2, maxLossR: 2, url: '', token: '', push: { on: false, lead: 15, kz: true, scan: true, scanAll: false, quality: 'mix', qv2: true, qv3: true, qv4: true } },
     form: { k: 'EURUSD', dir: 1, entry: '', stop: '', target: '', setups: [], ratio: '', ko: '' },
     watch: ['EURUSD', 'XAUUSD', 'DAX', 'NDX'], names: {}, trades: [], alerts: [], tab: 'heute', fib: { a: '', b: '', c: '' }, ko: {}, tf: '15m' };
 }
@@ -1095,7 +1095,7 @@ function load(){
   return d;
 }
 var S = load();
-if (!S.cfg.push.qv3){ S.cfg.push.quality = 'triple'; S.cfg.push.qv2 = S.cfg.push.qv3 = true; }
+if (!S.cfg.push.qv4){ S.cfg.push.quality = 'mix'; S.cfg.push.qv2 = S.cfg.push.qv3 = S.cfg.push.qv4 = true; }
 var V = { signals: [], tev: {}, bt: null, pick: null, dienst: null, check: null, checkErr: '', busy: false, data: {}, rates: null, cal: null, calErr: '', cot: {}, lastSync: 0, pushMsg: '' };
 function save(){ try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {} }
 function $(s, r){ return (r || document).querySelector(s); }
@@ -1532,7 +1532,9 @@ function viewDossier(r){
     (ev.length ? ev.map(function(e){ return '<li class="warn"><b>News ' + hm(e.t) + ':</b> ' + esc(e.country + ' ' + e.title) + '. ' + (e.t < g.expires ? 'Fällt in die Laufzeit. Ist die Order bis 15 Min vorher nicht ausgelöst, löschen. Ist der Trade offen: im Plus Stop auf Einstand, sonst schließen.' : 'Nach Ablauf, aber vor Tagesende: offenen Trade vorher absichern.') + '</li>'; }).join('') : '<li><b>Keine wichtigen Termine</b> für ' + esc(i.ccy.join('/')) + ' in der Laufzeit.</li>') +
     '<li><b>Gebündeltes Risiko:</b> ' + (r.items.some(function(x){ return x.key === 'expo'; }) ? 'siehe Warnung oben, Risiko aufteilen.' : 'keine offene Position in dieselbe Richtung.') + '</li></ul>';
   var trk = (V.track || []).filter(function(x){ return x.id === g.id; })[0];
-  return '<section class="card"><div class="row"><h2>Dossier</h2><span class="pill good">' + esc(g.cls || '') + '</span></div><p class="hint" style="margin-top:4px">' + esc(ctx.grade ? gradeName(ctx.grade) : setupName(g.type)) + (trk ? ' · Status: ' + esc({ wartet: 'Order wartet', offen: 'Position offen', ziel: 'TP erreicht', stop: 'SL erreicht', einstand: 'Einstand', tagesende: 'zum Tagesende geschlossen', verfallen: 'verfallen', verpasst: 'verpasst' }[trk.state] || trk.state) : '') + '</p>' +
+  var gf = null; if (V.bt1 && ctx.grade){ var gg = V.bt1.grades.filter(function(x){ return x.id === ctx.grade; })[0]; if (gg){ var a1 = gg.all || {}, h1 = gg.hold || {}, n1 = (a1.n || 0) + (h1.n || 0); if (n1) gf = { n: n1, win: ((a1.win || 0) * (a1.n || 0) + (h1.win || 0) * (h1.n || 0)) / n1, mean: ((a1.mean || 0) * (a1.n || 0) + (h1.mean || 0) * (h1.n || 0)) / n1 }; } }
+  var winBox = gf ? '<dl class="hero"><div><dt>Gewinner bisher</dt><dd class="' + (gf.win >= 0.6 ? 'good' : 'warn') + '">' + fmt(gf.win * 100, 0) + ' %</dd></div><div><dt>Ø je Trade</dt><dd class="' + (gf.mean >= 0 ? 'good' : 'bad') + '">' + sgn(gf.mean, 2) + 'R</dd></div><div><dt>Trades</dt><dd>' + gf.n + '</dd></div></dl>' + (gf.win < 0.6 ? '<p class="hint warn">⚠️ Unter deiner 60-%-Marke. Nur handeln, wenn du dieses Risiko bewusst eingehst.</p>' : '') : '';
+  return '<section class="card"><div class="row"><h2>Dossier</h2><span class="pill good">' + esc(g.cls || '') + '</span></div>' + winBox + '<p class="hint" style="margin-top:4px">' + esc(ctx.grade ? gradeName(ctx.grade) : setupName(g.type)) + (trk ? ' · Status: ' + esc({ wartet: 'Order wartet', offen: 'Position offen', ziel: 'TP erreicht', stop: 'SL erreicht', einstand: 'Einstand', tagesende: 'zum Tagesende geschlossen', verfallen: 'verfallen', verpasst: 'verpasst' }[trk.state] || trk.state) : '') + '</p>' +
     '<div class="label" style="margin-top:10px">Plan</div>' + plan + stats + sc + '</section>';
 }
 // ===================== Heute =====================
@@ -1835,7 +1837,7 @@ function viewMehr(){
     '<p class="hint" style="margin-top:4px">Neue Setups aus dem Scanner, Betreuung offener Trades (1R erreicht, nahe Stop oder KO-Schwelle, Ziel oder Stop erreicht), Warnung vor wichtigen Terminen und deine Kurs-Alarme.</p>' +
     (!canPush || !standalone ? '<p class="hint warn">Auf dem iPhone gehen Mitteilungen nur, wenn Trade Check auf dem Home-Bildschirm liegt: Teilen → „Zum Home-Bildschirm“, dann von dort öffnen.</p>' : '') +
     (p.on ? '<label class="switch"><span>Setups melden (Scanner)</span><input type="checkbox" data-push="scan"' + (p.scan !== false ? ' checked' : '') + '></label>' +
-      (p.scan !== false ? '<div class="label" style="margin-top:6px">Welche Setups melden</div><div class="seg" style="margin-top:6px">' + [['triple', '3× geprüft'], ['w60', '60 %+'], ['top', 'A+'], ['a', 'A+ und A']].map(function(q){ return '<button data-act="quality" data-q="' + q[0] + '" aria-pressed="' + ((p.quality || 'top') === q[0]) + '">' + q[1] + '</button>'; }).join('') + '</div>' : '') +
+      (p.scan !== false ? '<div class="label" style="margin-top:6px">Welche Setups melden</div><div class="seg" style="margin-top:6px">' + [['mix', 'Alle 4'], ['triple', '3× geprüft'], ['w60', '60 %+'], ['a', 'A+ und A']].map(function(q){ return '<button data-act="quality" data-q="' + q[0] + '" aria-pressed="' + ((p.quality || 'top') === q[0]) + '">' + q[1] + '</button>'; }).join('') + '</div><p class="hint">' + ({ mix: 'Alle 4: dreifach geprüft, 60 %+, A+ und A.', triple: 'Nur die Stufe, die auch im Härtetest hielt.', w60: 'Nur Stufen mit mindestens 60 % Gewinnern.', a: 'A+ und A.' }[p.quality || 'mix']) + ' Jede Mitteilung nennt die bisherige Gewinnquote der Stufe. Liegt sie unter 60 %, steht ⚠️ dabei.</p>' : '') +
       '<label class="switch"><span>Hauptzeiten (08:00 und 14:30)</span><input type="checkbox" data-push="kz"' + (p.kz ? ' checked' : '') + '></label>' +
       '<div class="label" style="margin-top:6px">News-Warnung vorher</div><div class="seg" style="margin-top:6px">' + [10, 15, 30].map(function(m){ return '<button data-act="lead" data-m="' + m + '" aria-pressed="' + (p.lead === m) + '">' + m + ' Min</button>'; }).join('') + '</div>' +
       '<div class="btns"><button class="btn ghost block" data-act="ptest">Test senden</button><button class="btn ghost block" data-act="poff">Ausschalten</button></div>'
@@ -1857,7 +1859,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'triple', trades: trades, alerts: S.alerts.map(function(a){ return { id: a.id, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit }; }) }, extra || {});
+  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'mix', trades: trades, alerts: S.alerts.map(function(a){ return { id: a.id, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
