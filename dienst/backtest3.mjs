@@ -74,5 +74,7 @@ out.sets['news:fade'] = evalSet('News-Fehlausbruch (Gegenrichtung zur Spitze)', 
 out.sets['news:mom'] = evalSet('News-Momentum (Richtung der Spitze)', newsT.filter((t) => t.type === 'newsmom'), newsDays);
 out.sets['news:fade_trend'] = evalSet('News-Fehlausbruch, mit Tagestrend', newsT.filter((t) => t.type === 'newsfade' && t.withBias), newsDays);
 out.passed = Object.keys(out.sets).filter((k) => out.sets[k].passed);
+// Swing-Stufe (mehrtaegig): mind. 60 % Gewinner, in allen drei Zeitraeumen im Plus und insgesamt sicher ueber null
+out.swing = Object.keys(out.sets).filter((k) => { const x = out.sets[k]; return k.startsWith('rsi2d') && x.all.n >= 100 && x.all.win >= 0.6 && x.all.lo > 0 && [x.train, x.test, x.hold].every((y) => y.n && y.mean > 0); });
 writeFileSync(new URL('backtest-extra.json', import.meta.url), JSON.stringify(out) + '\n');
 console.log(JSON.stringify(out, null, 1));

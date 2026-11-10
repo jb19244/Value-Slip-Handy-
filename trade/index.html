@@ -1182,6 +1182,9 @@ function simulate(sig, c, cost){
     var x = c[i], bpx = berlinFast(x.t);
     var adv = ((sig.dir > 0 ? x.l : x.h) - entry) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - entry) * sig.dir / risk;
     if (i === fill && mode === 'limit') fav = Math.max(0, ((x.c - entry) * sig.dir) / risk);
+    // Stopp-Einstieg in der Fuellkerze: ueblicher Kursweg O-T-H-S bei gruener, O-H-T-S bei roter Kerze.
+    // Laeuft die Kerze in Einstiegsrichtung (gruen bei Long), lag das Tief vor dem Einstieg und zaehlt nicht gegen den Trade.
+    if (i === fill && mode === 'stop' && (x.c - x.o) * sig.dir > 0) adv = (Math.min(entry * sig.dir, x.c * sig.dir) * sig.dir - entry) * sig.dir / risk;
     if (adv < r.mae) r.mae = adv;
     // Stop auf Einstand, sobald 1R erreicht war (gilt ab der Kerze danach)
     if (beOn && adv <= 0){ r.r = 0; r.how = 'Einstand'; r.exitT = x.t; break; }
@@ -1977,6 +1980,7 @@ function viewBuch(){
   h += '<section class="card"><div class="row"><h2>Offen</h2><span class="muted small">' + open.length + '</span></div>' + (open.length ? open.map(viewTrade).join('') : '<p class="hint">Keine offenen Trades.</p>') + '</section>';
   h += viewLive();
   h += viewBt();
+  h += viewResearch();
   if (closed.length) h += '<section class="card"><div class="row"><h2>Geschlossen</h2><button class="link small" data-act="csv">Export (CSV)</button></div>' + closed.slice(0, 40).map(viewTrade).join('') + '</section>';
   return h;
 }
@@ -2004,6 +2008,14 @@ function hardTest(b, picked){
     '<p class="hint">Diese Wochen hat die Auswahl nie gesehen. Hier zeigt sich, ob die Stufen auch auf neuen Daten halten.</p>' +
     (hs.length ? '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th></tr>' + hs.map(function(x){ return '<tr><td>' + esc(x[0]) + '</td><td>' + x[1].n + '</td><td>' + fmt(x[1].win * 100, 0) + ' %</td><td class="' + (x[1].mean >= 0 ? 'good' : 'bad') + '">' + sgn(x[1].mean, 2) + '</td></tr>'; }).join('') + '</table>' : '<p class="hint">Im Härtetest gab es noch keine Trades dieser Stufen.</p>') +
     (pz.length ? '<p class="hint"><b>Zufalls-Check:</b> Es wurden ' + (b.tests || '') + ' Kombinationen getestet. Bereinigt um diese Zahl ist ' + pz.map(function(g){ return esc(g.name.split(': ').pop()) + (g.pAdj < 0.05 ? ' sehr wahrscheinlich kein Zufall' : (g.pAdj < 0.5 ? ' eher kein Zufall, aber nicht sicher' : ' noch nicht vom Zufall zu unterscheiden')); }).join('; ') + '.</p>' : '');
+}
+function viewResearch(){
+  var b = V.bx; if (!b || !b.sets) return '';
+  var row = function(x){ return '<tr><td>' + (x.passed ? '✅ ' : '') + esc(x.name) + '</td><td>' + x.all.n + '</td><td>' + (x.all.n ? fmt(x.all.win * 100, 0) + ' %' : '–') + '</td><td class="' + ((x.all.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.all.n ? sgn(x.all.mean, 2) : '–') + '</td><td class="' + ((x.hold.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.hold.n ? sgn(x.hold.mean, 2) : '–') + '</td></tr>'; };
+  return '<section class="card"><div class="row"><h2>Strategien aus der Forschung</h2><span class="muted small">' + esc(dm(Date.parse(b.at))) + '</span></div>' +
+    '<p class="hint" style="margin-top:4px">ORB „Stocks in Play“ (5 Min, ' + (b.orbDays || 0) + ' Handelstage, 45 US-Aktien), Connors RSI-2 auf Tageskerzen (bis 10 Jahre), News-Fehlausbruch und -Momentum (15 Min). Mit Kosten, Prüfung in drei Zeiträumen. ✅ = in allen dreien mindestens +0,05 R.</p>' +
+    '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
+    (b.orbGross && b.orbGross.n ? '<p class="hint">ORB Top 3 ohne Kosten: Ø ' + sgn(b.orbGross.mean, 2) + ' R. Der Unterschied zeigt, wie viel Spread und Gebühren bei so engen Stops kosten.</p>' : '') + '</section>';
 }
 function viewBt(){
   var b1 = V.bt1; if (!b1 || !b1.grades) return '';
@@ -2228,6 +2240,7 @@ render = function(){ _render(); bind($('#page')); };
 
 // ---------- Start
 try { var qs = new URLSearchParams(location.search).get('sig'); if (qs) V.wantSig = qs; } catch (e) {}
+fetch('../dienst/backtest-extra.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bx = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-1h.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.grades){ V.bt1 = b; if (S.tab === 'buch' || S.tab === 'markt') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.all){ delete b.trades; V.bt = b; if (S.tab === 'buch' || S.tab === 'markt') rerender(); } }).catch(function(){});
 loadDienst().then(function(s){ if (s && s.ok && s.url) dienstUrl = s.url; render(); if (S.cfg.push.on) syncTrade(); });
