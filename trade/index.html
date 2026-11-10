@@ -185,6 +185,7 @@ table.st td:first-child{overflow-wrap:anywhere;padding-right:8px}
 .list-plain li:last-child{border-bottom:0}
 .chart{width:100%;height:240px;display:block;margin-top:10px;touch-action:manipulation;border-radius:10px;background:var(--bg)}
 .chart text{font-family:var(--font-b);font-size:9px;fill:var(--muted)}
+.zones{display:grid;grid-template-columns:1fr;gap:4px;margin-top:8px}.zone{display:flex;align-items:center;gap:4px;font-size:12px;font-variant-numeric:tabular-nums}.zone .zn{font-weight:700;min-width:64px}.zone button{flex:1}.zone button{background:var(--surface2);border:0;color:var(--fg);border-radius:6px;padding:5px 6px;font:inherit;font-size:12px}.zone button[aria-pressed=true]{background:var(--link);color:#000}.zone button.zo{flex:0 0 auto;color:var(--link)}
 .pickbar{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}
 .pickbar b{font-family:var(--font-d);font-size:18px;margin-right:auto}
 .sig{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:11px 0;border-bottom:1px solid var(--line);width:100%;text-align:left}
@@ -1149,6 +1150,7 @@ var GRADES = [
   { id: 'trend_ote', name: 'Trend + Einstieg in der OTE', fn: function(s){ return s.withBias && s.cOte === true; } },
   { id: 'trend_ew', name: 'Trend + Elliott passt', fn: function(s){ return s.withBias && s.cEw === true; } },
   { id: 'trend_ob', name: 'Trend + Order Block', fn: function(s){ return s.withBias && s.cOb === true; } },
+  { id: 'bgreen', name: 'Ampel grün + Premium/Discount + Liquiditätsziel + CRV ab 2', fn: function(s, a){ return a === 'gruen' && s.cPd === true && !!s.liqTarget && s.rr >= 2; } },
   { id: 'trend_vixhi_conf3', name: 'Trend + VIX ab 20 + mind. 3 SMC/Elliott/Fib', fn: function(s){ return s.withBias && s.vixLo === false && s.conf >= 3; } }
 ];
 function gradeById(id){ return GRADES.filter(function(g){ return g.id === id; })[0] || null; }
@@ -1422,8 +1424,16 @@ function viewKo(f, i){
 function koHint(i){ return i.type === 'fx' ? '100' : (i.k === 'XAGUSD' ? '1' : (i.type === 'cmd' || i.type === 'stock' ? '0,1' : '0,01')); }
 function viewChartCard(i, d){
   var tf = S.tf === '60m' ? '60m' : '15m';
-  return '<section class="card" style="padding:12px 12px 10px"><div class="seg">' + [['15m', '15 Min'], ['60m', '1 Std']].map(function(x){ return '<button data-act="tf" data-tf="' + x[0] + '" aria-pressed="' + (tf === x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div>' + chartSvg(i, d, tf) +
-    (V.pick != null ? '<div class="pickbar"><b>' + fmt(V.pick, i.dec) + '</b><button class="btn sm ghost" data-act="lvset" data-f="entry" data-p="' + V.pick + '">Einstieg</button><button class="btn sm ghost" data-act="lvset" data-f="stop" data-p="' + V.pick + '">Stop</button><button class="btn sm ghost" data-act="lvset" data-f="target" data-p="' + V.pick + '">Ziel</button><button class="btn sm ghost" data-act="lvset" data-f="ko" data-p="' + V.pick + '">KO</button></div>' : '<p class="hint" style="margin-top:6px">Tippe in den Chart, um einen Kurs zu setzen. Orange: Fibonacci, Ziffern: Elliott-Wellen, Kästen: Order Blocks und FVGs.</p>') + '</section>';
+  return '<section class="card" style="padding:12px 12px 10px"><div class="seg">' + [['15m', '15 Min'], ['60m', '1 Std']].map(function(x){ return '<button data-act="tf" data-tf="' + x[0] + '" aria-pressed="' + (tf === x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div>' + chartSvg(i, d, tf) + zoneChips(i) +
+    (V.pick != null ? '<div class="pickbar"><b>' + fmt(V.pick, i.dec) + '</b><button class="btn sm ghost" data-act="lvset" data-f="entry" data-p="' + V.pick + '">Einstieg</button><button class="btn sm ghost" data-act="lvset" data-f="stop" data-p="' + V.pick + '">Stop</button><button class="btn sm ghost" data-act="lvset" data-f="target" data-p="' + V.pick + '">Ziel</button><button class="btn sm ghost" data-act="lvset" data-f="ko" data-p="' + V.pick + '">KO</button></div>' : '<p class="hint" style="margin-top:6px">Tippe auf einen Zonen-Preis oder in den Chart, um ihn als Einstieg, Stop, Ziel oder KO zu übernehmen.</p>') + '</section>';
+}
+// Zonen aus dem Chart mit Marktpreisen: Tippen auf eine Kante uebernimmt den Preis
+function zoneChips(i){
+  var z = (V.zones || []).slice(0, 6); if (!z.length) return '';
+  z = z.slice().sort(function(a, b){ return b.hi - a.hi; });
+  var b = function(p){ return '<button data-act="zpick" data-p="' + p + '"' + (V.pick != null && Math.abs(V.pick - p) < Math.pow(10, -i.dec) / 2 ? ' aria-pressed="true"' : '') + '>' + fmt(p, i.dec) + '</button>'; };
+  return '<div class="zones">' + z.map(function(x){ return '<div class="zone"><span class="zn" style="color:' + x.col + '">' + esc(x.n) + (x.n === 'Asien' ? '' : (x.up ? ' ↑' : ' ↓')) + '</span>' + b(x.hi) + '<span class="muted">–</span>' + b(x.lo) + '<button class="zo" data-act="zorder" data-hi="' + x.hi + '" data-lo="' + x.lo + '" aria-label="Zone als Einstieg und Stop">→ Order</button></div>'; }).join('') + '</div>' +
+    '<p class="hint" style="margin-top:4px">→ Order: ' + (S.form.dir > 0 ? 'Long: Einstieg an der Oberkante, Stop knapp unter der Unterkante.' : 'Short: Einstieg an der Unterkante, Stop knapp über der Oberkante.') + '</p>';
 }
 function viewLevels(i, d, noChart){
   if (!d) return '';
@@ -1439,7 +1449,7 @@ function viewLevels(i, d, noChart){
   if (!placed && px != null) rows.push(nowRow(px, i));
   var cot = d.cot ? '<span>COT ' + fmt(d.cot.idx, 0) + '</span>' : '';
   var tf = S.tf === '60m' ? '60m' : '15m';
-  var chartHtml = '<div class="seg" style="margin-top:10px"><button data-act="tf" data-tf="15m" aria-pressed="' + (tf === '15m') + '">15 Min</button><button data-act="tf" data-tf="60m" aria-pressed="' + (tf === '60m') + '">1 Std</button></div>' + chartSvg(i, d, tf) +
+  var chartHtml = '<div class="seg" style="margin-top:10px"><button data-act="tf" data-tf="15m" aria-pressed="' + (tf === '15m') + '">15 Min</button><button data-act="tf" data-tf="60m" aria-pressed="' + (tf === '60m') + '">1 Std</button></div>' + chartSvg(i, d, tf) + zoneChips(i) +
     (V.pick != null ? '<div class="pickbar"><b>' + fmt(V.pick, i.dec) + '</b><button class="btn sm ghost" data-act="lvset" data-f="entry" data-p="' + V.pick + '">Einstieg</button><button class="btn sm ghost" data-act="lvset" data-f="stop" data-p="' + V.pick + '">Stop</button><button class="btn sm ghost" data-act="lvset" data-f="target" data-p="' + V.pick + '">Ziel</button><button class="btn sm ghost" data-act="lvset" data-f="ko" data-p="' + V.pick + '">KO</button></div>' : '<p class="hint" style="margin-top:6px">Tippe in den Chart, um einen Kurs als Einstieg, Stop, Ziel oder KO-Schwelle zu setzen.</p>');
   return '<section class="card"><div class="row"><h2>Marktbild</h2><span class="small" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">' + trend + sDesc(st1, '1 Std') + sDesc(st15, '15 Min') + cot + '</span></div>' +
     (noChart ? '' : chartHtml) + '<p class="hint" style="margin-top:12px">Wichtige Marken. Tippe E, S oder Z, um sie als Einstieg, Stop oder Ziel zu übernehmen.</p><ul class="ladder">' + rows.join('') + '</ul></section>';
@@ -1460,14 +1470,17 @@ function chartSvg(i, d, tf){
   var fibc = autoFib(c), ewc = autoElliott(c), obc = orderBlocks(c, 3);
   if (fibc){ fibc.retr.filter(function(x){ return x.f === 0.5 || x.f === 0.618 || x.f === 0.786; }).concat(fibc.ext.slice(0, 2)).forEach(function(x){ if (x.p < hi && x.p > lo) lines.push({ p: x.p, n: 'Fib ' + String(Math.round(x.f * 1000) / 10).replace('.', ','), col: 'var(--warn)', dash: true, thin: true }); }); }
   var cw = (W - padR) / n, y = function(p){ return padT + (hi - p) / (hi - lo) * (H - padT - padB); }, x = function(k){ return k * cw + cw / 2; };
-  var g = '';
+  var g = '', zt = [], zl = [], halo = 'paint-order:stroke;stroke:var(--bg);stroke-width:2.5px;stroke-linejoin:round';
+  // Preisspanne einer Zone rechts im Kasten, ohne Ueberlappung
+  var zoneTxt = function(nm, zhi, zlo, col, dhi, dlo){ var yy = Math.max(10, y(zhi) + 9); if (zl.some(function(v){ return Math.abs(v - yy) < 10; })) return ''; zl.push(yy);
+    return '<text x="' + (W - padR - 3) + '" y="' + yy + '" text-anchor="end" style="fill:' + col + ';font-weight:600;' + halo + '">' + nm + ' ' + fmt(dlo, i.dec) + '–' + fmt(dhi, i.dec) + '</text>'; };
   // Asien-Range heute
-  if (lv && lv.asia && tf === '15m'){ var a0 = -1, a1 = -1; c.forEach(function(q, k){ var b = berlinParts(q.t); if (b.key === lv.todayKey && b.min < 480){ if (a0 < 0) a0 = k; a1 = k; } }); if (a0 >= 0) g += '<rect x="' + (a0 * cw) + '" y="' + y(lv.asia.hi) + '" width="' + ((a1 - a0 + 1) * cw) + '" height="' + Math.max(1, y(lv.asia.lo) - y(lv.asia.hi)) + '" fill="var(--muted)" opacity=".12"/><text x="' + (a0 * cw + 2) + '" y="' + (y(lv.asia.hi) - 3) + '">Asien</text>'; }
+  if (lv && lv.asia && tf === '15m'){ var a0 = -1, a1 = -1; c.forEach(function(q, k){ var b = berlinParts(q.t); if (b.key === lv.todayKey && b.min < 480){ if (a0 < 0) a0 = k; a1 = k; } }); if (a0 >= 0) g += '<rect x="' + (a0 * cw) + '" y="' + y(lv.asia.hi) + '" width="' + ((a1 - a0 + 1) * cw) + '" height="' + Math.max(1, y(lv.asia.lo) - y(lv.asia.hi)) + '" fill="var(--muted)" opacity=".12"/>'; zt.push(['Asien', lv.asia.hi, lv.asia.lo, 'var(--muted)']); }
   // offene FVGs
   var base = all.length - n;
-  fvgs(all, tf === '60m' ? 48 : 80).slice(-4).forEach(function(q){ var k = q.i - base; if (k < 0 || k >= n) return; g += '<rect x="' + (k * cw) + '" y="' + y(q.hi) + '" width="' + (W - padR - k * cw) + '" height="' + Math.max(1, y(q.lo) - y(q.hi)) + '" fill="' + (q.dir > 0 ? 'var(--good)' : 'var(--bad)') + '" opacity=".14"/>'; });
+  fvgs(all, tf === '60m' ? 48 : 80).slice(-4).forEach(function(q){ var k = q.i - base; if (k < 0 || k >= n) return; g += '<rect x="' + (k * cw) + '" y="' + y(q.hi) + '" width="' + (W - padR - k * cw) + '" height="' + Math.max(1, y(q.lo) - y(q.hi)) + '" fill="' + (q.dir > 0 ? 'var(--good)' : 'var(--bad)') + '" opacity=".14"/>'; zt.push(['FVG', q.hi, q.lo, q.dir > 0 ? 'var(--good)' : 'var(--bad)']); });
   // Order Blocks
-  obc.forEach(function(z){ g += '<rect x="' + (z.i * cw) + '" y="' + y(z.hi) + '" width="' + (W - padR - z.i * cw) + '" height="' + Math.max(1, y(z.lo) - y(z.hi)) + '" fill="' + (z.dir > 0 ? 'var(--good)' : 'var(--bad)') + '" opacity=".22"/><text x="' + (z.i * cw + 2) + '" y="' + (y(z.hi) - 2) + '">OB</text>'; });
+  obc.forEach(function(z){ g += '<rect x="' + (z.i * cw) + '" y="' + y(z.hi) + '" width="' + (W - padR - z.i * cw) + '" height="' + Math.max(1, y(z.lo) - y(z.hi)) + '" fill="' + (z.dir > 0 ? 'var(--good)' : 'var(--bad)') + '" opacity=".22"/>'; zt.push(['OB', z.hi, z.lo, z.dir > 0 ? 'var(--good)' : 'var(--bad)']); });
   // Elliott-Wellen
   if (ewc) ewc.labels.forEach(function(l){ if (l.i < 0 || l.i >= n) return; var up = (l.l === '1' || l.l === '3' || l.l === '5' || l.l === 'B') === (ewc.dir > 0); g += '<text x="' + (x(l.i) - 3) + '" y="' + (up ? y(l.p) - 5 : y(l.p) + 12) + '" style="fill:var(--accent);font-weight:700;font-size:11px">' + l.l + '</text>'; });
   // letzter Strukturbruch
@@ -1478,17 +1491,27 @@ function chartSvg(i, d, tf){
   c.forEach(function(q, k){ var up = q.c >= q.o, col = up ? 'var(--good)' : 'var(--bad)', yo = y(q.o), yc = y(q.c);
     g += '<line x1="' + x(k) + '" x2="' + x(k) + '" y1="' + y(q.h) + '" y2="' + y(q.l) + '" stroke="' + col + '" stroke-width="1"/><rect x="' + (x(k) - bw / 2) + '" y="' + Math.min(yo, yc) + '" width="' + bw + '" height="' + Math.max(0.8, Math.abs(yc - yo)) + '" fill="' + col + '"/>'; });
   // Linien
-  var lp = c[n - 1].c, labels = [{ y: y(lp), t: fmt(lp, i.dec), col: 'var(--fg)', b: 1 }];
+  var lp = c[n - 1].c, labels = [{ y: y(lp), t: fmt(lp, i.dec), col: 'var(--fg)', b: 1 }], names = [];
   lines.forEach(function(L){ if (L.p > hi || L.p < lo) return; var yy = y(L.p);
-    g += '<line x1="0" x2="' + (W - padR) + '" y1="' + yy + '" y2="' + yy + '" stroke="' + L.col + '" stroke-width="' + (L.thin ? 0.8 : 1.4) + '"' + (L.dash ? ' stroke-dasharray="4 3"' : '') + '/>'; labels.push({ y: yy, t: L.n, col: L.col }); });
+    g += '<line x1="0" x2="' + (W - padR) + '" y1="' + yy + '" y2="' + yy + '" stroke="' + L.col + '" stroke-width="' + (L.thin ? 0.8 : 1.4) + '"' + (L.dash ? ' stroke-dasharray="4 3"' : '') + '/>'; labels.push({ y: yy, t: fmt(L.p, i.dec), col: L.col }); names.push({ y: yy, t: L.n, col: L.col }); });
+  // Namen der Linien links auf der Linie; liegen zwei zu dicht, rueckt der zweite nach rechts
+  var nx = []; names.sort(function(a, b){ return a.y - b.y; }).forEach(function(L){ var x0 = 2; nx.forEach(function(o){ if (Math.abs(o.y - L.y) < 10) x0 = Math.max(x0, o.x + o.w + 6); }); var w = L.t.length * 5; nx.push({ y: L.y, x: x0, w: w });
+    g += '<text x="' + x0 + '" y="' + (L.y - 2) + '" style="fill:' + L.col + ';font-weight:600;' + halo + '">' + esc(L.t) + '</text>'; });
+  // Zonen mit Preisspanne (nur sichtbare)
+  // naechste Zonen zum Kurs zuerst; was nicht ohne Ueberlappung passt, steht unter dem Chart
+  // Rohstoffe: Zonen in deinem Marktpreis (Kassa), der Chart zeigt den Future
+  var zoff = off || (i.type === 'cmd' && V.check && V.check.k === i.k && V.check.offset ? V.check.offset : 0);
+  V.zones = zt.filter(function(z){ return z[1] >= lo && z[2] <= hi; }).map(function(z){ return { n: z[0], hi: z[1] + zoff, lo: z[2] + zoff, ch: z[1], cl: z[2], col: z[3], up: z[3] === 'var(--good)' }; })
+    .sort(function(a, b){ return Math.abs((a.hi + a.lo) / 2 - lp) - Math.abs((b.hi + b.lo) / 2 - lp); });
+  V.zones.forEach(function(z){ g += zoneTxt(z.n, Math.min(z.ch, hi), Math.max(z.cl, lo), z.col, z.hi, z.lo); });
   // Beschriftungen rechts ohne Ueberlappung
   labels.sort(function(a, b){ return a.y - b.y; });
   for (var q = 1; q < labels.length; q++) if (labels[q].y - labels[q - 1].y < 11) labels[q].y = labels[q - 1].y + 11;
   var over = labels.length ? labels[labels.length - 1].y - (H - 4) : 0;
   if (over > 0) for (q = labels.length - 1; q >= 0; q--){ labels[q].y -= over; if (q && labels[q].y - labels[q - 1].y >= 11) break; over = labels[q - 1] ? Math.max(0, labels[q - 1].y - (labels[q].y - 11)) : 0; }
   labels.forEach(function(L){ g += '<text x="' + (W - padR + 3) + '" y="' + (L.y + 3) + '" style="fill:' + L.col + (L.b ? ';font-weight:600' : '') + '">' + L.t + '</text>'; });
-  if (V.pick != null && V.pick < hi && V.pick > lo) g += '<line x1="0" x2="' + (W - padR) + '" y1="' + y(V.pick) + '" y2="' + y(V.pick) + '" stroke="var(--fg)" stroke-width=".8" stroke-dasharray="2 2"/>';
-  V.chartMap = { hi: hi, lo: lo, padT: padT, padB: padB, H: H };
+  if (V.pick != null && V.pick - zoff < hi && V.pick - zoff > lo) g += '<line x1="0" x2="' + (W - padR) + '" y1="' + y(V.pick - zoff) + '" y2="' + y(V.pick - zoff) + '" stroke="var(--fg)" stroke-width=".8" stroke-dasharray="2 2"/>';
+  V.chartMap = { hi: hi, lo: lo, padT: padT, padB: padB, H: H, off: zoff };
   return '<svg class="chart" id="chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Kerzenchart ' + esc(i.name) + ' ' + (tf === '60m' ? '1 Stunde' : '15 Minuten') + '">' + g + '</svg>';
 }
 function nowRow(px, i){ return '<li class="lv now"><span class="n">Aktueller Kurs</span><span class="p">' + fmt(px, i.dec) + '</span><span class="acts"><button data-act="lvset" data-f="entry" data-p="' + px + '" aria-label="Als Einstieg">E</button></span></li>'; }
@@ -1717,7 +1740,7 @@ function gradeLine(){
 }
 function viewSignals(limit){
   var now = Date.now(), all = allSignals().filter(function(g){ return now - g.t < 26 * 3600e3; });
-  var list = (V.sigAll ? all : all.filter(function(g){ return g.cls === 'A+' || g.cls === 'A' || g.cls === 'ORB' || g.w60 || g.triple || g.extra; })).slice(0, limit || 12), hidden = all.length - (V.sigAll ? all.length : list.length);
+  var list = (V.sigAll ? all : all.filter(function(g){ return g.cls === 'A+' || g.cls === 'A' || g.cls === 'ORB' || g.w60 || g.triple || g.extra || g.bg; })).slice(0, limit || 12), hidden = all.length - (V.sigAll ? all.length : list.length);
   var h = '<section class="card" id="sigs"><div class="row"><h2>Signale</h2><span class="muted small">1 Std · 8 Strategien, 31 Märkte</span></div>';
   var more = hidden > 0 ? '<p class="hint">' + hidden + ' schwächere Signale ausgeblendet. <button class="link" data-act="sigall">Zeigen</button></p>' : (V.sigAll && all.length ? '<p class="hint"><button class="link" data-act="sigall">Nur A+ und A zeigen</button></p>' : '');
   if (!list.length) return h + '<p class="hint">Heute noch kein A+ oder A Setup. Der Scanner prüft in der Londoner und New Yorker Hauptzeit alle 15 Minuten alle Märkte' + (S.cfg.push.on && S.cfg.push.scan !== false ? ' und meldet sich per Mitteilung.' : '. Schalte unter Mehr die Benachrichtigungen ein, dann meldet er sich von selbst.') + '</p>' + more + gradeLine() + '</section>';
@@ -1808,10 +1831,10 @@ function viewHeute(){
     (ctx && ctx.vix ? '<p class="hint">' + (ctx.vix >= 20 ? 'Der Markt ist unruhig (VIX ab 20). In dieser Lage lief die Sweep-Stufe mit Tagestrend in der Rückrechnung am besten.' : 'Der Markt ist ruhig (VIX unter 20). Die Stufe für unruhige Märkte meldet sich gerade nicht, es kommen nur A+-Signale.') + '</p>' : '') +
     '<div class="guard ' + (ts.stop ? 'stop' : 'ok') + '">' + esc(ts.stop || 'Tagesrisiko im Rahmen: ' + ts.n + ' von ' + (S.cfg.maxTrades || 2) + ' Trades, Verlustgrenze ' + fmt(S.cfg.maxLossR || 2, 0) + 'R.') + '</div></section>';
   // aktive Signale
-  var act = allSignals().filter(function(g){ return now < g.expires && !g.status && (g.triple || g.w60 || g.extra || g.cls === 'A+' || g.cls === 'A' || g.cls === 'ORB'); });
+  var act = allSignals().filter(function(g){ return now < g.expires && !g.status && (g.triple || g.w60 || g.extra || g.bg || g.cls === 'A+' || g.cls === 'A' || g.cls === 'ORB'); });
   var trk = (V.track || []).filter(function(x){ return x.state === 'wartet' || x.state === 'offen'; });
   h += '<section class="card"><div class="row"><h2>Jetzt handeln?</h2><span class="muted small">' + act.length + ' aktiv</span></div>' +
-    (act.length ? act.map(function(g){ var i = instr(g.k) || { dec: 2 }; return '<button class="sig" data-act="usesig" data-id="' + esc(g.id) + '"><span>' + (g.triple ? '<span class="pill good">3× geprüft</span> ' : '') + (g.w60 ? '<span class="pill good">60 %+</span> ' : '') + (g.cls !== 'B' ? '<span class="pill good">' + esc(g.cls) + '</span> ' : '') + '<b>' + esc(g.name) + '</b> <span class="' + (g.dir > 0 ? 'good' : 'bad') + '">' + (g.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="pill warn">bis ' + hm(g.expires) + '</span><span class="sub">' + (ts.stop ? 'Tageslimit erreicht, nur ansehen' : 'Tippen für Dossier und Orders') + '</span><span></span></button>'; }).join('')
+    (act.length ? act.map(function(g){ var i = instr(g.k) || { dec: 2 }; return '<button class="sig" data-act="usesig" data-id="' + esc(g.id) + '"><span>' + (g.triple ? '<span class="pill good">3× geprüft</span> ' : '') + (g.w60 ? '<span class="pill good">60 %+</span> ' : '') + (g.bg && g.cls === 'B' ? '<span class="pill good">B grün</span> ' : '') + (g.cls !== 'B' ? '<span class="pill good">' + esc(g.cls) + '</span> ' : '') + '<b>' + esc(g.name) + '</b> <span class="' + (g.dir > 0 ? 'good' : 'bad') + '">' + (g.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="pill warn">bis ' + hm(g.expires) + '</span><span class="sub">' + (ts.stop ? 'Tageslimit erreicht, nur ansehen' : 'Tippen für Dossier und Orders') + '</span><span></span></button>'; }).join('')
       : '<p class="hint">Gerade kein Setup, das die Hürde nimmt. Das ist gut so: Kein Trade ist besser als ein schlechter. ' + (S.cfg.push.on ? 'Du bekommst eine Mitteilung, sobald eins kommt.' : '<button class="link" data-act="tab" data-t="mehr">Benachrichtigungen einschalten</button>, dann kommt es zu dir.') + '</p>') + '</section>';
   // offene Positionen
   var open = ts.open;
@@ -2108,7 +2131,8 @@ function viewMehr(){
     '<p class="hint" style="margin-top:4px">Neue Setups aus dem Scanner, Betreuung offener Trades (1R erreicht, nahe Stop oder KO-Schwelle, Ziel oder Stop erreicht), Warnung vor wichtigen Terminen und deine Kurs-Alarme.</p>' +
     (!canPush || !standalone ? '<p class="hint warn">Auf dem iPhone gehen Mitteilungen nur, wenn Trade Check auf dem Home-Bildschirm liegt: Teilen → „Zum Home-Bildschirm“, dann von dort öffnen.</p>' : '') +
     (p.on ? '<label class="switch"><span>Setups melden (Scanner)</span><input type="checkbox" data-push="scan"' + (p.scan !== false ? ' checked' : '') + '></label>' +
-      (p.scan !== false ? '<div class="label" style="margin-top:6px">Welche Setups melden</div><div class="seg" style="margin-top:6px">' + [['mix', 'Alle 5'], ['triple', '3× geprüft'], ['w60', '60 %+'], ['a', 'A+ und A']].map(function(q){ return '<button data-act="quality" data-q="' + q[0] + '" aria-pressed="' + ((p.quality || 'top') === q[0]) + '">' + q[1] + '</button>'; }).join('') + '</div><p class="hint">' + ({ mix: 'Alle 5: dreifach geprüft, 60 %+, A+, A und NR7-Ausbruch (VIX ab 20).', triple: 'Nur die Stufe, die auch im Härtetest hielt.', w60: 'Nur Stufen mit mindestens 60 % Gewinnern.', a: 'A+ und A.' }[p.quality || 'mix']) + ' Jede Mitteilung nennt die bisherige Gewinnquote der Stufe. Liegt sie unter 60 %, steht ⚠️ dabei.</p>' : '') +
+      (p.scan !== false ? '<div class="label" style="margin-top:6px">Welche Setups melden</div><div class="seg" style="margin-top:6px">' + [['mix', 'Alle 5'], ['triple', '3× geprüft'], ['w60', '60 %+'], ['a', 'A+ und A']].map(function(q){ return '<button data-act="quality" data-q="' + q[0] + '" aria-pressed="' + ((p.quality || 'top') === q[0]) + '">' + q[1] + '</button>'; }).join('') + '</div><p class="hint">' + ({ mix: 'Alle 5: dreifach geprüft, 60 %+, A+, A und NR7-Ausbruch (VIX ab 20). Dazu B-Setups, wenn du sie unten einschaltest.', triple: 'Nur die Stufe, die auch im Härtetest hielt.', w60: 'Nur Stufen mit mindestens 60 % Gewinnern.', a: 'A+ und A.' }[p.quality || 'mix']) + ' Jede Mitteilung nennt die bisherige Gewinnquote der Stufe. Liegt sie unter 60 %, steht ⚠️ dabei.</p>' : '') +
+      ((p.quality || 'mix') === 'mix' ? '<label class="switch"><span>B-Setups: nur Ampel grün + Premium/Discount + Liquiditätsziel + CRV ab 2</span><input type="checkbox" data-push="bgreen"' + (p.bgreen !== false ? ' checked' : '') + '></label>' : '') +
       '<label class="switch"><span>ORB „Stocks in Play“ (US-Eröffnung)</span><input type="checkbox" data-push="orb"' + (p.orb !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Swing RSI-2 (abends, Haltedauer Tage)</span><input type="checkbox" data-push="swing"' + (p.swing !== false ? ' checked' : '') + '></label>' +
       '<p class="hint">Beide melden sich nur, solange sie die wöchentliche Rückrechnung bestehen (siehe Tagebuch → Strategien aus der Forschung).</p>' +
@@ -2133,7 +2157,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'mix', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'mix', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -2168,7 +2192,10 @@ function chartTap(ev){
   var svg = ev.currentTarget, m = V.chartMap; if (!m) return;
   var r = svg.getBoundingClientRect(), yy = (ev.clientY - r.top) / r.height * m.H;
   var p = m.hi - (yy - m.padT) / (m.H - m.padT - m.padB) * (m.hi - m.lo);
-  var i = instr(S.form.k); V.pick = +p.toFixed(i.dec); rerender();
+  // nahe an einer Zonen-Kante: genau deren Marktpreis nehmen
+  var snap = (m.hi - m.lo) * 0.03, best = null;
+  (V.zones || []).forEach(function(z){ [z.ch, z.cl].forEach(function(v, k){ var dd = Math.abs(v - p); if (dd < snap && (!best || dd < best.d)) best = { d: dd, p: k ? z.lo : z.hi }; }); });
+  var i = instr(S.form.k); V.pick = +(best ? best.p : p + (m.off || 0)).toFixed(i.dec); rerender();
 }
 function bind(root){
   var ch = $('#chart', root); if (ch) ch.addEventListener('click', chartTap);
@@ -2196,6 +2223,13 @@ function onAct(e){
   if (a === 'tag'){ var t = el.dataset.t, ix = S.form.setups.indexOf(t); if (ix >= 0) S.form.setups.splice(ix, 1); else S.form.setups.push(t); save(); el.setAttribute('aria-pressed', String(ix < 0)); return; }
   if (a === 'usepx'){ var px = lastPx(V.data[S.form.k]); if (px) setField('entry', px); return; }
   if (a === 'lvset') return setField(el.dataset.f, el.dataset.p);
+  if (a === 'zorder'){
+    var zz = instr(S.form.k), zh = +el.dataset.hi, zl = +el.dataset.lo, buf = Math.max((zh - zl) * 0.1, Math.pow(10, -zz.dec));
+    var en = S.form.dir > 0 ? zh : zl, sl = S.form.dir > 0 ? zl - buf : zh + buf;
+    S.form.entry = fmtIn(en, zz.dec); S.form.stop = fmtIn(sl, zz.dec); V.pick = null; save();
+    toast('Einstieg ' + S.form.entry + ' · Stop ' + S.form.stop); return rerender();
+  }
+  if (a === 'zpick'){ var zi = instr(S.form.k); V.pick = +(+el.dataset.p).toFixed(zi.dec); return rerender(); }
   if (a === 'kosug') return setField('ko', el.dataset.p);
   if (a === 'tf'){ S.tf = el.dataset.tf; V.pick = null; save(); return rerender(); }
   if (a === 'usesig') return useSignal(el.dataset.id);

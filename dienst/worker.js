@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'ec3207a95a';
+const WORKER_VER = '6df118c717';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2667,6 +2667,7 @@ var GRADES = [
   { id: 'trend_ote', name: 'Trend + Einstieg in der OTE', fn: function(s){ return s.withBias && s.cOte === true; } },
   { id: 'trend_ew', name: 'Trend + Elliott passt', fn: function(s){ return s.withBias && s.cEw === true; } },
   { id: 'trend_ob', name: 'Trend + Order Block', fn: function(s){ return s.withBias && s.cOb === true; } },
+  { id: 'bgreen', name: 'Ampel grün + Premium/Discount + Liquiditätsziel + CRV ab 2', fn: function(s, a){ return a === 'gruen' && s.cPd === true && !!s.liqTarget && s.rr >= 2; } },
   { id: 'trend_vixhi_conf3', name: 'Trend + VIX ab 20 + mind. 3 SMC/Elliott/Fib', fn: function(s){ return s.withBias && s.vixLo === false && s.conf >= 3; } }
 ];
 function gradeById(id){ return GRADES.filter(function(g){ return g.id === id; })[0] || null; }
@@ -2913,7 +2914,7 @@ async function tradeRoute(request, headers, env, nowMs) {
       scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix'].includes(b.quality) ? b.quality : 'triple',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
-      swing: b.swing !== false, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
+      swing: b.swing !== false, bgreen: b.bgreen !== false, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null };
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
@@ -3202,13 +3203,15 @@ async function runTrade(env, nowMs) {
         const tHit = (q.triple || []).find((id) => TL.gradeMatch(id, g, ampel));
         const eHit = (q.extra || []).find((id) => TL.gradeMatch(id, g, ampel));
         const cls = newsSoon ? 'B' : (TL.gradeMatch(aId, g, ampel) ? 'A+' : (bHit ? 'A' : 'B'));
+        // B-Setup nur mit gruener Ampel, Einstieg in Premium/Discount, Ziel an Liquiditaet und CRV ab 2
+        const bgId = (g.type || 'sweep') + ':bgreen', bgHit = !newsSoon && cls === 'B' && TL.gradeMatch(bgId, g, ampel);
         const sig = { id, type: g.type || 'sweep', mode: g.mode || 'limit', k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, level: g.level, withBias: g.withBias, liqTarget: g.liqTarget, bias, expires: g.expires, filled: sim.filled,
-          ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', conf: cf ? { score: cf.score, max: cf.max, items: cf.items, ew: cf.ew ? cf.ew.phase : null } : null, extra: !newsSoon && !!eHit, newsSoon, w60: !newsSoon && !!wHit, wGrade: wHit || null, triple: !newsSoon && !!tHit, tGrade: tHit || null, vix: g.vix != null ? Math.round(g.vix * 10) / 10 : null, usdOk: g.usdOk };
+          ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', conf: cf ? { score: cf.score, max: cf.max, items: cf.items, ew: cf.ew ? cf.ew.phase : null } : null, extra: !newsSoon && !!eHit, newsSoon, w60: !newsSoon && !!wHit, wGrade: wHit || null, triple: !newsSoon && !!tHit, tGrade: tHit || null, bg: bgHit, vix: g.vix != null ? Math.round(g.vix * 10) / 10 : null, usdOk: g.usdOk };
         t.signals.unshift(sig); t.signals = t.signals.slice(0, 30); dirty = true;
-        const mixLbl = sig.triple ? '3× geprüft' : (sig.w60 ? '60 %+' : (cls !== 'B' ? cls : (sig.extra ? 'NR7' : null)));
+        const mixLbl = sig.triple ? '3× geprüft' : (sig.w60 ? '60 %+' : (cls !== 'B' ? cls : (sig.extra ? 'NR7' : (sig.bg && t.bgreen !== false ? 'B grün' : null))));
         const want = t.quality === 'mix' ? !!mixLbl : t.quality === 'triple' ? sig.triple : t.quality === 'w60' ? sig.w60 : t.quality === 'all' ? ((sig.type === 'sweep' || sig.type === 'pullback') && (sig.withBias || t.scanAll)) : (t.quality === 'a' ? cls !== 'B' : cls === 'A+');
-        if (want && (cls !== 'B' || sig.w60 || sig.triple || sig.extra)) {
-          const gSel = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : eHit)))) : t.quality === 'triple' ? tHit : (sig.w60 && t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : bHit));
+        if (want && (cls !== 'B' || sig.w60 || sig.triple || sig.extra || (sig.bg && t.quality === 'mix'))) {
+          const gSel = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : (eHit || bgId))))) : t.quality === 'triple' ? tHit : (sig.w60 && t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : bHit));
           const dz = q.dossier && q.dossier[gSel];
           t.track = Array.isArray(t.track) ? t.track : [];
           t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: g.mode || 'limit', entry: g.entry, stop: g.stop, target: g.target, ko, t: g.t, expires: g.expires, cls, grade: gSel,
@@ -3219,13 +3222,14 @@ async function runTrade(env, nowMs) {
           t.track = t.track.slice(-20);
         }
         if (want) {
-          const gid = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : eHit)))) : t.quality === 'triple' ? tHit : t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : ''));
+          const gid = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : (eHit || bgId))))) : t.quality === 'triple' ? tHit : t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : ''));
           const gs = q.stats && q.stats[gid];
           const short = { ote: 'OTE', pd: g.dir > 0 ? 'Discount' : 'Premium', ob: 'Order Block', fvgz: 'FVG', fib: 'Fib-Ziel', ew: 'Elliott' };
           const confTxt = cf ? ' SMC/Elliott/Fib ' + cf.score + '/' + cf.max + ': ' + cf.items.filter((x) => x.ok).map((x) => short[x.k] + (x.k === 'ew' && cf.ew ? ' (' + cf.ew.phase + ')' : '') + ' ✓').join(', ') + (cf.items.some((x) => !x.ok) ? '; fehlt: ' + cf.items.filter((x) => !x.ok).map((x) => short[x.k]).join(', ') : '') + '.' : '';
           const proof = gs && gs.n ? ' Bisher: ' + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Gewinner, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' + (gs.win < 0.6 ? ' ⚠️ Unter deiner 60-%-Marke.' : '') : '';
+          const bgTxt = mixLbl === 'B grün' ? ' B-Setup mit allen Pflicht-Bedingungen: Ampel grün ✓, ' + (g.dir > 0 ? 'Discount' : 'Premium') + ' ✓, Ziel an Liquidität ✓, CRV ' + g.rr.toFixed(1).replace('.', ',') + ' ✓.' + (gs && gs.n ? '' : ' Diese Stufe wird ab der nächsten Rückrechnung gemessen.') : '';
           sig.winRate = gs && gs.n ? Math.round(gs.win * 1000) / 1000 : null;
-          await send('s:' + id, { title: (t.quality === 'mix' ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+          await send('s:' + id, { title: (t.quality === 'mix' ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + bgTxt + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
         }
       }
     }
