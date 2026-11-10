@@ -1,155 +1,155 @@
 {
-  "at": "2026-11-10T17:14:39.687Z",
+  "at": "2026-11-10T17:46:07.597Z",
   "url": "https://value-slip.75rk4v4jg4.workers.dev",
   "checks": [
     {
       "what": "EURUSD=X 15m",
       "status": 200,
-      "ms": 312,
-      "n": 454,
-      "last": 1.1156,
+      "ms": 246,
+      "n": 457,
+      "last": 1.1157,
       "err": ""
     },
     {
       "what": "EURUSD=X 60m",
       "status": 200,
-      "ms": 236,
+      "ms": 129,
       "n": 523,
-      "last": 1.1156,
+      "last": 1.1157,
       "err": ""
     },
     {
       "what": "EURUSD=X 1d",
       "status": 200,
-      "ms": 182,
+      "ms": 152,
       "n": 522,
-      "last": 1.1156,
+      "last": 1.1157,
       "err": ""
     },
     {
       "what": "GBPUSD=X 15m",
       "status": 200,
-      "ms": 112,
-      "n": 454,
-      "last": 1.3329,
+      "ms": 122,
+      "n": 457,
+      "last": 1.3332,
       "err": ""
     },
     {
       "what": "GBPUSD=X 60m",
       "status": 200,
-      "ms": 163,
+      "ms": 159,
       "n": 523,
-      "last": 1.3329,
+      "last": 1.3332,
       "err": ""
     },
     {
       "what": "GBPUSD=X 1d",
       "status": 200,
-      "ms": 330,
+      "ms": 130,
       "n": 522,
-      "last": 1.3329,
+      "last": 1.3332,
       "err": ""
     },
     {
       "what": "JPY=X 15m",
       "status": 200,
-      "ms": 151,
-      "n": 454,
-      "last": 158.751,
+      "ms": 154,
+      "n": 457,
+      "last": 158.772,
       "err": ""
     },
     {
       "what": "JPY=X 60m",
       "status": 200,
-      "ms": 172,
+      "ms": 156,
       "n": 523,
-      "last": 158.751,
+      "last": 158.772,
       "err": ""
     },
     {
       "what": "JPY=X 1d",
       "status": 200,
-      "ms": 159,
+      "ms": 105,
       "n": 522,
-      "last": 158.754,
+      "last": 158.772,
       "err": ""
     },
     {
       "what": "GC=F 15m",
       "status": 200,
-      "ms": 200,
-      "n": 434,
-      "last": 4031.4,
+      "ms": 117,
+      "n": 436,
+      "last": 4025.5,
       "err": ""
     },
     {
       "what": "GC=F 60m",
       "status": 200,
-      "ms": 106,
+      "ms": 173,
       "n": 621,
-      "last": 4031.2,
+      "last": 4025.5,
       "err": ""
     },
     {
       "what": "GC=F 1d",
       "status": 200,
-      "ms": 186,
+      "ms": 109,
       "n": 505,
-      "last": 4031.2,
+      "last": 4025.5,
       "err": ""
     },
     {
       "what": "SI=F 15m",
       "status": 200,
-      "ms": 136,
-      "n": 434,
-      "last": 51.27,
+      "ms": 223,
+      "n": 436,
+      "last": 51.185,
       "err": ""
     },
     {
       "what": "SI=F 60m",
       "status": 200,
-      "ms": 164,
+      "ms": 100,
       "n": 621,
-      "last": 51.27,
+      "last": 51.185,
       "err": ""
     },
     {
       "what": "SI=F 1d",
       "status": 200,
-      "ms": 217,
+      "ms": 101,
       "n": 505,
-      "last": 51.27,
+      "last": 51.185,
       "err": ""
     },
     {
       "what": "CL=F 15m",
       "status": 200,
-      "ms": 182,
-      "n": 434,
-      "last": 86.74,
+      "ms": 167,
+      "n": 436,
+      "last": 86.32,
       "err": ""
     },
     {
       "what": "CL=F 60m",
       "status": 200,
-      "ms": 175,
+      "ms": 243,
       "n": 621,
-      "last": 86.73,
+      "last": 86.32,
       "err": ""
     },
     {
       "what": "CL=F 1d",
       "status": 200,
-      "ms": 457,
+      "ms": 113,
       "n": 505,
-      "last": 86.73,
+      "last": 86.32,
       "err": ""
     },
     {
       "what": "^GDAXI 15m",
       "status": 200,
-      "ms": 193,
+      "ms": 103,
       "n": 171,
       "last": 26347.45,
       "err": ""
@@ -157,7 +157,7 @@
     {
       "what": "^GDAXI 60m",
       "status": 200,
-      "ms": 227,
+      "ms": 114,
       "n": 199,
       "last": 26347.45,
       "err": ""
@@ -165,7 +165,7 @@
     {
       "what": "^GDAXI 1d",
       "status": 200,
-      "ms": 201,
+      "ms": 127,
       "n": 506,
       "last": 26347.45,
       "err": ""
@@ -173,55 +173,55 @@
     {
       "what": "^NDX 15m",
       "status": 200,
-      "ms": 139,
-      "n": 116,
-      "last": 27586.895,
+      "ms": 119,
+      "n": 119,
+      "last": 27436.77,
       "err": ""
     },
     {
       "what": "^NDX 60m",
       "status": 200,
-      "ms": 112,
-      "n": 151,
-      "last": 27586.895,
+      "ms": 104,
+      "n": 152,
+      "last": 27436.77,
       "err": ""
     },
     {
       "what": "^NDX 1d",
       "status": 200,
-      "ms": 111,
+      "ms": 127,
       "n": 501,
-      "last": 27586.895,
+      "last": 27436.77,
       "err": ""
     },
     {
       "what": "^GSPC 15m",
       "status": 200,
-      "ms": 339,
-      "n": 116,
-      "last": 7495.82,
+      "ms": 118,
+      "n": 119,
+      "last": 7473.25,
       "err": ""
     },
     {
       "what": "^GSPC 60m",
       "status": 200,
-      "ms": 162,
-      "n": 151,
-      "last": 7495.99,
+      "ms": 125,
+      "n": 152,
+      "last": 7473.25,
       "err": ""
     },
     {
       "what": "^GSPC 1d",
       "status": 200,
-      "ms": 132,
+      "ms": 125,
       "n": 501,
-      "last": 7495.82,
+      "last": 7473.25,
       "err": ""
     },
     {
       "what": "SAP.DE 15m",
       "status": 200,
-      "ms": 180,
+      "ms": 107,
       "n": 171,
       "last": 209.95,
       "err": ""
@@ -229,7 +229,7 @@
     {
       "what": "SAP.DE 60m",
       "status": 200,
-      "ms": 115,
+      "ms": 126,
       "n": 199,
       "last": 209.95,
       "err": ""
@@ -237,7 +237,7 @@
     {
       "what": "SAP.DE 1d",
       "status": 200,
-      "ms": 185,
+      "ms": 142,
       "n": 506,
       "last": 209.95,
       "err": ""
@@ -245,25 +245,25 @@
     {
       "what": "NVDA 15m",
       "status": 200,
-      "ms": 111,
-      "n": 116,
-      "last": 167.445,
+      "ms": 100,
+      "n": 119,
+      "last": 166.73,
       "err": ""
     },
     {
       "what": "NVDA 60m",
       "status": 200,
-      "ms": 112,
-      "n": 151,
-      "last": 167.445,
+      "ms": 219,
+      "n": 152,
+      "last": 166.735,
       "err": ""
     },
     {
       "what": "NVDA 1d",
       "status": 200,
-      "ms": 143,
+      "ms": 125,
       "n": 501,
-      "last": 167.445,
+      "last": 166.735,
       "err": ""
     },
     {
@@ -349,7 +349,26 @@
     {
       "what": "Suche",
       "status": 200,
-      "sample": [],
+      "sample": [
+        {
+          "symbol": "RHM.DE",
+          "name": "RHEINMETALL AG                I",
+          "type": "EQUITY",
+          "exch": "XETRA"
+        },
+        {
+          "symbol": "RNMBY",
+          "name": "Rheinmetall AG",
+          "type": "EQUITY",
+          "exch": "OTC Markets"
+        },
+        {
+          "symbol": "RNMBF",
+          "name": "Rheinmetall AG",
+          "type": "EQUITY",
+          "exch": "OTC Markets"
+        }
+      ],
       "err": ""
     }
   ]
