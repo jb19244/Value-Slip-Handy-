@@ -2157,6 +2157,13 @@ function hardTest(b, picked){
     (hs.length ? '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th></tr>' + hs.map(function(x){ return '<tr><td>' + esc(x[0]) + '</td><td>' + x[1].n + '</td><td>' + fmt(x[1].win * 100, 0) + ' %</td><td class="' + (x[1].mean >= 0 ? 'good' : 'bad') + '">' + sgn(x[1].mean, 2) + '</td></tr>'; }).join('') + '</table>' : '<p class="hint">Im Härtetest gab es noch keine Trades dieser Stufen.</p>') +
     (pz.length ? '<p class="hint"><b>Zufalls-Check:</b> Es wurden ' + (b.tests || '') + ' Kombinationen getestet. Bereinigt um diese Zahl ist ' + pz.map(function(g){ return esc(g.name.split(': ').pop()) + (g.pAdj < 0.05 ? ' sehr wahrscheinlich kein Zufall' : (g.pAdj < 0.5 ? ' eher kein Zufall, aber nicht sicher' : ' noch nicht vom Zufall zu unterscheiden')); }).join('; ') + '.</p>' : '');
 }
+function viewScalpSets(){
+  var b = V.bs; if (!b || !b.sets) return '';
+  var ks = Object.keys(b.sets).filter(function(k){ return !/:all$/.test(k) || k === 'orbplay:all'; }).filter(function(k){ return k !== 'orbplay:stk' && k !== 'noise:etf'; });
+  var row = function(x){ return '<tr><td>' + (x.creme ? '✅ ' : '') + esc(x.name) + '</td><td>' + x.all.n + '</td><td>' + fmt(x.all.win * 100, 0) + ' %</td><td class="' + (x.all.mean >= 0 ? 'good' : 'bad') + '">' + sgn(x.all.mean, 3) + ' %</td><td class="' + ((x.hold.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.hold.n ? sgn(x.hold.mean, 3) + ' %' : '–') + '</td></tr>'; };
+  return '<div class="label" style="margin-top:14px">Daytrading und Scalping auf 5 Min seit 2018 (23 ETFs, 40 Aktien), Ø in % je Trade nach Kosten</div><table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø</th><th>Härtetest</th></tr>' + ks.map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
+    '<p class="hint">Gemeldet wird nur, was mindestens 60 % Gewinner hat und in allen drei Zeiträumen nach Kosten im Plus ist. Diese Liste wird jeden Sonntag neu gerechnet.</p>';
+}
 function viewMoreSets(){
   var b = V.bm; if (!b || !b.sets) return '';
   var row = function(x){ return '<tr><td>' + (x.passed ? '✅ ' : '') + esc(x.name) + (x.bias === 'survivor' ? ' <span class="muted tiny">(heutige Gewinner-Aktien, zu optimistisch)</span>' : '') + '</td><td>' + x.all.n + '</td><td>' + (x.all.n ? fmt(x.all.win * 100, 0) + ' %' : '–') + '</td><td class="' + ((x.all.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.all.n ? sgn(x.all.mean, 2) + ' %' : '–') + '</td><td class="' + ((x.hold.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.hold.n ? sgn(x.hold.mean, 2) + ' %' : '–') + '</td></tr>'; };
@@ -2195,7 +2202,7 @@ function viewResearch(){
   return '<section class="card"><div class="row"><h2>Strategien aus der Forschung</h2><span class="muted small">' + esc(dm(Date.parse(b.at))) + '</span></div>' +
     '<p class="hint" style="margin-top:4px">ORB „Stocks in Play“ (5 Min, ' + (b.orbDays || 0) + ' Handelstage, 45 US-Aktien), Connors RSI-2 auf Tageskerzen (bis 10 Jahre), News-Fehlausbruch und -Momentum (15 Min). Mit Kosten, Prüfung in drei Zeiträumen. ✅ = in allen dreien mindestens +0,05 R.</p>' +
     '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
-    viewMoreSets() +
+    viewMoreSets() + viewScalpSets() +
     (b.orbGross && b.orbGross.n ? '<p class="hint">ORB Top 3 ohne Kosten: Ø ' + sgn(b.orbGross.mean, 2) + ' R. Der Unterschied zeigt, wie viel Spread und Gebühren bei so engen Stops kosten.</p>' : '') + '</section>';
 }
 function viewBt(){
@@ -2437,6 +2444,7 @@ render = function(){ _render(); bind($('#page')); };
 
 // ---------- Start
 try { var qs = new URLSearchParams(location.search).get('sig'); if (qs) V.wantSig = qs; } catch (e) {}
+fetch('../dienst/backtest-scalp.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bs = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-more.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bm = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-extra.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bx = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-1h.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.grades){ V.bt1 = b; if (S.tab === 'buch' || S.tab === 'markt') rerender(); } }).catch(function(){});
