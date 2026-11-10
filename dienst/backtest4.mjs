@@ -93,12 +93,12 @@ const BREIT = [
   ['^GSPC', 'S&P 500', 'idx'], ['^NDX', 'Nasdaq 100', 'idx'], ['^DJI', 'Dow Jones', 'idx'], ['^RUT', 'Russell 2000', 'idx'], ['^GDAXI', 'DAX', 'idx'], ['^MDAXI', 'MDAX', 'idx'],
   ['^STOXX50E', 'Euro Stoxx 50', 'idx'], ['^FTSE', 'FTSE 100', 'idx'], ['^FCHI', 'CAC 40', 'idx'], ['^SSMI', 'SMI', 'idx'], ['^AEX', 'AEX', 'idx'], ['^IBEX', 'IBEX 35', 'idx'],
   ['FTSEMIB.MI', 'FTSE MIB', 'idx'], ['^N225', 'Nikkei 225', 'idx'], ['^HSI', 'Hang Seng', 'idx'], ['^AXJO', 'ASX 200', 'idx'],
-  ['GC=F', 'Gold', 'cmd'], ['SI=F', 'Silber', 'cmd'], ['CL=F', 'WTI Öl', 'cmd'], ['HG=F', 'Kupfer', 'cmd'], ['NG=F', 'Erdgas', 'cmd'],
+  ['GC=F', 'Gold', 'cmd'], ['SI=F', 'Silber', 'cmd'], ['HG=F', 'Kupfer', 'cmd'],
   ['XLK', 'US-Technologie', 'etf'], ['XLF', 'US-Finanzen', 'etf'], ['XLE', 'US-Energie', 'etf'], ['XLV', 'US-Gesundheit', 'etf'], ['XLY', 'US-Zykl. Konsum', 'etf'], ['XLP', 'US-Basiskonsum', 'etf'],
   ['XLI', 'US-Industrie', 'etf'], ['XLB', 'US-Grundstoffe', 'etf'], ['XLU', 'US-Versorger', 'etf'], ['EEM', 'Schwellenländer', 'etf'], ['EWZ', 'Brasilien', 'etf'], ['EWJ', 'Japan', 'etf'],
-  ['FXI', 'China', 'etf'], ['TLT', 'US-Staatsanleihen 20J', 'etf'],
-  ['EURUSD=X', 'EUR/USD', 'fx'], ['GBPUSD=X', 'GBP/USD', 'fx'], ['JPY=X', 'USD/JPY', 'fx'], ['AUDUSD=X', 'AUD/USD', 'fx']
+  ['FXI', 'China', 'etf'], ['TLT', 'US-Staatsanleihen 20J', 'etf'], ['IWM', 'US-Nebenwerte (ETF)', 'etf'], ['DIA', 'Dow (ETF)', 'etf'], ['SMH', 'Halbleiter', 'etf'], ['XBI', 'Biotech', 'etf'], ['KRE', 'US-Regionalbanken', 'etf'], ['ITB', 'US-Hausbau', 'etf']
 ];
+// Devisen (Tageskerzen von Yahoo mit unpassendem Schlusskurs) und Erdgas/Oel (Spruenge beim Kontraktwechsel) bewusst nicht dabei
 const COST = { idx: 0.07, cmd: 0.10, etf: 0.08, fx: 0.03 }, CUT = Date.parse('2014-01-01');
 const sma5Exit = (d1) => (k) => { if (k < 4) return false; let t = 0; for (let q = k - 4; q <= k; q++) t += d1[q].c; return d1[k].c > t / 5; };
 const bm = [], oosR = [], oosI = [];
@@ -108,7 +108,7 @@ for (const [s, nm, cls] of BREIT) {
   const dr = drift(d1), cost = COST[cls], rs = [], is = [];
   L.rsi2DailySignals(d1).filter((g) => g.dir > 0).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'open', exitFn: sma5Exit(d1), maxDays: 10, stopAtr: 3, costPct: cost }); if (r.pct != null) rs.push({ t: g.t, s, nm, pct: r.pct, ex: r.pct - dr * r.days, days: r.days }); });
   L.ibsSignals(d1).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'close', exitFn: L.ibsExit(d1), maxDays: 5, stopAtr: 3, costPct: cost }); if (r.pct != null) is.push({ t: g.t, s, nm, pct: r.pct, ex: r.pct - dr * r.days, days: r.days }); });
-  const ins = (a) => a.filter((x) => x.t < CUT), oos = (a) => a.filter((x) => x.t >= CUT), sel = (a) => { const x = st(ins(a)); return x.n >= 30 && x.win >= 0.6 && x.mean > 0; };
+  const ins = (a) => a.filter((x) => x.t < CUT), oos = (a) => a.filter((x) => x.t >= CUT), sel = (a) => { const x = st(ins(a)), e = st(ins(a).map((y) => ({ pct: y.ex }))); return x.n >= 30 && x.win >= 0.6 && x.mean > 0 && e.mean > 0; };
   const m = { s, nm, cls, from: L.dayOf(d1[0].t), rsi2: { is: st(ins(rs)), oos: st(oos(rs)), sel: sel(rs) }, ibs: { is: st(ins(is)), oos: st(oos(is)), sel: sel(is) } };
   bm.push(m); oosDays = Math.max(oosDays, d1.filter((x) => x.t >= CUT).length);
   if (m.rsi2.sel) oos(rs).forEach((x) => oosR.push(x));
