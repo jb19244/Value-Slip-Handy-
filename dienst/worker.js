@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'a661e5fa03';
+const WORKER_VER = '70e6ebd119';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2696,7 +2696,9 @@ function simulate(sig, c, cost){
   var risk = (entry - sig.stop) * sig.dir;
   if (!(risk > 0)){ r.how = 'ungültig'; return r; }
   r.filled = true; r.fillT = c[fill].t; r.entry = entry;
-  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk, beOn = false;
+  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk, beOn = false, pt = 0;
+  // Teilgewinn (sig.part): bei +1R die Haelfte schliessen, Rest mit Stop auf Einstand bis Ziel oder Tagesende
+  var fin = function(v){ return pt ? 0.5 + 0.5 * v : v; };
   for (i = fill; i < n; i++){
     var x = c[i], bpx = berlinFast(x.t);
     var adv = ((sig.dir > 0 ? x.l : x.h) - entry) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - entry) * sig.dir / risk;
@@ -2706,21 +2708,22 @@ function simulate(sig, c, cost){
     if (i === fill && mode === 'stop' && (x.c - x.o) * sig.dir > 0) adv = (Math.min(entry * sig.dir, x.c * sig.dir) * sig.dir - entry) * sig.dir / risk;
     if (adv < r.mae) r.mae = adv;
     // Stop auf Einstand, sobald 1R erreicht war (gilt ab der Kerze danach)
-    if (beOn && adv <= 0){ r.r = 0; r.how = 'Einstand'; r.exitT = x.t; break; }
-    if (adv <= -1){ r.r = -1; r.how = 'Stop'; r.exitT = x.t; break; }
+    if (beOn && adv <= 0){ r.r = fin(0); r.how = 'Einstand'; r.exitT = x.t; break; }
+    if (adv <= -1){ r.r = fin(-1); r.how = 'Stop'; r.exitT = x.t; break; }
     if (fav > r.mfe) r.mfe = fav;
-    if (sig.be && fav >= 1 && !beOn && rr > 1) beOn = true;
-    if ((i > fill || mode !== 'limit') && fav >= rr){ r.r = rr; r.how = 'Ziel'; r.exitT = x.t; break; }
+    if ((i > fill || mode !== 'limit') && fav >= rr){ r.r = fin(rr); r.how = 'Ziel'; r.exitT = x.t; break; }
+    if ((sig.be || sig.part) && fav >= 1 && !beOn && rr > 1){ beOn = true; if (sig.part){ pt = 1; r.partT = x.t; } }
     var mN = sig.exit === 'sma5' ? 5 : (sig.exit === 'sma20' ? 20 : 0);
     if (mN && i >= mN - 1 && i > fill){
       var sm = 0; for (var q2 = 0; q2 < mN; q2++) sm += c[i - q2].c; sm /= mN;
-      if ((x.c - sm) * sig.dir > 0){ r.r = (x.c - entry) * sig.dir / risk; r.how = mN + 'er-Schnitt'; r.exitT = x.t; break; }
+      if ((x.c - sm) * sig.dir > 0){ r.r = fin((x.c - entry) * sig.dir / risk); r.how = mN + 'er-Schnitt'; r.exitT = x.t; break; }
     }
-    if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = ((i > fill ? x.o : x.c) - entry) * sig.dir / risk; r.how = 'Tagesende'; r.exitT = x.t; break; }
+    if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = fin(((i > fill ? x.o : x.c) - entry) * sig.dir / risk); r.how = 'Tagesende'; r.exitT = x.t; break; }
   }
   if (r.r == null){ r.filled = true; r.how = 'läuft'; return r; }
   r.mae = Math.max(r.mae, -1);
-  r.r -= (cost || 0) * (mode === 'limit' ? 1 : 1.5) / risk;
+  r.part = !!pt;
+  r.r -= (cost || 0) * (mode === 'limit' ? 1 : 1.5) / risk + (pt ? (cost || 0) * 0.25 / risk : 0); // Teilverkauf kostet eine zusaetzliche Ordergebuehr
   return r;
 }
 // Rueckrechnung fuer ein Instrument: Signale finden, durchspielen, Ampel zum Signalzeitpunkt bestimmen
@@ -2738,13 +2741,14 @@ function backtest(p){
     if (!sim.filled || sim.r == null) return;
     if (s.oco && sim.fillT !== first[s.type + s.oco]) return;
     if (p.be){ var s2 = Object.assign({}, s, { be: true }), simBe = simulate(s2, c, cost); sim.rBe = simBe.r != null ? simBe.r : sim.r; }
+    { var s3 = Object.assign({}, s, { part: true }), simP = simulate(s3, c, cost); sim.rPart = simP.r != null ? simP.r : sim.r; }
     var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
     var h1 = p.h1 ? (p.h1 === p.m15 ? c.slice(Math.max(0, s.i - 300), s.i + 1) : p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300)) : null;
     var d1 = p.d1 && !p.noCheck ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
     var chk = p.noCheck ? { ampel: null, score: null, items: [] } : scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
     res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: sim.entry || s.entry, stop: s.stop, target: s.target, exit: (sim.entry || s.entry) + s.dir * ((sim.entry || s.entry) - s.stop) * s.dir * sim.r,
-      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, rBe: sim.rBe, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
+      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, rBe: sim.rBe, rPart: sim.rPart, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
   });
   return res;
 }
@@ -3012,7 +3016,7 @@ async function tradeRoute(request, headers, env, nowMs) {
       kw: (Array.isArray(b.kw) ? b.kw : []).filter((k) => /^[a-z|]{2,40}$/.test(k)).slice(0, 5),
       lead: num(b.lead, 5, 60, 15), kz: b.kz !== false, alerts, sent: t.sent || {},
       watch: (Array.isArray(b.watch) ? b.watch : []).filter((k) => typeof k === 'string' && TL.instrumentByKey(k)).slice(0, 8),
-      scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix'].includes(b.quality) ? b.quality : 'triple',
+      scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix', 'creme'].includes(b.quality) ? b.quality : 'creme',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
       swing: b.swing !== false, bgreen: b.bgreen !== false, ibsOn: b.ibs !== false, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
@@ -3049,9 +3053,17 @@ async function qualityCfg(env, nowMs) {
       if (!r.ok) return {};
       const j = await r.json();
       // Kennzahlen ueber den ganzen Zeitraum (Auswahl + Haertetest)
-      const stats = {}; (j.grades || []).forEach((g) => { const a = g.all || {}, h = g.hold || {}, n = (a.n || 0) + (h.n || 0); stats[g.id] = n ? { n, mean: ((a.mean || 0) * (a.n || 0) + (h.mean || 0) * (h.n || 0)) / n, win: ((a.win || 0) * (a.n || 0) + (h.win || 0) * (h.n || 0)) / n } : null; });
+      const stats = {}; (j.grades || []).forEach((g) => { const a = g.all || {}, h = g.hold || {}, n = (a.n || 0) + (h.n || 0); stats[g.id] = n ? { n, mean: ((a.mean || 0) * (a.n || 0) + (h.mean || 0) * (h.n || 0)) / n, win: ((a.win || 0) * (a.n || 0) + (h.win || 0) * (h.n || 0)) / n, hn: h.n || 0, hm: h.mean || 0, hw: h.win || 0 } : null; });
+      // Creme de la Creme: nur bestandene Stufen mit mind. 60 % Gewinnern, die auch im Haertetest (letzte 25 %) im Plus waren
+      const pool = [...new Set([j.passed ? j.chosen : null].concat(j.passed ? (j.aIds || []) : [], j.w60 || [], j.triple || [], j.extra || []).filter((x) => x && !/:bgreen$/.test(x)))];
+      const creme = pool.filter((id) => { const x = stats[id]; return x && x.n >= 40 && x.win >= 0.6 && x.mean > 0 && x.hn >= 10 && x.hm > 0; }).sort((p1, p2) => stats[p2].win - stats[p1].win);
+      // B-Setups nur, wenn die Stufe mind. 50 % Gewinner hat und im Haertetest im Plus war
+      const bOk = ['sweep', 'pullback'].filter((ty) => { const x = stats[ty + ':bgreen']; return x && x.n >= 40 && x.win >= 0.5 && x.mean > 0 && x.hn >= 10 && x.hm > 0; });
       const dossier = {}; Object.keys(j.dossier || {}).forEach((k) => { dossier[k] = { mgmt: j.dossier[k].mgmt }; });
-      return { chosen: j.passed ? j.chosen : null, aIds: j.passed ? (j.aIds || []) : [], w60: j.w60 || [], triple: j.triple || [], extra: j.extra || [], stats, top: j.top || null, good: j.good || null, dossier };
+      // Neue Rueckrechnung mit Teilgewinn (Haelfte bei +1R): Creme = 60 %+, B+ = 50 %+, beide in allen drei Zeitraeumen im Plus
+      const statsP = {}; (j.grades || []).forEach((g) => { const b = g.part && g.part.both, h = g.part && g.part.hold; if (b && b.n) statsP[g.id] = { n: b.n, mean: b.mean, win: b.win, hn: h ? h.n : 0, hm: h ? h.mean : 0 }; });
+      const hasP = Array.isArray(j.creme);
+      return { creme: hasP ? j.creme : creme, bplus: hasP ? (j.bplus || []) : null, statsP: hasP ? statsP : null, cremeAll: j.cremeAll || null, bOk, chosen: j.passed ? j.chosen : null, aIds: j.passed ? (j.aIds || []) : [], w60: j.w60 || [], triple: j.triple || [], extra: j.extra || [], stats, top: j.top || null, good: j.good || null, dossier };
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -3101,7 +3113,7 @@ async function runTrade(env, nowMs) {
     if (t.sent[key] || gone) return false;
     const r = await sendPush(env, t.sub, Object.assign({ title: 'Trade Check', url: './' }, msg), nowMs, 1800);
     t.sent[key] = nowMs; dirty = true;
-    t.log.push({ at: nowMs, t: (msg.body || '').slice(0, 260) }); t.log = t.log.slice(-15);
+    t.log.push({ at: nowMs, t: (msg.body || '').slice(0, 600) }); t.log = t.log.slice(-15);
     if (r.status === 404 || r.status === 410) { t.sub = null; gone = true; }
     else rep.pushed++;
     return true;
@@ -3327,31 +3339,34 @@ async function runTrade(env, nowMs) {
         const cls = newsSoon ? 'B' : (TL.gradeMatch(aId, g, ampel) ? 'A+' : (bHit ? 'A' : 'B'));
         // B-Setup nur mit gruener Ampel, Einstieg in Premium/Discount, Ziel an Liquiditaet und CRV ab 2
         const bgId = (g.type || 'sweep') + ':bgreen', bgHit = !newsSoon && cls === 'B' && TL.gradeMatch(bgId, g, ampel);
+        const cHit = newsSoon ? null : (q.creme || []).find((x) => TL.gradeMatch(x, g, ampel)), bgGood = (q.bOk || []).includes(g.type || 'sweep');
+        const pHit = newsSoon || cHit || !q.bplus ? null : q.bplus.find((x) => TL.gradeMatch(x, g, ampel)), SP = q.statsP || q.stats || {};
         const sig = { id, type: g.type || 'sweep', mode: g.mode || 'limit', k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, level: g.level, withBias: g.withBias, liqTarget: g.liqTarget, bias, expires: g.expires, filled: sim.filled,
-          ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', conf: cf ? { score: cf.score, max: cf.max, items: cf.items, ew: cf.ew ? cf.ew.phase : null } : null, extra: !newsSoon && !!eHit, newsSoon, w60: !newsSoon && !!wHit, wGrade: wHit || null, triple: !newsSoon && !!tHit, tGrade: tHit || null, bg: bgHit, vix: g.vix != null ? Math.round(g.vix * 10) / 10 : null, usdOk: g.usdOk };
+          ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', conf: cf ? { score: cf.score, max: cf.max, items: cf.items, ew: cf.ew ? cf.ew.phase : null } : null, extra: !newsSoon && !!eHit, newsSoon, w60: !newsSoon && !!wHit, wGrade: wHit || null, triple: !newsSoon && !!tHit, tGrade: tHit || null, bg: bgHit, creme: !!cHit, cGrade: cHit || null, cWin: cHit && SP[cHit] ? Math.round(SP[cHit].win * 1000) / 1000 : null, bp: !!pHit, pGrade: pHit || null, pWin: pHit && SP[pHit] ? Math.round(SP[pHit].win * 1000) / 1000 : null, tp1: g.entry + g.dir * Math.abs(g.entry - g.stop), vix: g.vix != null ? Math.round(g.vix * 10) / 10 : null, usdOk: g.usdOk };
         t.signals.unshift(sig); t.signals = t.signals.slice(0, 30); dirty = true;
-        const mixLbl = sig.triple ? '3× geprüft' : (sig.w60 ? '60 %+' : (cls !== 'B' ? cls : (sig.extra ? 'NR7' : (sig.bg && t.bgreen !== false && clk.min >= 16 * 60 ? 'B grün' : null))));
-        const want = t.quality === 'mix' ? !!mixLbl : t.quality === 'triple' ? sig.triple : t.quality === 'w60' ? sig.w60 : t.quality === 'all' ? ((sig.type === 'sweep' || sig.type === 'pullback') && (sig.withBias || t.scanAll)) : (t.quality === 'a' ? cls !== 'B' : cls === 'A+');
-        if (want && (cls !== 'B' || sig.w60 || sig.triple || sig.extra || (sig.bg && t.quality === 'mix' && mixLbl === 'B grün'))) {
-          const gSel = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : (eHit || bgId))))) : t.quality === 'triple' ? tHit : (sig.w60 && t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : bHit));
+        const late = clk.min >= 16 * 60 && t.bgreen !== false;
+        const mixLbl = t.quality === 'creme' ? (sig.creme ? 'Crème' : (q.bplus ? (sig.bp && late ? 'B+' : null) : (sig.bg && bgGood && late ? 'B grün' : null))) : sig.triple ? '3× geprüft' : (sig.w60 ? '60 %+' : (cls !== 'B' ? cls : (sig.extra ? 'NR7' : (sig.bg && t.bgreen !== false && clk.min >= 16 * 60 ? 'B grün' : null))));
+        const want = (t.quality === 'mix' || t.quality === 'creme') ? !!mixLbl : t.quality === 'triple' ? sig.triple : t.quality === 'w60' ? sig.w60 : t.quality === 'all' ? ((sig.type === 'sweep' || sig.type === 'pullback') && (sig.withBias || t.scanAll)) : (t.quality === 'a' ? cls !== 'B' : cls === 'A+');
+        if (want && (t.quality === 'creme' || cls !== 'B' || sig.w60 || sig.triple || sig.extra || (sig.bg && t.quality === 'mix' && mixLbl === 'B grün'))) {
+          const gSel = t.quality === 'creme' ? (sig.creme ? cHit : (pHit || bgId)) : t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : (eHit || bgId))))) : t.quality === 'triple' ? tHit : (sig.w60 && t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : bHit));
           const dz = q.dossier && q.dossier[gSel];
           t.track = Array.isArray(t.track) ? t.track : [];
           t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: g.mode || 'limit', entry: g.entry, stop: g.stop, target: g.target, ko, t: g.t, expires: g.expires, cls, grade: gSel,
-            be: !!(dz && dz.mgmt === 'be'), state: 'wartet', at: nowMs });
+            be: !!(dz && dz.mgmt === 'be'), part: true, state: 'wartet', at: nowMs });
           if (t.quality === 'w60') t.track[t.track.length - 1].cls = '60 %+';
           if (t.quality === 'triple') t.track[t.track.length - 1].cls = '3× geprüft';
-          if (t.quality === 'mix') t.track[t.track.length - 1].cls = mixLbl;
+          if (t.quality === 'mix' || t.quality === 'creme') t.track[t.track.length - 1].cls = mixLbl;
           t.track = t.track.slice(-20);
         }
         if (want) {
-          const gid = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : (eHit || bgId))))) : t.quality === 'triple' ? tHit : t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : ''));
-          const gs = q.stats && q.stats[gid];
+          const gid = t.quality === 'creme' ? (sig.creme ? cHit : (pHit || bgId)) : t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : (eHit || bgId))))) : t.quality === 'triple' ? tHit : t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : ''));
+          const gs = t.quality === 'creme' && q.statsP ? q.statsP[gid] : (q.stats && q.stats[gid]);
           const short = { ote: 'OTE', pd: g.dir > 0 ? 'Discount' : 'Premium', ob: 'Order Block', fvgz: 'FVG', fib: 'Fib-Ziel', ew: 'Elliott' };
           const confTxt = cf ? ' SMC/Elliott/Fib ' + cf.score + '/' + cf.max + ': ' + cf.items.filter((x) => x.ok).map((x) => short[x.k] + (x.k === 'ew' && cf.ew ? ' (' + cf.ew.phase + ')' : '') + ' ✓').join(', ') + (cf.items.some((x) => !x.ok) ? '; fehlt: ' + cf.items.filter((x) => !x.ok).map((x) => short[x.k]).join(', ') : '') + '.' : '';
-          const proof = gs && gs.n ? ' Bisher: ' + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Gewinner, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' + (gs.win < 0.6 ? ' ⚠️ Unter deiner 60-%-Marke.' : '') : '';
+          const proof = gs && gs.n ? (t.quality === 'creme' && q.statsP ? ' Mit Teilgewinn bisher: ' : ' Bisher: ') + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Gewinner, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' + (gs.win < 0.6 && mixLbl !== 'B+' ? ' ⚠️ Unter deiner 60-%-Marke.' : '') : '';
           const bgTxt = mixLbl === 'B grün' ? ' B-Setup mit allen Pflicht-Bedingungen: Ampel grün ✓, ' + (g.dir > 0 ? 'Discount' : 'Premium') + ' ✓, Ziel an Liquidität ✓, CRV ' + g.rr.toFixed(1).replace('.', ',') + ' ✓.' + (gs && gs.n ? '' : ' Diese Stufe wird ab der nächsten Rückrechnung gemessen.') : '';
           sig.winRate = gs && gs.n ? Math.round(gs.win * 1000) / 1000 : null;
-          await send('s:' + id, { title: (t.quality === 'mix' ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · Ziel ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + bgTxt + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+          await send('s:' + id, { title: ((t.quality === 'mix' || t.quality === 'creme') ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · TP1 ' + fmtp(sig.tp1, ins.k) + ' (Hälfte schließen, Stop auf Einstand) · TP2 ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + bgTxt + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
         }
       }
     }
@@ -3460,17 +3475,17 @@ async function runTrade(env, nowMs) {
     if (!c5 || !c5.length) continue;
     rep.tracked = (rep.tracked || 0) + 1;
     let i0 = -1; for (let i = 0; i < c5.length; i++) { if (c5[i].t < x.t) i0 = i; else break; }
-    const sim = TL.simulate({ i: i0, dir: x.dir, mode: x.mode, entry: x.entry, stop: x.stop, target: x.target, expires: x.expires, be: x.be }, c5, 0);
+    const sim = TL.simulate({ i: i0, dir: x.dir, mode: x.mode, entry: x.entry, stop: x.stop, target: x.target, expires: x.expires, be: x.be, part: x.part }, c5, 0);
     const mine = (t.trades || []).some((tr) => tr.sig === x.id); // eigener Tagebuch-Trade meldet sich schon selbst
     const nm = x.name + ' ' + (x.dir > 0 ? 'Long' : 'Short') + ' (' + x.cls + ')';
     const done = (state, txt) => { x.state = state; x.r = sim.r; x.exitAt = sim.exitT || nowMs; dirty = true; t.trackLog = (t.trackLog || []).concat([{ id: x.id, k: x.k, name: x.name, dir: x.dir, cls: x.cls, grade: x.grade, t: x.t, fillT: x.fillT || null, state, r: sim.r != null ? Math.round(sim.r * 100) / 100 : null }]).slice(-200); return txt; };
     if (sim.filled && x.state === 'wartet') { x.state = 'offen'; x.fillT = sim.fillT; dirty = true; if (!mine) await send('k:' + x.id + ':fill', { body: nm + ': Order ausgelöst bei ' + fmtp(sim.entry, x.k) + '. SL ' + fmtp(x.stop, x.k) + ' · TP ' + fmtp(x.target, x.k) + '. Ich melde mich bei TP oder SL.', tag: 'trk-' + x.id }); }
-    if (sim.filled && sim.mfe >= 1 && !x.r1) { x.r1 = nowMs; dirty = true; if (!mine && (sim.r == null || sim.r > 0)) await send('k:' + x.id + ':r1', { body: nm + ' liegt 1R im Plus.' + (x.be ? ' Laut Rückrechnung lohnt es sich jetzt, den Stop auf Einstand ' + fmtp(sim.entry, x.k) + ' zu ziehen.' : ' Laut Rückrechnung ist es besser, den Stop stehen zu lassen.'), tag: 'trk-' + x.id }); }
+    if (sim.filled && sim.mfe >= 1 && !x.r1) { x.r1 = nowMs; dirty = true; if (!mine && (sim.r == null || sim.r > 0)) await send('k:' + x.id + ':r1', { body: x.part ? '💰 TP1 erreicht: ' + nm + ' bei ' + fmtp(x.entry + x.dir * Math.abs(x.entry - x.stop), x.k) + ' (+1R). Jetzt die Hälfte verkaufen (+0,5R gesichert) und den Stop für den Rest auf Einstand ' + fmtp(sim.entry, x.k) + ' ziehen. Rest läuft bis TP2 ' + fmtp(x.target, x.k) + '.' : nm + ' liegt 1R im Plus.' + (x.be ? ' Laut Rückrechnung lohnt es sich jetzt, den Stop auf Einstand ' + fmtp(sim.entry, x.k) + ' zu ziehen.' : ' Laut Rückrechnung ist es besser, den Stop stehen zu lassen.'), tag: 'trk-' + x.id }); }
     if (sim.filled && sim.r != null) {
       const how = sim.how === 'Ziel' ? 'ziel' : (sim.how === 'Stop' ? 'stop' : (sim.how === 'Einstand' ? 'einstand' : 'tagesende'));
-      const txt = how === 'ziel' ? '✅ TP erreicht: ' + nm + ' bei ' + fmtp(x.target, x.k) + ' (+' + sim.r.toFixed(1).replace('.', ',') + 'R).'
+      const txt = how === 'ziel' ? '✅ ' + (x.part && sim.part ? 'TP2' : 'TP') + ' erreicht: ' + nm + ' bei ' + fmtp(x.target, x.k) + ' (gesamt +' + sim.r.toFixed(1).replace('.', ',') + 'R).'
         : how === 'stop' ? '❌ SL erreicht: ' + nm + ' bei ' + fmtp(x.stop, x.k) + ' (−1R).'
-        : how === 'einstand' ? 'Einstand: ' + nm + ' wurde bei ' + fmtp(sim.entry, x.k) + ' ausgestoppt (0R).'
+        : how === 'einstand' ? 'Rest bei Einstand ' + fmtp(sim.entry, x.k) + ' ausgestoppt: ' + nm + (sim.part ? ' bringt gesamt +' + sim.r.toFixed(1).replace('.', ',') + 'R (Teilgewinn bei TP1).' : ' (0R).')
         : 'Tagesende: ' + nm + ' jetzt schließen, Stand ' + (sim.r >= 0 ? '+' : '') + sim.r.toFixed(1).replace('.', ',') + 'R.';
       done(how, txt);
       if (!mine) await send('k:' + x.id + ':done', { body: txt, tag: 'trk-' + x.id });
