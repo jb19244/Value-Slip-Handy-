@@ -117,6 +117,8 @@ for (const [s, nm, cls] of BREIT) {
 out.breadth = { markets: bm, cut: '2014-01-01', oosDays };
 out.sets['breit:rsi2'] = evalSet('RSI-2 auf ' + bm.filter((m) => m.rsi2.sel).length + ' ausgewählten Märkten (nur ab 2014 gezählt)', oosR, oosDays);
 out.sets['breit:ibs'] = evalSet('IBS auf ' + bm.filter((m) => m.ibs.sel).length + ' ausgewählten Märkten (nur ab 2014 gezählt)', oosI, oosDays);
+// Swing-Freigabe wie bei RSI-2 (Tag): mind. 100 Trades, 60 % Gewinner, sicher ueber null, in allen drei Zeitraeumen im Plus
+{ const x = out.sets['breit:rsi2']; x.swingOk = x.all.n >= 100 && x.all.win >= 0.6 && x.all.lo > 0 && [x.train, x.test, x.hold].every((y) => y.n && y.mean > 0); }
 out.sets['breit:mix'] = evalSet('RSI-2 und IBS zusammen (ab 2014)', oosR.concat(oosI), oosDays);
 // ---- Depot-Strategien (Monatsschluesse mit Dividenden)
 const M = {};

@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '26d9c93a56';
+const WORKER_VER = 'a661e5fa03';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3037,6 +3037,7 @@ function berlinClock(ms) {
   return { min: (+p.hour) * 60 + (+p.minute), wd: p.weekday };
 }
 // Handelstag einer Tageskerze: Yahoo stempelt US-Werte zur Eroeffnung (14:30 UTC), Devisen um 23:00 UTC des Vortags
+const EU_Y = ['^GDAXI', '^MDAXI', '^STOXX50E', '^FTSE', '^FCHI', '^SSMI', '^AEX', '^IBEX', 'FTSEMIB.MI'];
 const dKey = (t) => new Date(t + 3 * 3600e3).toISOString().slice(0, 10);
 const hhmm = (ms) => new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' }).format(new Date(ms));
 // Belegte Qualitaetsstufe aus der grossen Rueckrechnung (GitHub legt sie woechentlich ab)
@@ -3080,7 +3081,10 @@ async function moreCfg(env, nowMs) {
       Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win, unit: j.sets[k].unit }; });
       Object.keys(j.depot || {}).forEach((k) => { const d = j.depot[k]; depot[k] = { name: d.name, now: d.now, nowMonth: d.nowMonth, all: d.all, bh: d.bh }; });
       const any = Object.keys(depot)[0];
-      return { passed: j.passed || [], depotPassed: j.depotPassed || [], stats, depot, depotMonth: any ? depot[any].nowMonth : null };
+      // Breite: Maerkte, auf denen RSI-2 bis 2013 bestand und ab 2014 gezaehlt wurde (ohne Asien: Handelszeit passt nicht)
+      const ASIA = ['^N225', '^HSI', '^AXJO', 'EWJ', 'FXI'], br = j.breadth && j.sets && j.sets['breit:rsi2'];
+      const rsiSel = br && br.swingOk ? j.breadth.markets.filter((m) => m.rsi2 && m.rsi2.sel && !ASIA.includes(m.s)).map((m) => ({ s: m.s, nm: m.nm, cls: m.cls })) : [];
+      return { passed: j.passed || [], depotPassed: j.depotPassed || [], stats, depot, depotMonth: any ? depot[any].nowMonth : null, rsiSel };
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -3355,11 +3359,13 @@ async function runTrade(env, nowMs) {
   }
   // 7) Swing: Connors RSI-2 auf Tageskerzen (nur wenn die Rueckrechnung ihn als Swing-Stufe fuehrt)
   if (t.swing !== false && weekday) {
-    const qx = await researchCfg(env, nowMs), sw = qx.swing || [];
+    const qx = await researchCfg(env, nowMs), sw = qx.swing || [], qb = await moreCfg(env, nowMs), sel = qb.rsiSel || [];
     t.swingPos = Array.isArray(t.swingPos) ? t.swingPos : []; t.swingAt = t.swingAt || {};
-    if (sw.length) {
+    if (sw.length || sel.length) {
       const idxOnly = !sw.includes('rsi2d:long');
-      const uni = ['SPX', 'NDX', 'DJI', 'DAX', 'XAUUSD'].map((k) => TL.instrumentByKey(k)).concat(idxOnly ? [] : TL.PLAY_STOCKS.slice(0, 30).map(TL.stockInstrument)).filter(Boolean);
+      // Breite (32 Maerkte, ab 2014 geprueft) ersetzt die Einzelaktien, deren Rueckrechnung durch die Gewinner-Auswahl zu gut war
+      const uni = sel.length ? sel.map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: m.cls })
+        : ['SPX', 'NDX', 'DJI', 'DAX', 'XAUUSD'].map((k) => TL.instrumentByKey(k)).concat(idxOnly ? [] : TL.PLAY_STOCKS.slice(0, 30).map(TL.stockInstrument)).filter(Boolean);
       // a) Neue Signale nach dem US-Handelsschluss (22:10-23:30): Tageskerze ist fertig
       if (clk.min >= 22 * 60 + 10 && clk.min < 23 * 60 + 30) {
         const due = uni.filter((ins) => t.swingAt[ins.k] !== dayKey).slice(0, 6);
@@ -3369,15 +3375,19 @@ async function runTrade(env, nowMs) {
           const last = d1[d1.length - 1]; if (dKey(last.t) !== dayKey) continue;
           const g = TL.rsi2DailySignals(d1).filter((x) => x.i === d1.length - 1 && x.dir > 0)[0];
           if (!g || t.swingPos.some((p) => p.k === ins.k && (p.state === 'wartet' || p.state === 'offen'))) continue;
-          const id = ins.k + ':rsi2d:' + dayKey, stopRef = g.close - 3 * g.atr, s0 = qx.stats && qx.stats[sw[0]];
-          t.swingPos.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: 1, sigDay: dayKey, ref: g.close, atr: g.atr, stop: stopRef, state: 'wartet', at: nowMs });
-          await send('w:' + id, { title: 'Swing-Signal · ' + ins.name, body: ins.name + ' Long (Connors RSI-2): Kurs über dem 200-Tage-Schnitt, RSI(2) ' + g.rsi.toFixed(0) + '. Morgen zur Eröffnung kaufen (zuletzt ' + fmtp(g.close, ins.k) + '). Stop 3 ATR: ca. ' + fmtp(stopRef, ins.k) + '. Verkauft wird, sobald der Kurs über dem 5-Tage-Schnitt schließt, spätestens nach 10 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' R.' : ''), tag: 'swing-' + ins.k, url: './' });
+          const id = ins.k + ':rsi2d:' + dayKey, stopRef = g.close - 3 * g.atr, s0 = sel.length ? (qb.stats && qb.stats['breit:rsi2']) : (qx.stats && qx.stats[sw[0]]);
+          t.swingPos.push({ id, k: ins.k, y: ins.y, name: ins.name, eu: EU_Y.includes(ins.y), etf: ins.type === 'etf', dir: 1, sigDay: dayKey, ref: g.close, atr: g.atr, stop: stopRef, state: 'wartet', at: nowMs });
+          await send('w:' + id, { title: 'Swing-Signal · ' + ins.name, body: ins.name + ' Long (Connors RSI-2): Kurs über dem 200-Tage-Schnitt, RSI(2) ' + g.rsi.toFixed(0) + '. Morgen zur Eröffnung kaufen (zuletzt ' + fmtp(g.close, ins.k) + '). Stop 3 ATR: ca. ' + fmtp(stopRef, ins.k) + '. Verkauft wird, sobald der Kurs über dem 5-Tage-Schnitt schließt, spätestens nach 10 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + (s0.unit === '%' ? ' % nach Kosten.' : ' R.') : '') + (ins.type === 'etf' ? ' Umsetzen über einen passenden UCITS-ETF (bei Trade Republic gibt es keine US-ETFs).' : ''), tag: 'swing-' + ins.k, url: './' });
         }
       }
       // b) Offene Swing-Positionen kurz vor Handelsschluss pruefen (DAX 17:15, sonst 21:40)
       for (const p of t.swingPos.filter((x) => x.state === 'wartet' || x.state === 'offen')) {
-        const ins = TL.instrumentByKey(p.k); if (!ins) continue;
-        const pre = ins.k === 'DAX' || /\.DE$/.test(ins.y) ? 17 * 60 + 15 : 21 * 60 + 40;
+        const ins = TL.instrumentByKey(p.k) || { k: p.k, y: p.y, name: p.name, dec: 2 }; if (!ins.y) continue;
+        const pre = ins.k === 'DAX' || p.eu || EU_Y.includes(ins.y) || /\.DE$/.test(ins.y) ? 17 * 60 + 15 : 21 * 60 + 40;
+        // Abrufe sparen: stuendlich auf den Stop pruefen, in der Verkaufszeit jedes Mal
+        const inPre = clk.min >= pre && clk.min < pre + 15;
+        if (!inPre && nowMs - (p.chk || 0) < 55 * 60e3) continue;
+        p.chk = nowMs; dirty = true;
         const d1 = await candlesOf(ins.y, '1d', '3mo'); if (!d1 || d1.length < 10) continue;
         const after = d1.filter((x) => dKey(x.t) > p.sigDay);
         if (!after.length) continue;
@@ -3385,7 +3395,7 @@ async function runTrade(env, nowMs) {
         const risk = 3 * p.atr, lo = Math.min(...after.map((x) => x.l)), lastC = d1[d1.length - 1].c;
         const fin = (state, r, txt) => { p.state = state; p.r = Math.round(r * 100) / 100; p.exitAt = nowMs; dirty = true; t.trackLog = (t.trackLog || []).concat([{ id: p.id, k: p.k, name: p.name, dir: 1, cls: 'Swing', t: p.at, state, r: p.r }]).slice(-200); return send('w:' + p.id + ':done', { body: txt, tag: 'swing-' + p.k }); };
         if (lo <= p.stop) { await fin('stop', -1, '❌ SL erreicht: ' + p.name + ' Swing bei ' + fmtp(p.stop, p.k) + ' (−1R).'); continue; }
-        if (clk.min >= pre && clk.min < pre + 15) {
+        if (inPre) {
           const s5 = d1.slice(-5).reduce((a, x) => a + x.c, 0) / 5, r = (lastC - p.entry) / risk, nDays = after.length;
           if (lastC > s5) { await fin(r >= 0 ? 'ziel' : 'tagesende', r, '✅ Jetzt verkaufen: ' + p.name + ' schließt über dem 5-Tage-Schnitt. Stand ' + fmtp(lastC, p.k) + ' (' + (r >= 0 ? '+' : '') + r.toFixed(2).replace('.', ',') + 'R).'); continue; }
           if (nDays >= 10) { await fin('tagesende', r, 'Swing ' + p.name + ': 10 Tage erreicht, jetzt verkaufen. Stand ' + (r >= 0 ? '+' : '') + r.toFixed(2).replace('.', ',') + 'R.'); continue; }
