@@ -1704,7 +1704,7 @@ function fibSheet(){
 }
 
 // ===================== Signale =====================
-function gradeIds(){ var b = V.bt1; if (b && b.passed && b.chosen) return { a: b.chosen, b: b.second, list: b.aIds || (b.second ? [b.second] : []) }; return { a: 'sweep:trend_liq_rr', b: 'sweep:trend_liq', list: ['sweep:trend_liq'] }; }
+function gradeIds(){ var b = V.bt1; if (b && b.passed && b.chosen) return { a: b.chosen, b: b.second, list: (b.aIds || (b.second ? [b.second] : [])).filter(function(x){ return !/:bgreen$/.test(x); }) }; return { a: 'sweep:trend_liq_rr', b: 'sweep:trend_liq', list: ['sweep:trend_liq'] }; }
 function classify(g){
   var ids = gradeIds(), i = instr(g.k), now = Date.now();
   var news = (V.cal || []).some(function(e){ var t = Date.parse(e.date); return e.impact === 'High' && i && i.ccy.indexOf(e.country) >= 0 && t > g.t - 15 * 60e3 && t - g.t < 60 * 60e3; });
@@ -2132,7 +2132,7 @@ function viewMehr(){
     (!canPush || !standalone ? '<p class="hint warn">Auf dem iPhone gehen Mitteilungen nur, wenn Trade Check auf dem Home-Bildschirm liegt: Teilen → „Zum Home-Bildschirm“, dann von dort öffnen.</p>' : '') +
     (p.on ? '<label class="switch"><span>Setups melden (Scanner)</span><input type="checkbox" data-push="scan"' + (p.scan !== false ? ' checked' : '') + '></label>' +
       (p.scan !== false ? '<div class="label" style="margin-top:6px">Welche Setups melden</div><div class="seg" style="margin-top:6px">' + [['mix', 'Alle 5'], ['triple', '3× geprüft'], ['w60', '60 %+'], ['a', 'A+ und A']].map(function(q){ return '<button data-act="quality" data-q="' + q[0] + '" aria-pressed="' + ((p.quality || 'top') === q[0]) + '">' + q[1] + '</button>'; }).join('') + '</div><p class="hint">' + ({ mix: 'Alle 5: dreifach geprüft, 60 %+, A+, A und NR7-Ausbruch (VIX ab 20). Dazu B-Setups, wenn du sie unten einschaltest.', triple: 'Nur die Stufe, die auch im Härtetest hielt.', w60: 'Nur Stufen mit mindestens 60 % Gewinnern.', a: 'A+ und A.' }[p.quality || 'mix']) + ' Jede Mitteilung nennt die bisherige Gewinnquote der Stufe. Liegt sie unter 60 %, steht ⚠️ dabei.</p>' : '') +
-      ((p.quality || 'mix') === 'mix' ? '<label class="switch"><span>B-Setups: nur Ampel grün + Premium/Discount + Liquiditätsziel + CRV ab 2</span><input type="checkbox" data-push="bgreen"' + (p.bgreen !== false ? ' checked' : '') + '></label>' : '') +
+      ((p.quality || 'mix') === 'mix' ? '<label class="switch"><span>B-Setups ab 16:00: nur Ampel grün + Premium/Discount + Liquiditätsziel + CRV ab 2</span><input type="checkbox" data-push="bgreen"' + (p.bgreen !== false ? ' checked' : '') + '></label>' : '') +
       '<label class="switch"><span>ORB „Stocks in Play“ (US-Eröffnung)</span><input type="checkbox" data-push="orb"' + (p.orb !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Swing RSI-2 (abends, Haltedauer Tage)</span><input type="checkbox" data-push="swing"' + (p.swing !== false ? ' checked' : '') + '></label>' +
       '<p class="hint">Beide melden sich nur, solange sie die wöchentliche Rückrechnung bestehen (siehe Tagebuch → Strategien aus der Forschung).</p>' +

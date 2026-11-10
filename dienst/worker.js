@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '6df118c717';
+const WORKER_VER = 'f8a490e598';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3197,7 +3197,7 @@ async function runTrade(env, nowMs) {
         let chk = null; try { chk = TL.scoreCheck({ instr: ins, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, now: nowMs, d1, h1: c, m15: m15 && m15.length ? m15 : null, events: calNow }); } catch (e) { chk = null; }
         const ampel = chk && !chk.error ? chk.ampel : null;
         const newsSoon = (calNow || []).some((e) => e.impact === 'High' && ins.ccy.includes(e.country) && Date.parse(e.date) > nowMs - 15 * 60e3 && Date.parse(e.date) - nowMs < 60 * 60e3);
-        const aId = q.chosen || 'sweep:trend_liq_rr', bIds = q.chosen ? (q.aIds || []) : ['sweep:trend_liq'];
+        const aId = q.chosen || 'sweep:trend_liq_rr', bIds = (q.chosen ? (q.aIds || []) : ['sweep:trend_liq']).filter((x) => !/:bgreen$/.test(x)); // B grün bleibt B
         const bHit = bIds.find((id) => TL.gradeMatch(id, g, ampel));
         const wHit = (q.w60 || []).find((id) => TL.gradeMatch(id, g, ampel));
         const tHit = (q.triple || []).find((id) => TL.gradeMatch(id, g, ampel));
@@ -3208,9 +3208,9 @@ async function runTrade(env, nowMs) {
         const sig = { id, type: g.type || 'sweep', mode: g.mode || 'limit', k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, ko, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, level: g.level, withBias: g.withBias, liqTarget: g.liqTarget, bias, expires: g.expires, filled: sim.filled,
           ampel, score: chk && chk.score != null ? Math.round(chk.score * 10) / 10 : null, cls, top: cls === 'A+', conf: cf ? { score: cf.score, max: cf.max, items: cf.items, ew: cf.ew ? cf.ew.phase : null } : null, extra: !newsSoon && !!eHit, newsSoon, w60: !newsSoon && !!wHit, wGrade: wHit || null, triple: !newsSoon && !!tHit, tGrade: tHit || null, bg: bgHit, vix: g.vix != null ? Math.round(g.vix * 10) / 10 : null, usdOk: g.usdOk };
         t.signals.unshift(sig); t.signals = t.signals.slice(0, 30); dirty = true;
-        const mixLbl = sig.triple ? '3× geprüft' : (sig.w60 ? '60 %+' : (cls !== 'B' ? cls : (sig.extra ? 'NR7' : (sig.bg && t.bgreen !== false ? 'B grün' : null))));
+        const mixLbl = sig.triple ? '3× geprüft' : (sig.w60 ? '60 %+' : (cls !== 'B' ? cls : (sig.extra ? 'NR7' : (sig.bg && t.bgreen !== false && clk.min >= 16 * 60 ? 'B grün' : null))));
         const want = t.quality === 'mix' ? !!mixLbl : t.quality === 'triple' ? sig.triple : t.quality === 'w60' ? sig.w60 : t.quality === 'all' ? ((sig.type === 'sweep' || sig.type === 'pullback') && (sig.withBias || t.scanAll)) : (t.quality === 'a' ? cls !== 'B' : cls === 'A+');
-        if (want && (cls !== 'B' || sig.w60 || sig.triple || sig.extra || (sig.bg && t.quality === 'mix'))) {
+        if (want && (cls !== 'B' || sig.w60 || sig.triple || sig.extra || (sig.bg && t.quality === 'mix' && mixLbl === 'B grün'))) {
           const gSel = t.quality === 'mix' ? (sig.triple ? tHit : (sig.w60 ? wHit : (cls === 'A+' ? aId : (cls === 'A' ? bHit : (eHit || bgId))))) : t.quality === 'triple' ? tHit : (sig.w60 && t.quality === 'w60' ? wHit : (cls === 'A+' ? aId : bHit));
           const dz = q.dossier && q.dossier[gSel];
           t.track = Array.isArray(t.track) ? t.track : [];
