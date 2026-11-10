@@ -7,7 +7,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 const html = readFileSync(new URL('../trade/index.html', import.meta.url), 'utf8');
 const src = html.split('// BEGIN LOGIC')[1].split('// END LOGIC')[0];
-const L = new Function(src + '; return { parseYahoo, rStats, PLAY_STOCKS, ibsSignals, ibsExit, tomSignals, tomExit, overnightTrades, simDayTrade, imomTrades, noiseTrades, allocBacktest, perf, retOver, dayOf };')();
+const L = new Function(src + '; return { parseYahoo, rStats, rsi2DailySignals, PLAY_STOCKS, ibsSignals, ibsExit, tomSignals, tomExit, overnightTrades, simDayTrade, imomTrades, noiseTrades, allocBacktest, perf, retOver, dayOf };')();
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; TradeCheck/1.0)' };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function raw(sym, iv, rg) {
@@ -87,6 +87,37 @@ out.sets['noise:etf'] = evalSet('Noise Area „Beat the Market“ (SPY, QQQ, IWM
 out.sets['noise:etf_long'] = evalSet('Noise Area, nur Long (ETFs)', nzL, iDays);
 out.sets['noise:stocks'] = evalSet('Noise Area (8 große US-Aktien)', nzT, iDays);
 out.intraDays = iDays;
+// ---- Breite: RSI-2 und IBS auf vielen Maerkten, die nicht miteinander laufen. Maerkte werden nur nach den Jahren bis 2013
+// ausgewaehlt (mind. 60 % Gewinner, im Plus); gezaehlt wird ausschliesslich ab 2014 (echte Vorhersage, kein Rosinenpicken).
+const BREIT = [
+  ['^GSPC', 'S&P 500', 'idx'], ['^NDX', 'Nasdaq 100', 'idx'], ['^DJI', 'Dow Jones', 'idx'], ['^RUT', 'Russell 2000', 'idx'], ['^GDAXI', 'DAX', 'idx'], ['^MDAXI', 'MDAX', 'idx'],
+  ['^STOXX50E', 'Euro Stoxx 50', 'idx'], ['^FTSE', 'FTSE 100', 'idx'], ['^FCHI', 'CAC 40', 'idx'], ['^SSMI', 'SMI', 'idx'], ['^AEX', 'AEX', 'idx'], ['^IBEX', 'IBEX 35', 'idx'],
+  ['FTSEMIB.MI', 'FTSE MIB', 'idx'], ['^N225', 'Nikkei 225', 'idx'], ['^HSI', 'Hang Seng', 'idx'], ['^AXJO', 'ASX 200', 'idx'],
+  ['GC=F', 'Gold', 'cmd'], ['SI=F', 'Silber', 'cmd'], ['CL=F', 'WTI Öl', 'cmd'], ['HG=F', 'Kupfer', 'cmd'], ['NG=F', 'Erdgas', 'cmd'],
+  ['XLK', 'US-Technologie', 'etf'], ['XLF', 'US-Finanzen', 'etf'], ['XLE', 'US-Energie', 'etf'], ['XLV', 'US-Gesundheit', 'etf'], ['XLY', 'US-Zykl. Konsum', 'etf'], ['XLP', 'US-Basiskonsum', 'etf'],
+  ['XLI', 'US-Industrie', 'etf'], ['XLB', 'US-Grundstoffe', 'etf'], ['XLU', 'US-Versorger', 'etf'], ['EEM', 'Schwellenländer', 'etf'], ['EWZ', 'Brasilien', 'etf'], ['EWJ', 'Japan', 'etf'],
+  ['FXI', 'China', 'etf'], ['TLT', 'US-Staatsanleihen 20J', 'etf'],
+  ['EURUSD=X', 'EUR/USD', 'fx'], ['GBPUSD=X', 'GBP/USD', 'fx'], ['JPY=X', 'USD/JPY', 'fx'], ['AUDUSD=X', 'AUD/USD', 'fx']
+];
+const COST = { idx: 0.07, cmd: 0.10, etf: 0.08, fx: 0.03 }, CUT = Date.parse('2014-01-01');
+const sma5Exit = (d1) => (k) => { if (k < 4) return false; let t = 0; for (let q = k - 4; q <= k; q++) t += d1[q].c; return d1[k].c > t / 5; };
+const bm = [], oosR = [], oosI = [];
+let oosDays = 0;
+for (const [s, nm, cls] of BREIT) {
+  const d1 = await chart(s, '1d', 'max'); await wait(300); if (d1.length < 1500) continue;
+  const dr = drift(d1), cost = COST[cls], rs = [], is = [];
+  L.rsi2DailySignals(d1).filter((g) => g.dir > 0).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'open', exitFn: sma5Exit(d1), maxDays: 10, stopAtr: 3, costPct: cost }); if (r.pct != null) rs.push({ t: g.t, s, nm, pct: r.pct, ex: r.pct - dr * r.days, days: r.days }); });
+  L.ibsSignals(d1).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'close', exitFn: L.ibsExit(d1), maxDays: 5, stopAtr: 3, costPct: cost }); if (r.pct != null) is.push({ t: g.t, s, nm, pct: r.pct, ex: r.pct - dr * r.days, days: r.days }); });
+  const ins = (a) => a.filter((x) => x.t < CUT), oos = (a) => a.filter((x) => x.t >= CUT), sel = (a) => { const x = st(ins(a)); return x.n >= 30 && x.win >= 0.6 && x.mean > 0; };
+  const m = { s, nm, cls, from: L.dayOf(d1[0].t), rsi2: { is: st(ins(rs)), oos: st(oos(rs)), sel: sel(rs) }, ibs: { is: st(ins(is)), oos: st(oos(is)), sel: sel(is) } };
+  bm.push(m); oosDays = Math.max(oosDays, d1.filter((x) => x.t >= CUT).length);
+  if (m.rsi2.sel) oos(rs).forEach((x) => oosR.push(x));
+  if (m.ibs.sel) oos(is).forEach((x) => oosI.push(x));
+}
+out.breadth = { markets: bm, cut: '2014-01-01', oosDays };
+out.sets['breit:rsi2'] = evalSet('RSI-2 auf ' + bm.filter((m) => m.rsi2.sel).length + ' ausgewählten Märkten (nur ab 2014 gezählt)', oosR, oosDays);
+out.sets['breit:ibs'] = evalSet('IBS auf ' + bm.filter((m) => m.ibs.sel).length + ' ausgewählten Märkten (nur ab 2014 gezählt)', oosI, oosDays);
+out.sets['breit:mix'] = evalSet('RSI-2 und IBS zusammen (ab 2014)', oosR.concat(oosI), oosDays);
 // ---- Depot-Strategien (Monatsschluesse mit Dividenden)
 const M = {};
 for (const s of ['^GSPC', '^NDX', '^GDAXI', 'GC=F', 'SPY', 'EFA', 'AGG', 'BIL', 'XLK', 'XLF', 'XLE', 'XLV', 'XLY', 'XLP', 'XLI', 'XLB', 'XLU']) { M[s] = await monthly(s); await wait(300); }
