@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 const html = readFileSync(new URL('../trade/index.html', import.meta.url), 'utf8');
 const src = html.split('// BEGIN LOGIC')[1].split('// END LOGIC')[0];
-const L = new Function(src + '; return { marketContext, GRADES, SETUPS, setupName, gradeMatch, gradeName, parseYahoo, backtest, rStats, berlinFast, stockInstrument };')();
+const L = new Function(src + '; return { marketContext, GRADES, SETUPS, setupName, gradeMatch, gradeName, parseYahoo, backtest, rStats, berlinFast, stockInstrument, simulate, costOf };')();
 const OUT = new URL('backtest-intra.json', import.meta.url);
 const KEY = process.env.ALPACA_KEY_ID, SEC = process.env.ALPACA_SECRET_KEY;
 if (!KEY || !SEC) { writeFileSync(OUT, JSON.stringify({ at: new Date().toISOString(), error: 'ALPACA_KEY_ID oder ALPACA_SECRET_KEY fehlt' }) + '\n'); console.log('Schluessel fehlen'); process.exit(0); }
@@ -52,12 +52,23 @@ for (const sym of SYMS) {
   const h1 = agg(raw, (b) => { const n = ny(b.t); return n.day + ':' + Math.floor((n.min - 570) / 60); });
   const d1 = agg(raw, (b) => ny(b.t).day).map((x) => Object.assign(x, { t: Date.parse(ny(x.t).day + 'T14:30:00Z') }));
   const ins = Object.assign(L.stockInstrument(sym), { name: sym });
+  // Ausfuehrung auf 1-Min-Kerzen nachspielen: Auf 5/15 Min liegen Stop und Ziel oft in derselben Kerze, und die vorsichtige Regel
+  // (dann zaehlt der Stop) verzerrt das Ergebnis nach unten. Signale kommen weiter aus 5/15 Min.
+  const m1 = rth(await alpaca(sym, '1Min', FROM + 'T00:00:00Z', end)), m1t = m1.map((x) => x.t);
+  info[sym].m1 = m1.length;
+  const before = (t) => { let lo = 0, hi = m1t.length - 1, r = -1; while (lo <= hi) { const md = (lo + hi) >> 1; if (m1t[md] + 60e3 <= t) { r = md; lo = md + 1; } else hi = md - 1; } return r; };
+  const replay = (t) => {
+    const s = t.sig, j = before(s.t); if (j < 0) return false;
+    const s1 = Object.assign({}, s, { i: j }), cost = L.costOf(ins, s.entry), a = L.simulate(s1, m1, cost); if (!a.filled || a.r == null) return false;
+    const b = L.simulate(Object.assign({}, s1, { part: true }), m1, cost), cst = cost * ((s.mode || 'limit') === 'limit' ? 1 : 1.5) / s.risk;
+    t.r = a.r; t.rPart = b.r != null ? b.r : a.r; t.rG = t.r + cst; t.rPG = t.rPart + cst + (b.part ? cost * 0.25 / s.risk : 0); t.riskPct = s.risk / s.entry * 100; return true;
+  };
   for (const [tf, c, bar] of [['m5', raw, 300e3], ['m15', m15, 900e3]]) {
     for (const setup of Object.keys(L.SETUPS)) {
       const res = L.backtest({ instr: ins, m15: c, h1, d1, bar, setup, any: true, be: false, noCheck: setup !== 'sweep' && setup !== 'pullback', conf: ['sweep', 'pullback', 'nr7r1'].includes(setup) });
       res.forEach((t) => { Object.assign(t.sig, L.marketContext(t.sig.day, ins, t.sig.dir, vix, dxy)); t.type = setup; t.sym = sym; delete t.checks;
-        // Ergebnis ohne Kosten (wie in der Studie mit Profi-Konditionen) und Risiko in Prozent, um Kosten von fehlendem Vorteil zu trennen
-        const cst = t.sig.entry * 0.0006, mult = (t.sig.mode || 'limit') === 'limit' ? 1 : 1.5; t.rG = t.r + cst * mult / t.sig.risk; t.rPG = (t.rPart != null ? t.rPart : t.r) + cst * mult / t.sig.risk; t.riskPct = t.sig.risk / t.sig.entry * 100; all[tf].push(t); });
+        // rG/rPG = Ergebnis ohne Kosten (trennt Kosten von fehlendem Vorteil)
+        if (m1.length > (process.env.INTRA_MIN1 ? +process.env.INTRA_MIN1 : 50000) ? replay(t) : false) all[tf].push(t); });
     }
     console.log(sym, tf, c.length, 'Kerzen,', all[tf].length, 'Trades bisher,', Math.round((Date.now() - T0) / 1000), 's');
   }
