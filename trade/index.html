@@ -240,6 +240,8 @@ var INSTRUMENTS = [
 ];
 // Liquide Aktien, die der Scanner zusaetzlich durchsucht (alle bei Trade Republic mit Knock-outs handelbar)
 var SCAN_STOCKS = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'GOOGL', 'AMD', 'SAP.DE', 'RHM.DE', 'SIE.DE', 'ALV.DE'];
+// Liquide US-Aktien fuer den ORB "Stocks in Play" (Auswahl nach relativem Volumen am Morgen)
+var PLAY_STOCKS = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'TSLA', 'AMD', 'NFLX', 'AVGO', 'JPM', 'BAC', 'XOM', 'CVX', 'WMT', 'COST', 'LLY', 'UNH', 'V', 'MA', 'INTC', 'MU', 'SMCI', 'PLTR', 'COIN', 'MSTR', 'UBER', 'SHOP', 'BA', 'DIS', 'NKE', 'PYPL', 'CRM', 'ORCL', 'ADBE', 'QCOM', 'SNOW', 'ABNB', 'RIVN', 'SOFI', 'HOOD', 'ARM', 'CRWD', 'PANW', 'MRVL'];
 function scanUniverse(){ return INSTRUMENTS.concat(SCAN_STOCKS.map(stockInstrument)); }
 // Eigene Aktie: Symbol wie bei Yahoo (AAPL, NVDA, SAP.DE, RHM.DE)
 function stockInstrument(sym){
@@ -947,12 +949,92 @@ var SETUPS = {
   lbo: { name: 'London-Breakout', fn: scanLBO },
   donch: { name: 'Donchian-Ausbruch', fn: scanDonchian },
   rsi2: { name: 'RSI-2 (Connors)', fn: scanRSI2 },
+  bb: { name: 'Bollinger-Rücksetzer', fn: scanBB },
   gap: { name: 'Gap-Fade', fn: scanGap },
   nr7: { name: 'NR7-Ausbruch', fn: scanNR7 },
   nr7r1: { name: 'NR7-Ausbruch (Ziel 1 R)', fn: function(c, o){ return scanNR7(c, o).map(function(s){ s.type = 'nr7r1'; s.target = s.entry + s.dir * s.risk; s.rr = 1; return s; }); } }
 };
 function setupName(type){ return (SETUPS[type || 'sweep'] || {}).name || type; }
 function scanAll(c, opt){ var out = []; Object.keys(SETUPS).forEach(function(k){ var o = Object.assign({}, opt, { any: true }); out = out.concat(SETUPS[k].fn(c, o).map(function(s){ s.type = s.type || 'sweep'; return s; })); }); return out; }
+// ================= Strategien aus der Forschung =================
+// Bollinger-Ruecksetzer (Mean Reversion intraday): im Tagestrend schliesst eine 1-Std-Kerze unter dem unteren Band (20, 2),
+// Kauf zur naechsten Kerze, Ausstieg sobald ueber dem Mittelband (20er-Schnitt), Notstop 2 ATR, spaetestens Tagesende.
+function scanBB(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = [], kz = killzones(instr); if (c.length < 40) return out;
+  var P = prep(c, opt), done = {};
+  for (var i = Math.max(20, P.from); i < c.length; i++){
+    var b = P.bp[i]; if (b.wd === 0 || b.wd === 6 || !kz.some(function(z){ return b.min >= z[0] && b.min < z[1]; })) continue;
+    var m = 0, v = 0, q; for (q = i - 19; q <= i; q++) m += c[q].c; m /= 20; for (q = i - 19; q <= i; q++) v += (c[q].c - m) * (c[q].c - m); var sd = Math.sqrt(v / 20), a = P.a[i];
+    if (!a || !sd) continue;
+    var dir = c[i].c < m - 2 * sd ? 1 : (c[i].c > m + 2 * sd ? -1 : 0); if (!dir || done[b.key + dir]) continue;
+    if (P.bias(b.key) !== dir && !opt.any) continue; done[b.key + dir] = 1;
+    var s = mk(P, instr, c, i, 'bb', 'Bollinger-Band', dir, 'market', c[i].c, c[i].c - dir * 2 * a, c[i].c + dir * 4 * a, { exit: 'sma20' }); if (s) out.push(s);
+  }
+  return out;
+}
+// ORB "Stocks in Play" (Zarattini/Aziz/Barbon): 5-Min-Eroeffnungskerze; Richtung = Farbe der Kerze; Stopp-Order am Hoch (bzw. Tief),
+// Stop 10 % der 14-Tage-ATR, kein Ziel, Schluss zum Handelsende. Nur Aktien mit hohem relativem Volumen in der ersten Kerze.
+function orbPlayDay(m5, d1, day, opt){
+  opt = opt || {};
+  var bars = m5.filter(function(x){ return berlinFast(x.t).key === day; }); if (bars.length < 3) return null;
+  var f = bars[0], prev = {}, firsts = [];
+  m5.forEach(function(x){ var k = berlinFast(x.t).key; if (k < day && !prev[k]){ prev[k] = 1; firsts.push(x.v); } });
+  firsts = firsts.slice(-14); if (firsts.length < 5) return null;
+  var avg = firsts.reduce(function(a, b){ return a + b; }, 0) / firsts.length; if (!(avg > 0)) return null;
+  var dd = d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < day; }).slice(-15); if (dd.length < 15) return null;
+  var tr = 0; for (var k = 1; k < dd.length; k++) tr += Math.max(dd[k].h - dd[k].l, Math.abs(dd[k].h - dd[k - 1].c), Math.abs(dd[k].l - dd[k - 1].c)); var atrD = tr / 14;
+  var dir = f.c > f.o ? 1 : (f.c < f.o ? -1 : 0); if (!dir || f.c < 5 || atrD < 0.5) return null;
+  var e = dir > 0 ? f.h : f.l, st = e - dir * 0.1 * atrD;
+  return { type: 'orbplay', i: m5.indexOf(f), t: f.t + 5 * 60e3, day: day, dir: dir, mode: 'stop', entry: e, stop: st, target: e + dir * 0.1 * atrD * 100, risk: 0.1 * atrD, rr: 0, rvol: f.v / avg, atrD: atrD,
+    expires: bars[bars.length - 1].t + 5 * 60e3, sweep: 'Eröffnungskerze', liqTarget: false, withBias: false, session: 'New York' };
+}
+// Connors RSI-2 auf Tageskerzen: Kurs ueber dem 200-Tage-Schnitt und RSI(2) unter 10 -> Kauf zur Eroeffnung am naechsten Tag,
+// Verkauf am Schluss des Tages, an dem der Kurs ueber dem 5-Tage-Schnitt schliesst. Short spiegelbildlich (unter SMA200, RSI(2) ueber 90).
+// Notstop 3 Tages-ATR (fuer den Knock-out), hoechstens 10 Tage.
+function rsi2DailySignals(d1, opt){
+  opt = opt || {}; var out = [], rs = rsiSeries(d1, 2), a = atrSeries(d1);
+  for (var i = 200; i < d1.length - 0; i++){
+    var s200 = 0; for (var q = i - 199; q <= i; q++) s200 += d1[q].c; s200 /= 200;
+    var dir = d1[i].c > s200 && rs[i] < 10 ? 1 : (d1[i].c < s200 && rs[i] > 90 ? -1 : 0);
+    if (!dir || !a[i]) continue;
+    out.push({ type: 'rsi2d', i: i, t: d1[i].t, day: berlinFast(d1[i].t + 12 * 3600e3).key, dir: dir, atr: a[i], close: d1[i].c, rsi: rs[i] });
+  }
+  return out;
+}
+function simDaily(sig, d1, cost){
+  var i = sig.i + 1; if (i >= d1.length) return { filled: false, how: 'offen' };
+  var e = d1[i].o, st = e - sig.dir * 3 * sig.atr, risk = 3 * sig.atr, r = null, how = '', mae = 0, mfe = 0;
+  for (var k = i; k < d1.length && k <= i + 9; k++){
+    var x = d1[k], adv = ((sig.dir > 0 ? x.l : x.h) - e) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - e) * sig.dir / risk;
+    mae = Math.min(mae, adv); mfe = Math.max(mfe, fav);
+    if (adv <= -1){ r = -1; how = 'Stop'; break; }
+    var s5 = 0; for (var q = k - 4; q <= k; q++) s5 += d1[q].c; s5 /= 5;
+    if ((x.c - s5) * sig.dir > 0){ r = (x.c - e) * sig.dir / risk; how = '5-Tage-Schnitt'; break; }
+    if (k === i + 9){ r = (x.c - e) * sig.dir / risk; how = '10 Tage'; break; }
+  }
+  if (r == null) return { filled: true, how: 'läuft', r: null, entry: e };
+  return { filled: true, r: r - (cost || 0) * 2 / risk, how: how, entry: e, mae: Math.max(mae, -1), mfe: mfe, days: k - i + 1 };
+}
+// News-Fehlausbruch: Schockkerze (15 Min, Spanne ab 3 ATR) in der Handelszeit; kehrt der Kurs in den naechsten 2 Kerzen
+// hinter den Eroeffnungskurs der Schockkerze zurueck (Fehlausbruch), Handel in Gegenrichtung zur Spitze; Stop hinter dem Extrem, Ziel 2R.
+// Momentum-Variante: schliesst die naechste Kerze ueber dem Extrem der Spitze, Handel in Richtung der Spitze; Stop Mitte der Schockkerze, Ziel 2R.
+function scanNews(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = []; if (c.length < 40) return out;
+  var P = prep(c, Object.assign({}, opt, { bar: 15 * 60e3 })), done = {};
+  for (var i = Math.max(20, P.from); i < c.length - 1; i++){
+    var b = P.bp[i]; if (b.wd === 0 || b.wd === 6 || b.min < 480 || b.min > 20 * 60) continue;
+    var a = P.a[i - 1]; if (!a) continue;
+    var rg = c[i].h - c[i].l; if (rg < 3 * a) continue;
+    if (opt.events && !opt.events.some(function(t){ return t >= c[i].t - 60e3 && t < c[i].t + 15 * 60e3; })) continue;
+    if (done[b.key]) continue; done[b.key] = 1;
+    var sDir = c[i].c >= c[i].o ? 1 : -1, ext = sDir > 0 ? c[i].h : c[i].l;
+    for (var j = i + 1; j <= Math.min(i + 2, c.length - 1); j++){
+      if ((c[j].c - c[i].o) * sDir < 0){ var sF = mk(P, instr, c, j, 'newsfade', 'Fehlausbruch nach News', -sDir, 'market', c[j].c, ext + sDir * 0.1 * a, 0, {}); if (sF){ sF.target = sF.entry - sDir * sF.risk * 2; sF.rr = 2; out.push(sF); } break; }
+      if (j === i + 1 && (c[j].c - ext) * sDir > 0){ var mid = (c[i].h + c[i].l) / 2, sM = mk(P, instr, c, j, 'newsmom', 'Momentum nach News', sDir, 'market', c[j].c, mid, 0, {}); if (sM){ sM.target = sM.entry + sDir * sM.risk * 2; sM.rr = 2; out.push(sM); } break; }
+    }
+  }
+  return out;
+}
 // ================= Smart Money, Elliott und Fibonacci automatisch =================
 // Zickzack mit ATR-Schwelle: bestaetigte Wendepunkte + offener letzter Schenkel
 function zigzag(c, mult){
@@ -1107,9 +1189,10 @@ function simulate(sig, c, cost){
     if (fav > r.mfe) r.mfe = fav;
     if (sig.be && fav >= 1 && !beOn && rr > 1) beOn = true;
     if ((i > fill || mode !== 'limit') && fav >= rr){ r.r = rr; r.how = 'Ziel'; r.exitT = x.t; break; }
-    if (sig.exit === 'sma5' && i >= 4){
-      var m5 = (c[i].c + c[i - 1].c + c[i - 2].c + c[i - 3].c + c[i - 4].c) / 5;
-      if ((x.c - m5) * sig.dir > 0){ r.r = (x.c - entry) * sig.dir / risk; r.how = '5er-Schnitt'; r.exitT = x.t + 3600e3; break; }
+    var mN = sig.exit === 'sma5' ? 5 : (sig.exit === 'sma20' ? 20 : 0);
+    if (mN && i >= mN - 1 && i > fill){
+      var sm = 0; for (var q2 = 0; q2 < mN; q2++) sm += c[i - q2].c; sm /= mN;
+      if ((x.c - sm) * sig.dir > 0){ r.r = (x.c - entry) * sig.dir / risk; r.how = mN + 'er-Schnitt'; r.exitT = x.t; break; }
     }
     if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = ((i > fill ? x.o : x.c) - entry) * sig.dir / risk; r.how = 'Tagesende'; r.exitT = x.t; break; }
   }
