@@ -12,7 +12,9 @@ const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; TradeCheck/1.0)' };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function raw(sym, iv, rg) {
   for (const host of ['query1', 'query2', 'query1']) {
-    try { const r = await fetch(`https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${iv}&range=${rg}`, { headers: UA }); if (r.ok) return await r.json(); } catch (e) {}
+    try { // range=max liefert bei Yahoo nur grobe Kerzen; fuer die ganze Historie Tageskerzen mit period1/period2 holen
+      const q = rg === 'max' ? `interval=${iv}&period1=946684800&period2=${Math.floor(Date.now() / 1000)}` : `interval=${iv}&range=${rg}`;
+      const r = await fetch(`https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?${q}`, { headers: UA }); if (r.ok) return await r.json(); } catch (e) {}
     await wait(1500);
   }
   return null;
@@ -99,7 +101,7 @@ function depot(key, name, ms, pickFn, bench, note, benchW) {
 }
 const sma = (s, ms, k, n) => { if (k < n - 1) return null; let t = 0; for (let q = k - n + 1; q <= k; q++) t += M[s][ms[q]]; return t / n; };
 for (const [s, nm] of [['^GSPC', 'S&P 500'], ['^NDX', 'Nasdaq 100'], ['^GDAXI', 'DAX'], ['GC=F', 'Gold']]) {
-  const ms = monthsOf([s], '1971-01');
+  const ms = monthsOf([s], '2000-01');
   depot('trend:' + s, nm + ' über dem 10-Monats-Schnitt halten, sonst Cash', ms, (k) => (M[s][ms[k]] > (sma(s, ms, k, 10) || Infinity) ? { [s]: 1 } : {}), s, 'Faber 2007');
 }
 { const ms = monthsOf(['SPY', 'EFA', 'AGG']);
