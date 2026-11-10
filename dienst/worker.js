@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'f8a490e598';
+const WORKER_VER = '26d9c93a56';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2787,7 +2787,108 @@ function excursionAdvice(trades){
   }
   return out;
 }
-  return { rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
+// ================= Weitere belegte Strategien (Studien, eigene Rueckrechnung) =================
+// Handelstag einer Tageskerze (Yahoo stempelt US-Werte 14:30 UTC, Devisen 23:00 UTC des Vortags)
+function dayOf(t){ return new Date(t + 3 * 3600e3).toISOString().slice(0, 10); }
+function smaAt(d1, i, n){ if (i < n - 1) return null; var s = 0; for (var q = i - n + 1; q <= i; q++) s += d1[q].c; return s / n; }
+// Allgemeiner Tages-Trade: Einstieg zum Schluss (entry 'close') oder zur naechsten Eroeffnung ('open'),
+// Ausstieg zum Schluss, sobald exitFn(k) wahr ist, sonst nach maxDays; Notstop stopAtr x ATR. Ergebnis in Prozent nach Kosten.
+function simDayTrade(sig, d1, opt){
+  opt = opt || {}; var i0 = opt.entry === 'open' ? sig.i + 1 : sig.i; if (i0 >= d1.length) return { filled: false };
+  var e = opt.entry === 'open' ? d1[i0].o : d1[i0].c, dir = sig.dir || 1, st = sig.atr ? e - dir * (opt.stopAtr || 3) * sig.atr : null, max = opt.maxDays || 10, cost = opt.costPct || 0;
+  for (var k = opt.entry === 'open' ? i0 : i0 + 1, n = 0; k < d1.length; k++, n++){
+    var x = d1[k];
+    if (st != null && (dir > 0 ? x.l <= st : x.h >= st)){ var px = dir > 0 ? Math.min(st, x.o) : Math.max(st, x.o); return { filled: true, pct: (px / e - 1) * 100 * dir - cost, how: 'Stop', days: n + 1, exitI: k }; }
+    if ((opt.exitFn && opt.exitFn(k, e)) || n + 1 >= max) return { filled: true, pct: (x.c / e - 1) * 100 * dir - cost, how: n + 1 >= max ? 'Zeit' : 'Regel', days: n + 1, exitI: k };
+  }
+  return { filled: true, pct: null, how: 'läuft' };
+}
+// IBS (Internal Bar Strength): Schluss nahe am Tagestief (IBS unter 0,2) im Aufwaertstrend -> Kauf zum Schluss, Verkauf wenn IBS ueber 0,8 (max. 5 Tage)
+function ibs(x){ return x.h > x.l ? (x.c - x.l) / (x.h - x.l) : 0.5; }
+function ibsSignals(d1, opt){
+  opt = opt || {}; var out = [], a = atrSeries(d1), lim = opt.lim || 0.2;
+  for (var i = 200; i < d1.length; i++){ var s = smaAt(d1, i, 200); if (d1[i].c > s && ibs(d1[i]) < lim && a[i]) out.push({ type: 'ibs', i: i, t: d1[i].t, day: dayOf(d1[i].t), dir: 1, atr: a[i], close: d1[i].c, ibs: ibs(d1[i]) }); }
+  return out;
+}
+function ibsExit(d1){ return function(k){ return ibs(d1[k]) > 0.8; }; }
+// Turn of the Month (Lakonishok/Smidt 1988, McConnell/Xu 2008): Kauf zum Schluss des vorletzten Handelstags, Verkauf zum Schluss des 3. Handelstags
+function tomSignals(d1){
+  var out = [], a = atrSeries(d1);
+  for (var i = 1; i < d1.length - 1; i++){
+    var m = dayOf(d1[i].t).slice(0, 7), m1 = dayOf(d1[i + 1].t).slice(0, 7), m2 = i + 2 < d1.length ? dayOf(d1[i + 2].t).slice(0, 7) : null;
+    if (m1 === m && m2 && m2 !== m && a[i]) out.push({ type: 'tom', i: i, t: d1[i].t, day: dayOf(d1[i].t), dir: 1, atr: a[i], close: d1[i].c });
+  }
+  return out;
+}
+function tomExit(d1, sig){ var m0 = dayOf(d1[sig.i].t).slice(0, 7); return function(k){ var cnt = 0; for (var q = sig.i + 1; q <= k; q++) if (dayOf(d1[q].t).slice(0, 7) !== m0) cnt++; return cnt >= 3; }; }
+// Restliche Wochentage im Monat nach dem Tag 'key' (fuer live: ist heute der vorletzte Handelstag?)
+function weekdaysLeft(key){ var d = new Date(key + 'T12:00:00Z'), m = d.getUTCMonth(), n = 0; for (d.setUTCDate(d.getUTCDate() + 1); d.getUTCMonth() === m; d.setUTCDate(d.getUTCDate() + 1)) if (d.getUTCDay() % 6) n++; return n; }
+// Overnight (Cliff/Cooper/Gulen 2008): Kauf zum Schluss, Verkauf zur naechsten Eroeffnung
+function overnightTrades(d1, opt){
+  opt = opt || {}; var out = [];
+  for (var i = 200; i < d1.length - 1; i++){ if (opt.trend && !(d1[i].c > smaAt(d1, i, 200))) continue; out.push({ type: 'overnight', i: i, t: d1[i].t, day: dayOf(d1[i].t), pct: (d1[i + 1].o / d1[i].c - 1) * 100 - (opt.costPct || 0) }); }
+  return out;
+}
+// US-Handelstage aus 1-Std-Kerzen (Yahoo: 09:30, 10:30 ... 15:30 New York)
+function usDays(h1){ var days = [], cur = null; h1.forEach(function(x){ var k = dayOf(x.t); if (!cur || cur.key !== k){ cur = { key: k, bars: [] }; days.push(cur); } cur.bars.push(x); }); return days.filter(function(d){ return d.bars.length >= 6; }); }
+// Market Intraday Momentum (Gao/Han/Li/Zhou, JFE 2018): Rendite seit Vortagesschluss bis Ende der 1. Stunde bestimmt die Richtung der letzten halben Stunde
+function imomTrades(h1, opt){
+  opt = opt || {}; var ds = usDays(h1), out = [];
+  for (var j = 1; j < ds.length; j++){
+    var prev = ds[j - 1].bars[ds[j - 1].bars.length - 1].c, b = ds[j].bars, r1 = b[0].c / prev - 1, last = b[b.length - 1], pre = b[b.length - 2];
+    var dir = r1 > 0 ? 1 : (r1 < 0 ? -1 : 0); if (!dir) continue;
+    if (opt.confirm && (pre.c - pre.o) * dir <= 0) continue;
+    if (opt.minMove && Math.abs(r1) < opt.minMove) continue;
+    out.push({ type: 'imom', t: last.t, day: ds[j].key, dir: dir, r1: r1, pct: (last.c / last.o - 1) * 100 * dir - (opt.costPct || 0) });
+  }
+  return out;
+}
+// Noise Area (Zarattini/Aziz/Barbon 2024, "Beat the Market"): Grenzen = max/min(Eroeffnung, Vortagesschluss) x (1 +/- mittlere Bewegung
+// bis zu dieser Uhrzeit ueber 14 Tage). Schluss einer Stunde ausserhalb -> Einstieg in Richtung; Ausstieg sobald zurueck hinter Grenze/VWAP, sonst zum Schluss.
+function noiseTrades(h1, opt){
+  opt = opt || {}; var ds = usDays(h1), out = [], lb = opt.lb || 14;
+  for (var j = lb + 1; j < ds.length; j++){
+    var b = ds[j].bars, o = b[0].o, pc = ds[j - 1].bars[ds[j - 1].bars.length - 1].c, pos = null, pv = 0, vv = 0;
+    for (var k = 0; k < b.length; k++){
+      var sg = 0, cnt = 0; for (var q = j - lb; q < j; q++){ var bq = ds[q].bars; if (bq[k]){ sg += Math.abs(bq[k].c / bq[0].o - 1); cnt++; } } if (!cnt) break; sg /= cnt;
+      var up = Math.max(o, pc) * (1 + sg), dn = Math.min(o, pc) * (1 - sg), x = b[k], tp = (x.h + x.l + x.c) / 3; pv += tp * (x.v || 1); vv += (x.v || 1); var vw = pv / vv;
+      if (pos){
+        var stopLv = pos.dir > 0 ? Math.max(up, vw) : Math.min(dn, vw);
+        if (k === b.length - 1 || (x.c - stopLv) * pos.dir < 0){ out.push({ type: 'noise', t: pos.t, day: ds[j].key, dir: pos.dir, pct: (x.c / pos.e - 1) * 100 * pos.dir - (opt.costPct || 0), bars: k - pos.k }); pos = null; if (!opt.multi) break; }
+      } else if (k < b.length - 1){
+        if (x.c > up && opt.dirs !== -1) pos = { dir: 1, e: x.c, t: x.t + 3600e3, k: k };
+        else if (x.c < dn && opt.dirs !== 1) pos = { dir: -1, e: x.c, t: x.t + 3600e3, k: k };
+      }
+    }
+  }
+  return out;
+}
+// Depot-Strategien (Wochen bis Monate) auf Monatsschluessen
+function monthEnds(d1){ var out = []; for (var i = 0; i < d1.length; i++){ if (i === d1.length - 1 || dayOf(d1[i + 1].t).slice(0, 7) !== dayOf(d1[i].t).slice(0, 7)) out.push({ i: i, m: dayOf(d1[i].t).slice(0, 7), c: d1[i].c, t: d1[i].t }); } return out; }
+function seriesByMonth(d1){ var o = {}; monthEnds(d1).forEach(function(x){ o[x.m] = x.c; }); return o; }
+// Monatsrenditen einer Regel: pickFn(monthIndex, months) -> Gewicht je Symbol (Summe <= 1), gehalten bis zum naechsten Monatsschluss
+function allocBacktest(series, months, pickFn, costPct){
+  var rets = [], hold = {}, picks = [];
+  for (var k = 0; k < months.length - 1; k++){
+    var w = pickFn(k) || {}, r = 0, turn = 0;
+    Object.keys(w).forEach(function(s){ var a = series[s][months[k]], b = series[s][months[k + 1]]; if (a && b) r += w[s] * (b / a - 1); });
+    Object.keys(Object.assign({}, w, hold)).forEach(function(s){ turn += Math.abs((w[s] || 0) - (hold[s] || 0)); });
+    r -= turn * (costPct || 0) / 100; hold = w; rets.push({ m: months[k + 1], r: r }); picks.push({ m: months[k], w: w });
+  }
+  return { rets: rets, picks: picks };
+}
+function perf(rets){
+  if (!rets.length) return { n: 0 };
+  var eq = 1, peak = 1, dd = 0, s = 0, s2 = 0;
+  rets.forEach(function(x){ eq *= 1 + x.r; peak = Math.max(peak, eq); dd = Math.max(dd, 1 - eq / peak); s += x.r; s2 += x.r * x.r; });
+  var n = rets.length, mu = s / n, sd = Math.sqrt(Math.max(0, s2 / n - mu * mu));
+  return { n: n, cagr: Math.pow(eq, 12 / n) - 1, maxdd: dd, sharpe: sd ? mu / sd * Math.sqrt(12) : 0, total: eq - 1, from: rets[0].m, to: rets[n - 1].m };
+}
+function retOver(series, s, months, k, back){ var a = series[s][months[k - back]], b = series[s][months[k]]; return a && b ? b / a - 1 : null; }
+// Namen fuer Depot-Bausteine (bei Trade Republic als UCITS-ETF oder Sparplan handelbar)
+var DEPOT_NAMES = { '^GSPC': 'S&P 500', '^NDX': 'Nasdaq 100', '^GDAXI': 'DAX', 'GC=F': 'Gold', SPY: 'S&P 500', EFA: 'Industrieländer ohne USA (MSCI EAFE)', AGG: 'Anleihen (Aggregate)', XLK: 'US-Technologie', XLF: 'US-Finanzen', XLE: 'US-Energie', XLV: 'US-Gesundheit', XLY: 'US-Zyklischer Konsum', XLP: 'US-Basiskonsum', XLI: 'US-Industrie', XLB: 'US-Grundstoffe', XLU: 'US-Versorger' };
+function depotText(w){ var ks = Object.keys(w || {}); if (!ks.length) return 'Cash (nicht investiert)'; return ks.map(function(k){ return (DEPOT_NAMES[k] || k) + (ks.length > 1 ? ' ' + Math.round(w[k] * 100) + ' %' : ''); }).join(', '); }
+  return { depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
 const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
@@ -2914,12 +3015,12 @@ async function tradeRoute(request, headers, env, nowMs) {
       scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix'].includes(b.quality) ? b.quality : 'triple',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
-      swing: b.swing !== false, bgreen: b.bgreen !== false, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
+      swing: b.swing !== false, bgreen: b.bgreen !== false, ibsOn: b.ibs !== false, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null };
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
-    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), swingPos: next.swingPos, log: (t.log || []).slice(-10), now: nowMs }, headers);
+    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), swingPos: next.swingPos, ibsPos: next.ibsPos, log: (t.log || []).slice(-10), now: nowMs }, headers);
   }
   if (path === '/trade/test') {
     if (!validSub(t.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in Trade Check ein.', headers);
@@ -2968,6 +3069,23 @@ async function researchCfg(env, nowMs) {
     return c.data || {};
   } catch (e) { return {}; }
 }
+// Weitere Strategien aus Studien (dienst/backtest-more.json, werktags frueh neu gerechnet)
+async function moreCfg(env, nowMs) {
+  try {
+    const c = await cachedKV(env, 'mkt:qm', 3600e3, nowMs, async () => {
+      if (!env.PAGES_URL) return {};
+      const r = await fetch(env.PAGES_URL + 'dienst/backtest-more.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA });
+      if (!r.ok) return {};
+      const j = await r.json(), stats = {}, depot = {};
+      Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win, unit: j.sets[k].unit }; });
+      Object.keys(j.depot || {}).forEach((k) => { const d = j.depot[k]; depot[k] = { name: d.name, now: d.now, nowMonth: d.nowMonth, all: d.all, bh: d.bh }; });
+      const any = Object.keys(depot)[0];
+      return { passed: j.passed || [], depotPassed: j.depotPassed || [], stats, depot, depotMonth: any ? depot[any].nowMonth : null };
+    });
+    return c.data || {};
+  } catch (e) { return {}; }
+}
+const nyMin = (ms) => { const p = {}; new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms)).forEach((x) => { p[x.type] = x.value; }); return (+p.hour) * 60 + (+p.minute); };
 async function runTrade(env, nowMs) {
   if (!env.VS) return { skipped: 'kv' };
   const t = await env.VS.get('trade', 'json');
@@ -3274,6 +3392,55 @@ async function runTrade(env, nowMs) {
         }
       }
       t.swingPos = t.swingPos.filter((x) => x.state === 'wartet' || x.state === 'offen' || nowMs - (x.exitAt || x.at) < 3 * 86400e3);
+    }
+  }
+  // 9) IBS-Mean-Reversion (Indizes): Schluss im unteren Fuenftel der Tagesspanne im Aufwaertstrend -> kurz vor Schluss kaufen,
+  // verkaufen sobald ein Schluss im oberen Fuenftel liegt (IBS ueber 0,8), spaetestens nach 5 Tagen, Notstop 3 ATR
+  if (t.ibsOn !== false && weekday) {
+    const qm = await moreCfg(env, nowMs);
+    t.ibsPos = Array.isArray(t.ibsPos) ? t.ibsPos : []; t.ibsSent = t.ibsSent || {};
+    if ((qm.passed || []).includes('ibs:idx')) {
+      const ny = nyMin(nowMs), s0 = qm.stats && qm.stats['ibs:idx'];
+      for (const k of ['SPX', 'NDX', 'DJI', 'DAX']) {
+        const ins = TL.instrumentByKey(k), win = k === 'DAX' ? (clk.min >= 17 * 60 + 15 && clk.min < 17 * 60 + 30) : (ny >= 15 * 60 + 40 && ny < 15 * 60 + 56);
+        const pos = t.ibsPos.find((p) => p.k === k && p.state === 'offen');
+        if (!win && !pos) continue;
+        const d1 = await candlesOf(ins.y, '1d', '2y'); if (!d1 || d1.length < 210) continue;
+        const last = d1[d1.length - 1]; if (dKey(last.t) !== dayKey) continue;
+        const ib = last.h > last.l ? (last.c - last.l) / (last.h - last.l) : 0.5;
+        if (pos) {
+          const fin = (state, px, txt) => { const r = (px - pos.entry) / (3 * pos.atr); pos.state = state; pos.exit = px; pos.pct = Math.round((px / pos.entry - 1) * 10000) / 100; pos.r = Math.round(r * 100) / 100; pos.exitAt = nowMs; dirty = true;
+            t.trackLog = (t.trackLog || []).concat([{ id: pos.id, k, name: ins.name, dir: 1, cls: 'IBS', t: pos.at, state, r: pos.r }]).slice(-200); return send('b:' + pos.id + ':done', { body: txt + ' (' + (pos.pct >= 0 ? '+' : '') + String(pos.pct).replace('.', ',') + ' %).', tag: 'ibs-' + k }); };
+          if (last.l <= pos.stop) { await fin('stop', pos.stop, '❌ Notstop: ' + ins.name + ' IBS-Trade bei ' + fmtp(pos.stop, k)); continue; }
+          if (win && pos.day !== dayKey) {
+            const held = d1.filter((x) => dKey(x.t) > pos.day).length;
+            if (ib > 0.8) await fin(last.c >= pos.entry ? 'ziel' : 'tagesende', last.c, '✅ Jetzt verkaufen: ' + ins.name + ' schließt im oberen Fünftel der Tagesspanne (IBS ' + ib.toFixed(2).replace('.', ',') + '). Stand ' + fmtp(last.c, k));
+            else if (held >= 5) await fin('tagesende', last.c, 'IBS ' + ins.name + ': 5 Tage erreicht, jetzt verkaufen. Stand ' + fmtp(last.c, k));
+          }
+          continue;
+        }
+        if (t.ibsSent[k] === dayKey) continue;
+        t.ibsSent[k] = dayKey; dirty = true; rep.ibs = (rep.ibs || 0) + 1;
+        const sma = d1.slice(-200).reduce((a, x) => a + x.c, 0) / 200, atr = TL.atrSeries(d1).pop();
+        if (!(last.c > sma && ib < 0.2 && atr)) continue;
+        const id = k + ':ibs:' + dayKey, stop = last.c - 3 * atr;
+        t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs });
+        await send('b:' + id, { title: 'IBS-Signal · ' + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung seit 2003: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : ''), tag: 'ibs-' + k, url: './' });
+      }
+    }
+    t.ibsPos = t.ibsPos.filter((p) => p.state === 'offen' || nowMs - (p.exitAt || p.at) < 3 * 86400e3);
+  }
+  // 10) Depot-Strategien (Wochen bis Monate): am ersten Werktag des Monats die Aufteilung fuer den neuen Monat
+  if (t.depotOn !== false && weekday && clk.min >= 8 * 60 && clk.min < 10 * 60) {
+    const mk = dayKey.slice(0, 7), pm = new Date(Date.parse(mk + '-15T12:00:00Z') - 30 * 86400e3).toISOString().slice(0, 7);
+    if (t.depotMonth !== mk) {
+      const qm = await moreCfg(env, nowMs), ks = qm.depotPassed || [];
+      if (ks.length && qm.depotMonth === pm) {
+        t.depotMonth = mk; t.depotLast = t.depotLast || {}; dirty = true;
+        const lines = ks.map((k) => { const d = qm.depot[k], txt = TL.depotText(d.now), old = t.depotLast[k], ch = old != null && old !== txt; t.depotLast[k] = txt; return (ch ? '🔄 ' : '') + d.name.split(':')[0].replace(/ über dem.*/, '') + ': ' + txt + (ch ? ' (vorher ' + old + ')' : ''); });
+        const mn = new Intl.DateTimeFormat('de-DE', { month: 'long', timeZone: 'Europe/Berlin' }).format(new Date(nowMs));
+        await send('dp:' + mk, { title: 'Depot-Strategien für ' + mn, body: lines.join(' · ') + '. Gilt bis Monatsende. Details in der App unter Depot.', tag: 'depot', url: './' });
+      }
     }
   }
   // 6) Gemeldete Signale verfolgen: ausgeloest, 1R, Ziel, Stop, Einstand, Tagesende, verfallen

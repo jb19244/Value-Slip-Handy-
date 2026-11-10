@@ -1368,6 +1368,9 @@ function perf(rets){
   return { n: n, cagr: Math.pow(eq, 12 / n) - 1, maxdd: dd, sharpe: sd ? mu / sd * Math.sqrt(12) : 0, total: eq - 1, from: rets[0].m, to: rets[n - 1].m };
 }
 function retOver(series, s, months, k, back){ var a = series[s][months[k - back]], b = series[s][months[k]]; return a && b ? b / a - 1 : null; }
+// Namen fuer Depot-Bausteine (bei Trade Republic als UCITS-ETF oder Sparplan handelbar)
+var DEPOT_NAMES = { '^GSPC': 'S&P 500', '^NDX': 'Nasdaq 100', '^GDAXI': 'DAX', 'GC=F': 'Gold', SPY: 'S&P 500', EFA: 'Industrieländer ohne USA (MSCI EAFE)', AGG: 'Anleihen (Aggregate)', XLK: 'US-Technologie', XLF: 'US-Finanzen', XLE: 'US-Energie', XLV: 'US-Gesundheit', XLY: 'US-Zyklischer Konsum', XLP: 'US-Basiskonsum', XLI: 'US-Industrie', XLB: 'US-Grundstoffe', XLU: 'US-Versorger' };
+function depotText(w){ var ks = Object.keys(w || {}); if (!ks.length) return 'Cash (nicht investiert)'; return ks.map(function(k){ return (DEPOT_NAMES[k] || k) + (ks.length > 1 ? ' ' + Math.round(w[k] * 100) + ' %' : ''); }).join(', '); }
 // END LOGIC
 
 // ===================== App =====================
@@ -1943,6 +1946,9 @@ function viewHeute(){
   // Termine heute
   var swp = (V.swingPos || []).filter(function(p){ return p.state === 'wartet' || p.state === 'offen' || Date.now() - (p.exitAt || p.at) < 86400e3; });
   if (swp.length) h += '<section class="card"><div class="row"><h2>Swing RSI-2</h2><span class="muted small">Tageskerzen</span></div>' + swp.map(function(p){ var i = instr(p.k) || { dec: 2 }; return '<div class="trade"><div class="row"><span><b>' + esc(p.name) + '</b> <span class="good">Long</span></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Kauf zur Eröffnung' : 'offen')) + '</span></div><div class="muted small">' + (p.entry ? 'Einstieg ' + fmt(p.entry, i.dec) + ' · ' : 'zuletzt ' + fmt(p.ref, i.dec) + ' · ') + 'Stop ' + fmt(p.stop, i.dec) + ' · Verkauf über dem 5-Tage-Schnitt, spätestens nach 10 Tagen</div></div>'; }).join('') + '</section>';
+  var ibp = (V.ibsPos || []).filter(function(p){ return p.state === 'offen' || Date.now() - (p.exitAt || p.at) < 86400e3; });
+  if (ibp.length) h += '<section class="card"><div class="row"><h2>IBS-Trades</h2><span class="muted small">1 bis 5 Tage</span></div>' + ibp.map(function(p){ var i = instr(p.k) || { dec: 1 }; return '<div class="trade"><div class="row"><span><b>' + esc(p.name) + '</b> <span class="good">Long</span></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : 'offen') + '</span></div><div class="muted small">Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + ' · Verkauf bei Schluss im oberen Fünftel, spätestens nach 5 Tagen</div></div>'; }).join('') + '</section>';
+  h += viewDepot();
   h += '<section class="card"><div class="row"><h2>Termine</h2><button class="link small" data-act="tab" data-t="markt">alle</button></div>' +  (V.cal ? viewCal(4) : '<div class="loading"><span class="spin"></span> lädt …</div>') + '</section>';
   // Papierkonto
   h += '<section class="card"><div class="row"><h2>Papierkonto</h2><span class="muted small">alle Signale mit ' + fmt(S.cfg.risk, 1) + ' % Risiko</span></div>' +
@@ -2132,12 +2138,30 @@ function hardTest(b, picked){
     (hs.length ? '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th></tr>' + hs.map(function(x){ return '<tr><td>' + esc(x[0]) + '</td><td>' + x[1].n + '</td><td>' + fmt(x[1].win * 100, 0) + ' %</td><td class="' + (x[1].mean >= 0 ? 'good' : 'bad') + '">' + sgn(x[1].mean, 2) + '</td></tr>'; }).join('') + '</table>' : '<p class="hint">Im Härtetest gab es noch keine Trades dieser Stufen.</p>') +
     (pz.length ? '<p class="hint"><b>Zufalls-Check:</b> Es wurden ' + (b.tests || '') + ' Kombinationen getestet. Bereinigt um diese Zahl ist ' + pz.map(function(g){ return esc(g.name.split(': ').pop()) + (g.pAdj < 0.05 ? ' sehr wahrscheinlich kein Zufall' : (g.pAdj < 0.5 ? ' eher kein Zufall, aber nicht sicher' : ' noch nicht vom Zufall zu unterscheiden')); }).join('; ') + '.</p>' : '');
 }
+function viewMoreSets(){
+  var b = V.bm; if (!b || !b.sets) return '';
+  var row = function(x){ return '<tr><td>' + (x.passed ? '✅ ' : '') + esc(x.name) + (x.bias === 'survivor' ? ' <span class="muted tiny">(heutige Gewinner-Aktien, zu optimistisch)</span>' : '') + '</td><td>' + x.all.n + '</td><td>' + (x.all.n ? fmt(x.all.win * 100, 0) + ' %' : '–') + '</td><td class="' + ((x.all.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.all.n ? sgn(x.all.mean, 2) + ' %' : '–') + '</td><td class="' + ((x.hold.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.hold.n ? sgn(x.hold.mean, 2) + ' %' : '–') + '</td></tr>'; };
+  return '<div class="label" style="margin-top:14px">Weitere Studien (Tag seit 2000, Stunde 2 Jahre), Ø in % je Trade nach Kosten</div><table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
+    '<p class="hint">✅ heißt hier strenger: in allen drei Zeiträumen im Plus, insgesamt sicher über null und besser als einfach investiert zu sein.</p>';
+}
+function viewDepot(){
+  var b = V.bm; if (!b || !b.depot) return '';
+  var ks = Object.keys(b.depot).sort(function(x, y){ return (b.depot[y].passed ? 1 : 0) - (b.depot[x].passed ? 1 : 0); });
+  var mon = function(m){ if (!m) return ''; var p = m.split('-'); return ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'][+p[1] - 1] + ' ' + p[0]; };
+  return '<section class="card"><div class="row"><h2>Geld parken: Depot-Strategien</h2><span class="muted small">Wochen bis Monate</span></div>' +
+    '<p class="hint" style="margin-top:4px">Regeln aus Studien, zurückgerechnet seit 2000 mit Dividenden und Kosten. Einmal im Monat prüfen, dazwischen nichts tun. Umsetzen mit ETFs bei Trade Republic, nicht mit Knock-outs: Hebel und Finanzierungskosten fressen über Wochen den Vorteil auf.</p>' +
+    ks.map(function(k){ var d = b.depot[k]; return '<div class="trade"><div class="row"><span>' + (d.passed ? '✅ ' : '') + '<b>' + esc(d.name) + '</b></span></div>' +
+      '<div class="small" style="margin-top:4px">Stand ' + esc(mon(d.nowMonth)) + ': <b>' + esc(depotText(d.now)) + '</b></div>' +
+      '<div class="muted small">' + fmt(d.all.cagr, 1) + ' % pro Jahr, größter Verlust −' + fmt(d.all.maxdd, 0) + ' % · Kaufen und Halten (' + esc(d.bench === 'SPY' ? 'S&P 500' : (DEPOT_NAMES[d.bench] || d.bench)) + '): ' + fmt(d.bh.cagr, 1) + ' % pro Jahr, −' + fmt(d.bh.maxdd, 0) + ' %' + (d.note ? ' · ' + esc(d.note) : '') + '</div></div>'; }).join('') +
+    '<p class="hint">✅ = bessere Rendite pro Risiko und kleinere Einbrüche als Kaufen und Halten, in jedem Zeitraum im Plus. Mehr Rendite als Kaufen und Halten bringen sie meist nicht: Ihr Vorteil ist, dass sie große Crashs (2008, 2022) größtenteils auslassen.</p></section>';
+}
 function viewResearch(){
   var b = V.bx; if (!b || !b.sets) return '';
   var row = function(x){ return '<tr><td>' + (x.passed ? '✅ ' : '') + esc(x.name) + '</td><td>' + x.all.n + '</td><td>' + (x.all.n ? fmt(x.all.win * 100, 0) + ' %' : '–') + '</td><td class="' + ((x.all.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.all.n ? sgn(x.all.mean, 2) : '–') + '</td><td class="' + ((x.hold.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.hold.n ? sgn(x.hold.mean, 2) : '–') + '</td></tr>'; };
   return '<section class="card"><div class="row"><h2>Strategien aus der Forschung</h2><span class="muted small">' + esc(dm(Date.parse(b.at))) + '</span></div>' +
     '<p class="hint" style="margin-top:4px">ORB „Stocks in Play“ (5 Min, ' + (b.orbDays || 0) + ' Handelstage, 45 US-Aktien), Connors RSI-2 auf Tageskerzen (bis 10 Jahre), News-Fehlausbruch und -Momentum (15 Min). Mit Kosten, Prüfung in drei Zeiträumen. ✅ = in allen dreien mindestens +0,05 R.</p>' +
     '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
+    viewMoreSets() +
     (b.orbGross && b.orbGross.n ? '<p class="hint">ORB Top 3 ohne Kosten: Ø ' + sgn(b.orbGross.mean, 2) + ' R. Der Unterschied zeigt, wie viel Spread und Gebühren bei so engen Stops kosten.</p>' : '') + '</section>';
 }
 function viewBt(){
@@ -2233,7 +2257,9 @@ function viewMehr(){
       ((p.quality || 'mix') === 'mix' ? '<label class="switch"><span>B-Setups ab 16:00: nur Ampel grün + Premium/Discount + Liquiditätsziel + CRV ab 2</span><input type="checkbox" data-push="bgreen"' + (p.bgreen !== false ? ' checked' : '') + '></label>' : '') +
       '<label class="switch"><span>ORB „Stocks in Play“ (US-Eröffnung)</span><input type="checkbox" data-push="orb"' + (p.orb !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Swing RSI-2 (abends, Haltedauer Tage)</span><input type="checkbox" data-push="swing"' + (p.swing !== false ? ' checked' : '') + '></label>' +
-      '<p class="hint">Beide melden sich nur, solange sie die wöchentliche Rückrechnung bestehen (siehe Tagebuch → Strategien aus der Forschung).</p>' +
+      '<label class="switch"><span>IBS-Mean-Reversion (Indizes, kurz vor Schluss)</span><input type="checkbox" data-push="ibs"' + (p.ibs !== false ? ' checked' : '') + '></label>' +
+      '<label class="switch"><span>Depot-Strategien (monatlich)</span><input type="checkbox" data-push="depot"' + (p.depot !== false ? ' checked' : '') + '></label>' +
+      '<p class="hint">Diese Strategien melden sich nur, solange sie die Rückrechnung bestehen (siehe Tagebuch → Strategien aus der Forschung).</p>' +
       '<label class="switch"><span>Hauptzeiten (08:00 und 14:30)</span><input type="checkbox" data-push="kz"' + (p.kz ? ' checked' : '') + '></label>' +
       '<div class="label" style="margin-top:6px">News-Warnung vorher</div><div class="seg" style="margin-top:6px">' + [10, 15, 30].map(function(m){ return '<button data-act="lead" data-m="' + m + '" aria-pressed="' + (p.lead === m) + '">' + m + ' Min</button>'; }).join('') + '</div>' +
       '<div class="btns"><button class="btn ghost block" data-act="ptest">Test senden</button><button class="btn ghost block" data-act="poff">Ausschalten</button></div>'
@@ -2255,7 +2281,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'mix', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'mix', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -2264,7 +2290,7 @@ function syncTrade(extra){
     var hits = {}, deads = {}; (j.alerts || []).forEach(function(a){ if (a.hit) hits[a.id] = a; if (a.dead) deads[a.id] = a.dead; });
     var changed = false;
     S.alerts.forEach(function(a){ if (hits[a.id] && !a.hit){ a.hit = hits[a.id].hit; a.hitPx = hits[a.id].hitPx; changed = true; } if (deads[a.id] && !a.dead){ a.dead = deads[a.id]; changed = true; } });
-    V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || [];
+    V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || []; V.ibsPos = j.ibsPos || [];
     if (V.wantSig){ var w = V.wantSig; V.wantSig = null; useSignal(w); return j; }
     if (changed || S.tab === 'markt' || S.tab === 'buch' || S.tab === 'check'){ if (changed) save(); rerender(); }
     return j;
@@ -2377,6 +2403,7 @@ render = function(){ _render(); bind($('#page')); };
 
 // ---------- Start
 try { var qs = new URLSearchParams(location.search).get('sig'); if (qs) V.wantSig = qs; } catch (e) {}
+fetch('../dienst/backtest-more.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bm = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-extra.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bx = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-1h.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.grades){ V.bt1 = b; if (S.tab === 'buch' || S.tab === 'markt') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.all){ delete b.trades; V.bt = b; if (S.tab === 'buch' || S.tab === 'markt') rerender(); } }).catch(function(){});
