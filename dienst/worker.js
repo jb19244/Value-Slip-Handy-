@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '7979381094';
+const WORKER_VER = 'd3b6c100eb';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2791,7 +2791,11 @@ function normAlert(a, nowMs) {
   if (!a || typeof a !== 'object' || !symOk(a.sym)) return null;
   const lo = +a.lo, hi = +a.hi;
   if (!(lo > 0) || !(hi >= lo)) return null;
-  return { id: String(a.id || '').slice(0, 24) || String(nowMs), sym: a.sym, name: String(a.name || a.sym).slice(0, 30), lo, hi, note: String(a.note || '').slice(0, 60), since: +a.since || nowMs, hit: +a.hit || 0, hitPx: +a.hitPx || 0 };
+  const out = { id: String(a.id || '').slice(0, 24) || String(nowMs), sym: a.sym, name: String(a.name || a.sym).slice(0, 30), lo, hi, note: String(a.note || '').slice(0, 60), since: +a.since || nowMs, hit: +a.hit || 0, hitPx: +a.hitPx || 0 };
+  // Einstiegs-Alarm mit Szenarien: Richtung, Einstieg, Stop, Ziel, Ablauf, Waehrungen fuer die News-Sperre
+  if (a.kind === 'entry' && (a.dir === 1 || a.dir === -1) && +a.entry > 0 && +a.stop > 0 && +a.target > 0) Object.assign(out, { kind: 'entry', dir: a.dir, entry: +a.entry, stop: +a.stop, target: +a.target,
+    exp: +a.exp || 0, mode: ['limit', 'stop', 'market'].includes(a.mode) ? a.mode : 'limit', ccy: (Array.isArray(a.ccy) ? a.ccy : []).filter((c) => /^[A-Z]{3}$/.test(c)).slice(0, 4), dec: Math.max(0, Math.min(6, +a.dec || 2)), dead: a.dead ? String(a.dead).slice(0, 20) : '' });
+  return out;
 }
 function normTrade(x) {
   if (!x || typeof x !== 'object' || typeof x.id !== 'string' || !TL.instrumentByKey(x.k)) return null;
@@ -2813,7 +2817,8 @@ async function tradeRoute(request, headers, env, nowMs) {
     if (b.sub != null && !validSub(b.sub)) return json(400, 'Ungültiges Push-Abo', headers);
     const old = {}; (t.alerts || []).forEach((a) => { old[a.id] = a; });
     const alerts = (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 20).map((a) => normAlert(a, nowMs)).filter(Boolean)
-      .map((a) => old[a.id] && old[a.id].hit && !a.hit ? Object.assign(a, { hit: old[a.id].hit, hitPx: old[a.id].hitPx }) : a);
+      .map((a) => old[a.id] && old[a.id].hit && !a.hit ? Object.assign(a, { hit: old[a.id].hit, hitPx: old[a.id].hitPx }) : a)
+      .map((a) => old[a.id] && old[a.id].dead && !a.dead ? Object.assign(a, { dead: old[a.id].dead, deadAt: old[a.id].deadAt }) : a);
     const next = { sub: b.off ? null : (b.sub || t.sub || null), on: b.on !== false,
       ccys: (Array.isArray(b.ccys) ? b.ccys : []).filter((c) => /^[A-Z]{3}$/.test(c)).slice(0, 10),
       kw: (Array.isArray(b.kw) ? b.kw : []).filter((k) => /^[a-z|]{2,40}$/.test(k)).slice(0, 5),
@@ -2914,14 +2919,39 @@ async function runTrade(env, nowMs) {
     return cache[key];
   };
   const fmtp = (x, k) => { const i = TL.instrumentByKey(k); return (+x).toFixed(i ? i.dec : 2).replace('.', ','); };
-  // 3) Kurs-Alarme: Preis erreicht deine Zone
-  const open = (t.alerts || []).filter((a) => !a.hit);
+  // 3) Kurs-Alarme: Preis erreicht deine Zone. Einstiegs-Alarme melden sich nur, wenn der Einstieg noch gueltig ist.
+  const open = (t.alerts || []).filter((a) => !a.hit && !a.dead);
+  let calA = null;
+  if (open.some((a) => a.kind === 'entry')) { try { calA = (await getCalendar(env, nowMs)).data; } catch (e) { calA = null; } }
+  const fmtA = (a, v) => Number(v).toFixed(a.dec).replace('.', ',');
+  const kill = (a, why) => { a.dead = why; a.deadAt = nowMs; dirty = true; };
+  for (const a of open.filter((x) => x.kind === 'entry' && x.exp && nowMs > x.exp)) kill(a, 'abgelaufen');
   const syms = [...new Set(open.map((a) => a.sym))].slice(0, 8);
   for (const sym of syms) {
     const candles = await candlesOf(sym, '5m', '1d');
     if (!candles || !candles.length) continue;
     rep.checked++;
-    for (const a of open.filter((x) => x.sym === sym)) {
+    for (const a of open.filter((x) => x.sym === sym && !x.dead && x.kind === 'entry')) {
+      // Kerzen seit dem Anlegen der Reihe nach: was kam zuerst? Ziel (verpasst), hinter dem Stop (ungueltig) oder der Einstieg
+      let ev = null;
+      for (const x of candles) {
+        if (x.t + 5 * 60e3 <= a.since) continue;
+        const touch = a.mode === 'stop' ? (a.dir > 0 ? x.h >= a.entry : x.l <= a.entry) : (a.dir > 0 ? x.l <= a.entry : x.h >= a.entry);
+        const beyond = a.dir > 0 ? x.l <= a.stop : x.h >= a.stop, tgt = a.dir > 0 ? x.h >= a.target : x.l <= a.target;
+        if (beyond && a.mode !== 'stop') { ev = 'ungueltig'; break; }
+        if (tgt && a.mode === 'limit' && !touch) { ev = 'verpasst'; break; }
+        if (touch) { ev = 'einstieg'; break; }
+      }
+      if (ev === 'ungueltig' || ev === 'verpasst') { kill(a, ev); continue; }
+      if (ev !== 'einstieg') continue;
+      // News-Sperre: wichtiger Termin in den naechsten 30 oder letzten 15 Minuten
+      const news = (calA || []).filter((e) => e.impact === 'High' && a.ccy.includes(e.country)).map((e) => Object.assign({}, e, { t: Date.parse(e.date) })).find((e) => e.t > nowMs - 15 * 60e3 && e.t - nowMs < 30 * 60e3);
+      if (news) { kill(a, 'news'); await send('a:' + a.id + ':news', { body: a.name + ': Einstieg erreicht, aber um ' + hhmm(news.t) + ' kommt ' + news.country + ' ' + news.title + '. Kein gültiger Einstieg. Falls die Order steht: löschen.', tag: 'alert-' + a.id }); continue; }
+      const px = candles[candles.length - 1].c;
+      a.hit = nowMs; a.hitPx = px; dirty = true;
+      await send('a:' + a.id, { title: 'Gültiger Einstieg · ' + a.name, body: a.name + ' ' + (a.dir > 0 ? 'Long' : 'Short') + ': Einstieg ' + fmtA(a, a.entry) + ' erreicht, aktuell ' + fmtA(a, px) + '. SL ' + fmtA(a, a.stop) + ' · TP ' + fmtA(a, a.target) + '. Setup noch gültig, keine wichtigen Termine in den nächsten 30 Min' + (a.exp ? ', gilt bis ' + hhmm(a.exp) : '') + '.', tag: 'alert-' + a.id });
+    }
+    for (const a of open.filter((x) => x.sym === sym && !x.kind)) {
       const hit = candles.find((x) => x.t + 5 * 60e3 > a.since && x.l <= a.hi && x.h >= a.lo);
       if (hit) {
         const px = candles[candles.length - 1].c;

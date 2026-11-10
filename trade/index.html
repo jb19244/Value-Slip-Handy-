@@ -5,42 +5,25 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Trade Check</title>
 <meta name="description" content="Bestätigung für Daytrading-Setups: Struktur, Liquidität, News, Handelszeit, COT und Positionsgröße mit Live-Daten.">
-<meta name="theme-color" content="#EEF2F5" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0A1622" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Trade Check">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
 <style>
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 :root{
-  --bg:#EEF2F5; --surface:#FFFFFF; --surface2:#E2E8EE; --fg:#0C1A26; --muted:#56687A; --line:#D3DCE4;
-  --accent:#0A6E93; --accent-fg:#FFFFFF;
-  --good:#0B8556; --good-bg:#DAF1E5; --bad:#C0392F; --bad-bg:#F8E2DF; --warn:#8A5700; --warn-bg:#FBEBCB;
-  --overlay:rgba(12,26,38,.45);
-  --font-d:'Barlow Condensed','Arial Narrow',Arial,sans-serif;
-  --font-b:'Barlow',system-ui,-apple-system,'Segoe UI',sans-serif;
-}
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --bg:#0A1622; --surface:#112131; --surface2:#1A2D40; --fg:#E9F1F7; --muted:#93A8BA; --line:#22374B;
-    --accent:#4CC3E6; --accent-fg:#06121C;
-    --good:#4AD494; --good-bg:#10342A; --bad:#FF8379; --bad-bg:#3B1E26; --warn:#F2BE5C; --warn-bg:#3A2D12;
-    --overlay:rgba(0,0,0,.6); color-scheme:dark;
-  }
-}
-:root[data-theme="dark"]{
-  --bg:#0A1622; --surface:#112131; --surface2:#1A2D40; --fg:#E9F1F7; --muted:#93A8BA; --line:#22374B;
-  --accent:#4CC3E6; --accent-fg:#06121C;
-  --good:#4AD494; --good-bg:#10342A; --bad:#FF8379; --bad-bg:#3B1E26; --warn:#F2BE5C; --warn-bg:#3A2D12;
-  --overlay:rgba(0,0,0,.6); color-scheme:dark;
+  --bg:#000000; --surface:#111214; --surface2:#1D1E22; --fg:#F5F5F7; --muted:#8E8E93; --line:#26272B;
+  --accent:#F5F5F7; --accent-fg:#000000; --link:#7FB2FF;
+  --good:#2FD07A; --good-bg:rgba(47,208,122,.14); --bad:#FF5A5F; --bad-bg:rgba(255,90,95,.14); --warn:#FFB340; --warn-bg:rgba(255,179,64,.14);
+  --overlay:rgba(0,0,0,.7);
+  --font-d:-apple-system,BlinkMacSystemFont,'SF Pro Display','Inter','Segoe UI',system-ui,sans-serif;
+  --font-b:-apple-system,BlinkMacSystemFont,'SF Pro Text','Inter','Segoe UI',system-ui,sans-serif;
+  color-scheme:dark;
 }
 html{height:100%}
 body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 var(--font-b);-webkit-text-size-adjust:100%}
@@ -50,24 +33,25 @@ input,select{font:inherit;color:var(--fg)}
 .gutter{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .app{height:100%;display:flex;flex-direction:column;min-height:0}
 .bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:max(10px,env(safe-area-inset-top,0px));padding-bottom:10px;border-bottom:1px solid var(--line);background:var(--bg)}
-.brand{display:flex;align-items:center;gap:7px;font-family:var(--font-d);font-weight:700;font-size:21px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
-.brand svg{width:22px;height:22px;color:var(--accent)}
+.brand{display:flex;align-items:center;gap:7px;font-family:var(--font-d);font-weight:700;font-size:19px;letter-spacing:-.01em;white-space:nowrap}
+.brand svg{width:20px;height:20px;color:var(--good)}
 .chip{display:flex;align-items:center;gap:7px;padding:6px 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:13px;color:var(--muted);min-width:0}
 .chip b{font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .dot.good{background:var(--good)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
 main{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 .page{display:flex;flex-direction:column;gap:14px;padding-block:16px 28px}
-.tabs{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);background:var(--surface);padding-top:6px;padding-bottom:max(6px,env(safe-area-inset-bottom,0px))}
+.tabs{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);background:rgba(10,10,12,.92);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);padding-top:6px;padding-bottom:max(6px,env(safe-area-inset-bottom,0px))}
 .tab{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 4px;font-size:12px;font-weight:500;color:var(--muted)}
 .tab svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-.tab[aria-selected="true"]{color:var(--accent)}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;min-width:0}
-h2{margin:0;font-family:var(--font-d);font-weight:600;font-size:22px;letter-spacing:.02em}
+.tab[aria-selected="true"]{color:var(--fg)}
+.tab[aria-selected="true"] svg{stroke-width:2.2}
+.card{background:var(--surface);border:0;border-radius:18px;padding:16px;min-width:0}
+h2{margin:0;font-family:var(--font-d);font-weight:700;font-size:20px;letter-spacing:-.01em}
 h3{margin:0;font-size:15px;font-weight:600}
 .muted{color:var(--muted)} .small{font-size:13px} .tiny{font-size:12px}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.label{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.label{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--muted)}
 .hint{margin:8px 0 0;font-size:13px;color:var(--muted)}
 .err{margin:8px 0 0;font-size:13px;color:var(--bad);font-weight:500}
 .num{font-family:var(--font-d);font-variant-numeric:tabular-nums;font-weight:600}
@@ -88,7 +72,7 @@ h3{margin:0;font-size:15px;font-weight:600}
 .btn.block{flex:1}
 .btn[disabled]{opacity:.5}
 .btns{display:flex;gap:10px;margin-top:14px}
-.link{color:var(--accent);font-weight:600}
+.link{color:var(--link);font-weight:600}
 .scroller{display:flex;gap:8px;overflow-x:auto;margin:0 -14px;padding:2px 14px 4px;scrollbar-width:none}
 .scroller::-webkit-scrollbar{display:none}
 .ichip{flex:none;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-weight:600;font-size:14px;white-space:nowrap}
@@ -134,6 +118,27 @@ details.more[open] summary::after{content:"−"}
 .hero dd{margin:2px 0 0;font-family:var(--font-d);font-size:20px;white-space:nowrap;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .guard{margin-top:10px;padding:10px 12px;border-radius:12px;font-size:14px;font-weight:600}
 .guard.ok{background:var(--good-bg);color:var(--good)} .guard.stop{background:var(--bad-bg);color:var(--bad)}
+.ihead{padding:4px 0 2px}
+.ihead .nm{font-size:15px;font-weight:600;color:var(--muted)}
+.bigpx{font-family:var(--font-d);font-size:44px;font-weight:700;letter-spacing:-.02em;line-height:1.05;font-variant-numeric:tabular-nums}
+.chg{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.buysell{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.buysell button{min-height:54px;border-radius:14px;font-size:17px;font-weight:700;background:var(--surface2);color:var(--muted)}
+.buysell button[data-dir="1"][aria-pressed="true"]{background:var(--good);color:#00140A}
+.buysell button[data-dir="-1"][aria-pressed="true"]{background:var(--bad);color:#1A0003}
+.bias.wl{display:grid;grid-template-columns:38px minmax(0,1fr) 64px auto;grid-template-rows:auto;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line);width:100%;text-align:left}
+.bias.wl:last-child{border-bottom:0}
+.bias.wl .px{text-align:right;font-size:16px}
+.logo{width:38px;height:38px;border-radius:50%;background:var(--surface2);display:grid;place-items:center;font-size:12px;font-weight:700;color:var(--fg)}
+.wl .nm{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl .sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl .rt{text-align:right}
+.wl .px{font-family:var(--font-d);font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+.cpill{display:inline-block;margin-top:3px;padding:2px 7px;border-radius:7px;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.cpill.good{background:var(--good-bg);color:var(--good)} .cpill.bad{background:var(--bad-bg);color:var(--bad)}
+.mini{width:64px;height:28px;display:block}
+.depot{padding:6px 0 4px}
+.depot .bigpx{font-size:40px}
 .lv .acts{display:flex;gap:4px}
 .lv .acts button{width:30px;height:30px;border-radius:8px;background:var(--surface2);font-size:12px;font-weight:700;color:var(--muted)}
 .lv.now{background:color-mix(in srgb,var(--accent) 10%,transparent);border-radius:8px;padding-inline:8px;margin-inline:-8px}
@@ -200,9 +205,9 @@ table.st td:first-child{overflow-wrap:anywhere;padding-right:8px}
   </header>
   <main id="main"><div class="page gutter" id="page"></div></main>
   <nav class="tabs" role="tablist">
-    <button class="tab" role="tab" data-tab="heute"><svg viewBox="0 0 24 24"><path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/><circle cx="12" cy="12" r="4"/></svg>Heute</button>
-    <button class="tab" role="tab" data-tab="check"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>Check</button>
-    <button class="tab" role="tab" data-tab="markt"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 15l3-4 3 2 5-6"/></svg>Markt</button>
+    <button class="tab" role="tab" data-tab="heute"><svg viewBox="0 0 24 24"><path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/><circle cx="12" cy="12" r="4"/></svg>Depot</button>
+    <button class="tab" role="tab" data-tab="markt"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 15l3-4 3 2 5-6"/></svg>Märkte</button>
+    <button class="tab" role="tab" data-tab="check"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>Handeln</button>
     <button class="tab" role="tab" data-tab="buch"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11M9 8h6"/></svg>Tagebuch</button>
     <button class="tab" role="tab" data-tab="mehr"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Mehr</button>
   </nav>
@@ -1223,7 +1228,11 @@ function base(){ return (S.cfg.url || dienstUrl || '').replace(/\/+$/, ''); }
 var mem = {};
 function api(path, ttl){
   var u = base();
-  if (!u) return Promise.reject(new Error('Der Datendienst ist noch nicht eingerichtet (siehe Mehr).'));
+  if (!u){
+    // Adresse kommt evtl. gleich aus status.json: kurz darauf warten statt sofort einen Fehler zu zeigen
+    if (V.dienst && !V.dienstWaited){ return V.dienst.then(function(){ V.dienstWaited = true; return api(path, ttl); }); }
+    return Promise.reject(new Error('Der Datendienst ist noch nicht eingerichtet (siehe Mehr).'));
+  }
   var m = mem[path];
   if (m && Date.now() - m.at < ttl) return m.p;
   var p = fetch(u + path).then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ if (!r.ok) throw new Error(j.message || ('Datendienst antwortet mit ' + r.status)); return j; }); });
@@ -1292,20 +1301,24 @@ function viewCheck(){
   var f = S.form, i = instr(f.k) || INSTRUMENTS[0], d = V.data[f.k], px = lastPx(d), ch = dayChg(d);
   var chips = watchKeys().map(function(k){ var x = instr(k); return x ? '<button class="ichip" data-act="inst" data-k="' + esc(k) + '" aria-pressed="' + (k === f.k) + '">' + esc(x.name) + '</button>' : ''; }).join('') + '<button class="ichip" data-act="pick" aria-label="Weiteres Instrument">＋ Andere</button>';
   var tags = function(arr){ return arr.map(function(t){ return '<button class="tag" data-act="tag" data-t="' + esc(t) + '" aria-pressed="' + (f.setups.indexOf(t) >= 0) + '">' + esc(t) + '</button>'; }).join(''); };
-  var h = '<section class="card"><div class="scroller">' + chips + '</div>' +
-    '<div class="price"><b id="px">' + (px ? fmt(px, i.dec) : '–') + '</b>' + (ch != null ? '<span class="num ' + (ch >= 0 ? 'good' : 'bad') + '" style="font-size:18px">' + sgn(ch * 100, 2) + ' %</span>' : '') +
-    '<span class="muted small">' + (V.loading === f.k ? '<span class="spin" style="display:inline-block;vertical-align:middle"></span> lädt' : (d ? 'Stand ' + hm(d.at) + ' · <button class="link" data-act="reload">aktualisieren</button>' : '')) + '</span></div>' +
+  var prev = px && ch != null ? px / (1 + ch) : null;
+  var h = '<div class="scroller" style="margin:0 -16px;padding:0 16px">' + chips + '</div>' +
+    '<div class="ihead"><div class="nm">' + esc(i.name) + ' · ' + esc({ fx: 'Forex', cmd: 'Rohstoff', idx: 'Index', stock: 'Aktie' }[i.type] || '') + '</div><div class="bigpx" id="px">' + (px ? fmt(px, i.dec) : '–') + '</div>' +
+    '<div class="chg ' + (ch == null ? 'muted' : (ch >= 0 ? 'good' : 'bad')) + '">' + (ch != null ? (ch >= 0 ? '▲ ' : '▼ ') + sgn(px - prev, i.dec) + ' (' + sgn(ch * 100, 2) + ' %) heute' : '&nbsp;') + '</div>' +
+    '<div class="muted small" style="margin-top:4px">' + (V.loading === f.k ? '<span class="spin" style="display:inline-block;vertical-align:middle"></span> lädt' : (d ? 'Stand ' + hm(d.at) + ' · <button class="link" data-act="reload">aktualisieren</button>' : '')) + '</div></div>' +
+    (d ? viewChartCard(i, d) : '') +
     (V.instErr ? '<p class="err">' + esc(V.instErr) + ' <button class="link" data-act="reload">Neu laden</button></p>' : '') +
-    '<div class="seg dir" style="margin-top:14px"><button data-act="dir" data-dir="1" aria-pressed="' + (f.dir === 1) + '">Long ↑</button><button data-act="dir" data-dir="-1" aria-pressed="' + (f.dir === -1) + '">Short ↓</button></div>' +
+    '<div class="buysell"><button data-act="dir" data-dir="1" aria-pressed="' + (f.dir === 1) + '">Long</button><button data-act="dir" data-dir="-1" aria-pressed="' + (f.dir === -1) + '">Short</button></div>' +
+    '<section class="card"><div class="row"><h2>Order</h2><span class="pill ' + (f.dir > 0 ? 'good' : 'bad') + '">' + (f.dir > 0 ? 'Call · Long' : 'Put · Short') + '</span></div>' +
     '<div class="fields">' + ['entry', 'stop', 'target'].map(function(n){ return '<label class="field"><span>' + { entry: 'Einstieg', stop: 'Stop', target: 'Ziel' }[n] + '</span><input inputmode="decimal" autocomplete="off" data-f="' + n + '" value="' + esc(f[n]) + '" placeholder="' + (px && n === 'entry' ? fmtIn(px, i.dec) : '') + '"></label>'; }).join('') + '</div>' +
     '<div class="row" style="margin-top:8px"><button class="link small" data-act="usepx">Aktuellen Kurs als Einstieg</button><button class="link small" data-act="fib">Fibonacci / Wellen</button></div>' +
-    '<div style="margin-top:14px"><div class="label">Smart Money</div><div class="tags">' + tags(SMC_TAGS) + '</div></div>' +
+    '<div style="margin-top:14px"><div class="label">Smart Money (automatisch beim Prüfen)</div><div class="tags">' + tags(SMC_TAGS) + '</div></div>' +
     '<div style="margin-top:10px"><div class="label">Elliott</div><div class="tags">' + tags(EW_TAGS) + '</div></div>' +
     viewKo(f, i) +
-    '<div class="btns"><button class="btn block" data-act="run"' + (V.busy ? ' disabled' : '') + '>' + (V.busy ? 'Prüfe …' : 'Setup prüfen') + '</button></div>' +
+    '<div class="btns"><button class="btn block" data-act="run"' + (V.busy ? ' disabled' : '') + '>' + (V.busy ? 'Prüfe …' : 'Order prüfen') + '</button></div>' +
     (V.checkErr ? '<p class="err">' + esc(V.checkErr) + '</p>' : '') + '</section>';
   h += '<div id="result">' + (V.check && V.check.k === f.k ? viewResult(V.check) : '') + '</div>';
-  h += viewLevels(i, d);
+  h += viewLevels(i, d, true);
   return h;
 }
 function koDefault(i){ return pnum(koHint(i)); }
@@ -1321,7 +1334,12 @@ function viewKo(f, i){
     (sug ? '<div class="row" style="margin-top:8px"><span class="muted small">Schein mit Schwelle ' + (f.dir > 0 ? 'unter ' : 'über ') + fmt(sug, dec) + ' suchen: genug Abstand hinter dem Stop.</span><button class="link small" data-act="kosug" data-p="' + sug + '">übernehmen</button></div>' : '<p class="hint">Mit Stop schlage ich dir eine passende KO-Schwelle vor.</p>') + '</div>';
 }
 function koHint(i){ return i.type === 'fx' ? '100' : (i.k === 'XAGUSD' ? '1' : (i.type === 'cmd' || i.type === 'stock' ? '0,1' : '0,01')); }
-function viewLevels(i, d){
+function viewChartCard(i, d){
+  var tf = S.tf === '60m' ? '60m' : '15m';
+  return '<section class="card" style="padding:12px 12px 10px"><div class="seg">' + [['15m', '15 Min'], ['60m', '1 Std']].map(function(x){ return '<button data-act="tf" data-tf="' + x[0] + '" aria-pressed="' + (tf === x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div>' + chartSvg(i, d, tf) +
+    (V.pick != null ? '<div class="pickbar"><b>' + fmt(V.pick, i.dec) + '</b><button class="btn sm ghost" data-act="lvset" data-f="entry" data-p="' + V.pick + '">Einstieg</button><button class="btn sm ghost" data-act="lvset" data-f="stop" data-p="' + V.pick + '">Stop</button><button class="btn sm ghost" data-act="lvset" data-f="target" data-p="' + V.pick + '">Ziel</button><button class="btn sm ghost" data-act="lvset" data-f="ko" data-p="' + V.pick + '">KO</button></div>' : '<p class="hint" style="margin-top:6px">Tippe in den Chart, um einen Kurs zu setzen. Orange: Fibonacci, Ziffern: Elliott-Wellen, Kästen: Order Blocks und FVGs.</p>') + '</section>';
+}
+function viewLevels(i, d, noChart){
   if (!d) return '';
   var lv = keyLevels(d.m15, d.h1, Date.now(), i.dec), px = lastPx(d);
   var trend = '', st1 = d.h1 && d.h1.length > 30 ? structure(d.h1, 2) : null, st15 = d.m15 && d.m15.length > 30 ? structure(d.m15, 2) : null;
@@ -1338,7 +1356,7 @@ function viewLevels(i, d){
   var chartHtml = '<div class="seg" style="margin-top:10px"><button data-act="tf" data-tf="15m" aria-pressed="' + (tf === '15m') + '">15 Min</button><button data-act="tf" data-tf="60m" aria-pressed="' + (tf === '60m') + '">1 Std</button></div>' + chartSvg(i, d, tf) +
     (V.pick != null ? '<div class="pickbar"><b>' + fmt(V.pick, i.dec) + '</b><button class="btn sm ghost" data-act="lvset" data-f="entry" data-p="' + V.pick + '">Einstieg</button><button class="btn sm ghost" data-act="lvset" data-f="stop" data-p="' + V.pick + '">Stop</button><button class="btn sm ghost" data-act="lvset" data-f="target" data-p="' + V.pick + '">Ziel</button><button class="btn sm ghost" data-act="lvset" data-f="ko" data-p="' + V.pick + '">KO</button></div>' : '<p class="hint" style="margin-top:6px">Tippe in den Chart, um einen Kurs als Einstieg, Stop, Ziel oder KO-Schwelle zu setzen.</p>');
   return '<section class="card"><div class="row"><h2>Marktbild</h2><span class="small" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">' + trend + sDesc(st1, '1 Std') + sDesc(st15, '15 Min') + cot + '</span></div>' +
-    chartHtml + '<p class="hint" style="margin-top:12px">Wichtige Marken. Tippe E, S oder Z, um sie als Einstieg, Stop oder Ziel zu übernehmen.</p><ul class="ladder">' + rows.join('') + '</ul></section>';
+    (noChart ? '' : chartHtml) + '<p class="hint" style="margin-top:12px">Wichtige Marken. Tippe E, S oder Z, um sie als Einstieg, Stop oder Ziel zu übernehmen.</p><ul class="ladder">' + rows.join('') + '</ul></section>';
 }
 // ---------- Kerzenchart mit Asien-Range, Vortageslinien, offenen FVGs, letztem Strukturbruch und deinen Linien
 function chartSvg(i, d, tf){
@@ -1509,13 +1527,16 @@ function openTrade(){
 }
 function addAlarmAtEntry(){
   var r = V.check; if (!r || r.error) return;
-  var i = instr(r.k), e = r.form.entry - (r.offset || 0), risk = Math.abs(r.form.entry - r.form.stop), pad = risk * 0.1;
-  var lo = r.form.dir > 0 ? e - pad : e, hi = r.form.dir > 0 ? e : e + pad;
-  var dec = i.dec;
-  S.alerts.unshift({ id: uid(), k: r.k, sym: i.y, name: i.name, lo: +lo.toFixed(dec), hi: +hi.toFixed(dec), note: (r.form.dir > 0 ? 'Long' : 'Short') + ' ' + fmt(r.form.entry, dec), since: Date.now(), hit: 0 });
-  save(); syncTrade(); toast(S.cfg.push.on ? 'Alarm gesetzt, du bekommst eine Nachricht' : 'Alarm gesetzt. Schalte unter Mehr die Benachrichtigungen ein');
+  var i = instr(r.k), off = r.offset || 0, f = r.form, dec = i.dec, g = r.sigCtx && r.sigCtx.g;
+  var e = f.entry - off, st = f.stop - off, tg = f.target - off, risk = Math.abs(e - st), pad = risk * 0.1;
+  // gilt bis: Ablauf des Signals, sonst 21:45 heute
+  var b = berlinParts(Date.now()), exp = g && g.expires ? g.expires : Date.now() + Math.max(15, (21 * 60 + 45) - b.min) * 60e3;
+  S.alerts = S.alerts.filter(function(x){ return !(x.kind === 'entry' && x.k === r.k && !x.hit && !x.dead); });
+  S.alerts.unshift({ id: uid(), kind: 'entry', k: r.k, sym: i.y, name: i.name, lo: +(f.dir > 0 ? e - pad : e).toFixed(dec), hi: +(f.dir > 0 ? e : e + pad).toFixed(dec), dir: f.dir, entry: e, stop: st, target: tg, exp: exp, mode: g && g.mode ? g.mode : 'limit', ccy: i.ccy, dec: dec,
+    note: (f.dir > 0 ? 'Long' : 'Short') + ' ' + fmt(f.entry, dec), since: Date.now(), hit: 0 });
+  save(); syncTrade();
+  toast(S.cfg.push.on ? 'Einstiegs-Alarm gesetzt bis ' + hm(exp) + ' Uhr. Nur bei gültigem Einstieg' : 'Alarm gesetzt. Schalte unter Mehr die Benachrichtigungen ein');
 }
-
 // ---------- Bottom Sheet
 function sheet(html){
   closeSheet();
@@ -1693,7 +1714,9 @@ function viewHeute(){
   var next = [{ n: 'London', a: 480 }, { n: 'New York', a: 870 }].filter(function(x){ return x.a > b.min; })[0];
   var weekend = b.wd === 'Sat' || (b.wd === 'Sun' && b.min < 23 * 60);
   var paper = paperStats();
-  var h = '<section class="card"><div class="row"><h2>' + esc(new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(now))) + '</h2><span class="pill ' + (s.q > 0 ? 'good' : (s.q < 0 ? 'warn' : '')) + '">' + esc(s.label) + '</span></div>' +
+  var dep = depotValue();
+  var h = '<div class="depot"><div class="muted small">Trading-Konto</div><div class="bigpx">' + eur(dep.value) + '</div><div class="chg ' + (dep.today >= 0 ? 'good' : 'bad') + '">' + (dep.today >= 0 ? '▲ ' : '▼ ') + sgn(dep.today, 2) + ' € heute' + (dep.open ? ' · offen ' + sgn(dep.open, 2) + ' €' : '') + '</div>' + (dep.curve.length > 2 ? spark(dep.curve) : '') + '</div>' +
+    '<section class="card"><div class="row"><h2>' + esc(new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(now))) + '</h2><span class="pill ' + (s.q > 0 ? 'good' : (s.q < 0 ? 'warn' : '')) + '">' + esc(s.label) + '</span></div>' +
     '<p class="hint" style="margin-top:4px">' + (weekend ? 'Wochenende. Der Scanner startet Montag mit London um 8 Uhr.' : (next ? 'Nächste Hauptzeit: ' + next.n + ' in ' + dur((next.a - b.min) * 60000) + '.' : 'Hauptzeiten für heute vorbei. Offene Trades spätestens 21:45 schließen.')) + '</p>' +
     '<dl class="hero"><div><dt>VIX</dt><dd class="' + (ctx && ctx.vix >= 20 ? 'warn' : '') + '">' + (ctx && ctx.vix ? fmt(ctx.vix, 1) : '…') + '</dd></div><div><dt>Dollar</dt><dd>' + (ctx && ctx.dxyDir ? (ctx.dxyDir > 0 ? '↑ stark' : '↓ schwach') : '…') + '</dd></div><div><dt>Heute</dt><dd class="' + (ts.r >= 0 ? 'good' : 'bad') + '">' + (ts.n ? sgn(ts.r, 1) + 'R' : '–') + '</dd></div></dl>' +
     (ctx && ctx.vix ? '<p class="hint">' + (ctx.vix >= 20 ? 'Der Markt ist unruhig (VIX ab 20). In dieser Lage lief die Sweep-Stufe mit Tagestrend in der Rückrechnung am besten.' : 'Der Markt ist ruhig (VIX unter 20). Die Stufe für unruhige Märkte meldet sich gerade nicht, es kommen nur A+-Signale.') + '</p>' : '') +
@@ -1717,6 +1740,16 @@ function viewHeute(){
     (paper.n ? '<dl class="hero"><div><dt>Signale</dt><dd>' + paper.n + '</dd></div><div><dt>Ergebnis</dt><dd class="' + (paper.eur >= 0 ? 'good' : 'bad') + '">' + sgn(paper.eur, 0) + ' €</dd></div><div><dt>Treffer</dt><dd>' + fmt(paper.win * 100, 0) + ' %</dd></div></dl>' + spark(paper.curve)
       : '<p class="hint">Hier siehst du, was du verdient oder verloren hättest, wenn du jedes gemeldete Signal mit deiner Positionsgröße gehandelt hättest. Es füllt sich mit dem ersten Signal.</p>') + '</section>';
   return h;
+}
+// Depotwert: Kontogroesse + Ergebnis der Tagebuch-Trades (in Euro) + offene Positionen live
+function depotValue(){
+  var re = riskEur(), fee = (+S.cfg.fee || 0) * 2, day = berlinParts(Date.now()).key, val = +S.cfg.account || 0, today = 0, open = 0, curve = [val];
+  S.trades.slice().reverse().forEach(function(t){
+    var risk = (t.size && t.size.risk) || re;
+    if (t.status === 'closed'){ var e = (tradeR(t) || 0) * risk - fee; val += e; curve.push(val); if (berlinParts(t.closedAt || t.at).key === day) today += e; }
+    else { var r = liveR(t); if (r != null){ open += r * risk; } }
+  });
+  return { value: val + open, today: today + open, open: open, curve: curve };
 }
 function paperStats(){
   var L2 = (V.trackLog || []).filter(function(x){ return x.r != null; }); if (!L2.length) return { n: 0 };
@@ -1793,24 +1826,30 @@ function viewCal(max){
     return '<li style="border:0;padding:0">' + head + '<div class="ev' + (e.t < now ? ' past' : '') + '"><span class="t">' + hm(e.t) + '</span><span><div class="ti">' + esc(e.country) + ' ' + esc(e.title) + '</div><div class="fc">' + (e.forecast ? 'Prognose ' + esc(e.forecast) : '') + (e.previous ? (e.forecast ? ' · ' : '') + 'vorher ' + esc(e.previous) : '') + esc(soon) + '</div></span><span class="pill ' + (e.impact === 'High' ? 'bad' : 'warn') + '">' + (e.impact === 'High' ? 'hoch' : 'mittel') + '</span></div></li>';
   }).join('') + '</ul>';
 }
+function logoTxt(i){ var m = { EURUSD: '€$', GBPUSD: '£$', USDJPY: '$¥', XAUUSD: 'Au', XAGUSD: 'Ag', WTI: 'Öl', BRENT: 'Öl', DAX: 'DAX', NDX: 'NDX', SPX: 'SPX', DJI: 'Dow' }; return m[i.k] || String(i.name).replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase(); }
+function miniSpark(c, up){
+  if (!c || c.length < 5) return '<svg class="mini"></svg>';
+  var v = c.slice(-48).map(function(x){ return x.c; }), mn = Math.min.apply(null, v), mx = Math.max.apply(null, v), rg = mx - mn || 1;
+  var pts = v.map(function(y, k){ return (k / (v.length - 1) * 64).toFixed(1) + ',' + (26 - (y - mn) / rg * 24).toFixed(1); }).join(' ');
+  return '<svg class="mini" viewBox="0 0 64 28" aria-hidden="true"><polyline points="' + pts + '" fill="none" stroke="' + (up ? 'var(--good)' : 'var(--bad)') + '" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+}
 function viewBias(){
   return S.watch.map(function(k){
     var i = instr(k), d = V.data[k]; if (!i) return '';
-    if (!d) return '<button class="bias" data-act="pickk" data-k="' + esc(k) + '"><span class="nm">' + esc(i.name) + '</span><span class="px muted">…</span></button>';
+    if (!d) return '<button class="bias wl" data-act="pickk" data-k="' + esc(k) + '"><span class="logo">' + esc(logoTxt(i)) + '</span><span><div class="nm">' + esc(i.name) + '</div><div class="sub">lädt …</div></span><svg class="mini"></svg><span class="rt"><div class="px muted">…</div></span></button>';
     var px = lastPx(d), ch = dayChg(d), bits = [];
-    if (d.d1 && d.d1.length > 60){ var cl = d.d1.map(function(x){ return x.c; }), e50 = ema(cl, 50).pop(); bits.push('<span class="' + (cl[cl.length - 1] > e50 ? 'good' : 'bad') + '">Tag ' + (cl[cl.length - 1] > e50 ? '↑' : '↓') + '</span>'); }
+    if (d.d1 && d.d1.length > 60){ var cl = d.d1.map(function(x){ return x.c; }), e50 = ema(cl, 50).pop(); bits.push('Tag ' + (cl[cl.length - 1] > e50 ? '↑' : '↓')); }
     var st = d.h1 && d.h1.length > 30 ? structure(d.h1, 2) : null;
-    if (st && st.last) bits.push('<span class="' + (st.last.dir > 0 ? 'good' : 'bad') + '">1 Std ' + st.last.kind + ' ' + (st.last.dir > 0 ? '↑' : '↓') + '</span>');
-    if (d.cot) bits.push('<span>COT ' + fmt(d.cot.idx, 0) + '</span>');
-    var lv = d.m15 && d.m15.length ? dayLevels(d.m15, Date.now()) : null;
-    if (lv && lv.prev && px){ if (px > lv.prev.hi) bits.push('<span>über Vortageshoch</span>'); else if (px < lv.prev.lo) bits.push('<span>unter Vortagestief</span>'); }
-    return '<button class="bias" data-act="pickk" data-k="' + esc(k) + '"><span class="nm">' + esc(i.name) + '</span><span class="px">' + fmt(px, i.dec) + '</span><span class="sub">' + bits.join('') + '</span><span class="ch ' + (ch >= 0 ? 'good' : 'bad') + '">' + (ch != null ? sgn(ch * 100, 2) + ' %' : '') + '</span></button>';
+    if (st && st.last) bits.push(st.last.kind + ' ' + (st.last.dir > 0 ? '↑' : '↓'));
+    if (d.cot) bits.push('COT ' + fmt(d.cot.idx, 0));
+    return '<button class="bias wl" data-act="pickk" data-k="' + esc(k) + '"><span class="logo">' + esc(logoTxt(i)) + '</span><span style="min-width:0"><div class="nm">' + esc(i.name) + '</div><div class="sub">' + esc(bits.join(' · ')) + '</div></span>' + miniSpark(d.h1 || d.m15, ch == null || ch >= 0) +
+      '<span class="rt"><div class="px">' + fmt(px, i.dec) + '</div>' + (ch != null ? '<span class="cpill ' + (ch >= 0 ? 'good' : 'bad') + '">' + sgn(ch * 100, 2) + ' %</span>' : '') + '</span></button>';
   }).join('');
 }
 function viewAlerts(){
   var list = S.alerts.map(function(a){
     var i = instr(a.k) || { dec: 2 };
-    return '<li><div class="row"><span><b>' + esc(a.name) + '</b> <span class="num">' + fmt(a.lo, i.dec) + '–' + fmt(a.hi, i.dec) + '</span>' + (a.note ? ' <span class="muted">' + esc(a.note) + '</span>' : '') + '</span><span style="display:flex;gap:8px;align-items:center">' + (a.hit ? '<span class="pill good">erreicht ' + hm(a.hit) + '</span>' : '<span class="pill">wartet</span>') + '<button class="link" data-act="aldel" data-id="' + a.id + '" aria-label="Alarm löschen">✕</button></span></div></li>';
+    return '<li><div class="row"><span><b>' + esc(a.name) + '</b> <span class="num">' + fmt(a.lo, i.dec) + '–' + fmt(a.hi, i.dec) + '</span>' + (a.note ? ' <span class="muted">' + esc(a.note) + '</span>' : '') + '</span><span style="display:flex;gap:8px;align-items:center">' + (a.hit ? '<span class="pill good">' + (a.kind === 'entry' ? 'Einstieg ' : 'erreicht ') + hm(a.hit) + '</span>' : (a.dead ? '<span class="pill">' + esc({ abgelaufen: 'abgelaufen', ungueltig: 'ungültig', verpasst: 'verpasst', news: 'News-Sperre' }[a.dead] || a.dead) + '</span>' : '<span class="pill">' + (a.kind === 'entry' && a.exp ? 'bis ' + hm(a.exp) : 'wartet') + '</span>')) + '<button class="link" data-act="aldel" data-id="' + a.id + '" aria-label="Alarm löschen">✕</button></span></div></li>';
   }).join('');
   return '<section class="card"><div class="row"><h2>Kurs-Alarme</h2><button class="link small" data-act="aladd">＋ Neu</button></div>' +
     (list ? '<ul class="list-plain">' + list + '</ul>' : '<p class="hint">Leg eine Zone fest (z. B. dein Order Block). Wenn der Kurs sie erreicht, bekommst du eine Nachricht, auch wenn die App zu ist. Der Dienst prüft alle 5 Minuten.</p>') +
@@ -1994,15 +2033,15 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'mix', trades: trades, alerts: S.alerts.map(function(a){ return { id: a.id, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit }; }) }, extra || {});
+  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, scanAll: S.cfg.push.quality === 'all', quality: S.cfg.push.quality || 'mix', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
   return post('/trade/sync', syncBody(extra)).then(function(j){
     V.lastSync = Date.now();
-    var hits = {}; (j.alerts || []).forEach(function(a){ if (a.hit) hits[a.id] = a; });
+    var hits = {}, deads = {}; (j.alerts || []).forEach(function(a){ if (a.hit) hits[a.id] = a; if (a.dead) deads[a.id] = a.dead; });
     var changed = false;
-    S.alerts.forEach(function(a){ if (hits[a.id] && !a.hit){ a.hit = hits[a.id].hit; a.hitPx = hits[a.id].hitPx; changed = true; } });
+    S.alerts.forEach(function(a){ if (hits[a.id] && !a.hit){ a.hit = hits[a.id].hit; a.hitPx = hits[a.id].hitPx; changed = true; } if (deads[a.id] && !a.dead){ a.dead = deads[a.id]; changed = true; } });
     V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || [];
     if (V.wantSig){ var w = V.wantSig; V.wantSig = null; useSignal(w); return j; }
     if (changed || S.tab === 'markt' || S.tab === 'buch' || S.tab === 'check'){ if (changed) save(); rerender(); }
