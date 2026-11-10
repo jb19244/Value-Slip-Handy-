@@ -1179,7 +1179,9 @@ function simulate(sig, c, cost){
   var risk = (entry - sig.stop) * sig.dir;
   if (!(risk > 0)){ r.how = 'ungültig'; return r; }
   r.filled = true; r.fillT = c[fill].t; r.entry = entry;
-  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk, beOn = false;
+  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk, beOn = false, pt = 0;
+  // Teilgewinn (sig.part): bei +1R die Haelfte schliessen, Rest mit Stop auf Einstand bis Ziel oder Tagesende
+  var fin = function(v){ return pt ? 0.5 + 0.5 * v : v; };
   for (i = fill; i < n; i++){
     var x = c[i], bpx = berlinFast(x.t);
     var adv = ((sig.dir > 0 ? x.l : x.h) - entry) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - entry) * sig.dir / risk;
@@ -1189,21 +1191,22 @@ function simulate(sig, c, cost){
     if (i === fill && mode === 'stop' && (x.c - x.o) * sig.dir > 0) adv = (Math.min(entry * sig.dir, x.c * sig.dir) * sig.dir - entry) * sig.dir / risk;
     if (adv < r.mae) r.mae = adv;
     // Stop auf Einstand, sobald 1R erreicht war (gilt ab der Kerze danach)
-    if (beOn && adv <= 0){ r.r = 0; r.how = 'Einstand'; r.exitT = x.t; break; }
-    if (adv <= -1){ r.r = -1; r.how = 'Stop'; r.exitT = x.t; break; }
+    if (beOn && adv <= 0){ r.r = fin(0); r.how = 'Einstand'; r.exitT = x.t; break; }
+    if (adv <= -1){ r.r = fin(-1); r.how = 'Stop'; r.exitT = x.t; break; }
     if (fav > r.mfe) r.mfe = fav;
-    if (sig.be && fav >= 1 && !beOn && rr > 1) beOn = true;
-    if ((i > fill || mode !== 'limit') && fav >= rr){ r.r = rr; r.how = 'Ziel'; r.exitT = x.t; break; }
+    if ((i > fill || mode !== 'limit') && fav >= rr){ r.r = fin(rr); r.how = 'Ziel'; r.exitT = x.t; break; }
+    if ((sig.be || sig.part) && fav >= 1 && !beOn && rr > 1){ beOn = true; if (sig.part){ pt = 1; r.partT = x.t; } }
     var mN = sig.exit === 'sma5' ? 5 : (sig.exit === 'sma20' ? 20 : 0);
     if (mN && i >= mN - 1 && i > fill){
       var sm = 0; for (var q2 = 0; q2 < mN; q2++) sm += c[i - q2].c; sm /= mN;
-      if ((x.c - sm) * sig.dir > 0){ r.r = (x.c - entry) * sig.dir / risk; r.how = mN + 'er-Schnitt'; r.exitT = x.t; break; }
+      if ((x.c - sm) * sig.dir > 0){ r.r = fin((x.c - entry) * sig.dir / risk); r.how = mN + 'er-Schnitt'; r.exitT = x.t; break; }
     }
-    if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = ((i > fill ? x.o : x.c) - entry) * sig.dir / risk; r.how = 'Tagesende'; r.exitT = x.t; break; }
+    if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = fin(((i > fill ? x.o : x.c) - entry) * sig.dir / risk); r.how = 'Tagesende'; r.exitT = x.t; break; }
   }
   if (r.r == null){ r.filled = true; r.how = 'läuft'; return r; }
   r.mae = Math.max(r.mae, -1);
-  r.r -= (cost || 0) * (mode === 'limit' ? 1 : 1.5) / risk;
+  r.part = !!pt;
+  r.r -= (cost || 0) * (mode === 'limit' ? 1 : 1.5) / risk + (pt ? (cost || 0) * 0.25 / risk : 0); // Teilverkauf kostet eine zusaetzliche Ordergebuehr
   return r;
 }
 // Rueckrechnung fuer ein Instrument: Signale finden, durchspielen, Ampel zum Signalzeitpunkt bestimmen
@@ -1221,13 +1224,14 @@ function backtest(p){
     if (!sim.filled || sim.r == null) return;
     if (s.oco && sim.fillT !== first[s.type + s.oco]) return;
     if (p.be){ var s2 = Object.assign({}, s, { be: true }), simBe = simulate(s2, c, cost); sim.rBe = simBe.r != null ? simBe.r : sim.r; }
+    { var s3 = Object.assign({}, s, { part: true }), simP = simulate(s3, c, cost); sim.rPart = simP.r != null ? simP.r : sim.r; }
     var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
     var h1 = p.h1 ? (p.h1 === p.m15 ? c.slice(Math.max(0, s.i - 300), s.i + 1) : p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300)) : null;
     var d1 = p.d1 && !p.noCheck ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
     var chk = p.noCheck ? { ampel: null, score: null, items: [] } : scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
     res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: sim.entry || s.entry, stop: s.stop, target: s.target, exit: (sim.entry || s.entry) + s.dir * ((sim.entry || s.entry) - s.stop) * s.dir * sim.r,
-      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, rBe: sim.rBe, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
+      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, rBe: sim.rBe, rPart: sim.rPart, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
   });
   return res;
 }
