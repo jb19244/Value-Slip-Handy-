@@ -55,7 +55,9 @@ for (const sym of SYMS) {
   for (const [tf, c, bar] of [['m5', raw, 300e3], ['m15', m15, 900e3]]) {
     for (const setup of Object.keys(L.SETUPS)) {
       const res = L.backtest({ instr: ins, m15: c, h1, d1, bar, setup, any: true, be: false, noCheck: setup !== 'sweep' && setup !== 'pullback', conf: ['sweep', 'pullback', 'nr7r1'].includes(setup) });
-      res.forEach((t) => { Object.assign(t.sig, L.marketContext(t.sig.day, ins, t.sig.dir, vix, dxy)); t.type = setup; t.sym = sym; delete t.checks; all[tf].push(t); });
+      res.forEach((t) => { Object.assign(t.sig, L.marketContext(t.sig.day, ins, t.sig.dir, vix, dxy)); t.type = setup; t.sym = sym; delete t.checks;
+        // Ergebnis ohne Kosten (wie in der Studie mit Profi-Konditionen) und Risiko in Prozent, um Kosten von fehlendem Vorteil zu trennen
+        const cst = t.sig.entry * 0.0006, mult = (t.sig.mode || 'limit') === 'limit' ? 1 : 1.5; t.rG = t.r + cst * mult / t.sig.risk; t.rPG = (t.rPart != null ? t.rPart : t.r) + cst * mult / t.sig.risk; t.riskPct = t.sig.risk / t.sig.entry * 100; all[tf].push(t); });
     }
     console.log(sym, tf, c.length, 'Kerzen,', all[tf].length, 'Trades bisher,', Math.round((Date.now() - T0) / 1000), 's');
   }
@@ -72,15 +74,19 @@ for (const tf of ['m5', 'm15']) {
     const sel = A.filter((t) => L.gradeMatch(gid, t.sig, t.ampel) && (!calm || t.sig.vixLo === true)); if (sel.length < 20) continue;
     const tr = sel.filter((t) => t.at < split), te = sel.filter((t) => t.at >= split && t.at < cut), ho = sel.filter((t) => t.at >= cut);
     const P = { both: st(sel, 'rPart'), train: st(tr, 'rPart'), test: st(te, 'rPart'), hold: st(ho, 'rPart') };
-    grades.push({ id, tf, type, grade: g.id, calm, name: L.gradeName(gid) + (calm ? ' (VIX unter 20)' : ''), fixed: st(sel), part: P, perDay: +(sel.length / days).toFixed(2) });
+    const G = { both: st(sel, 'rPG'), train: st(tr, 'rPG'), test: st(te, 'rPG'), hold: st(ho, 'rPG') };
+    grades.push({ id, tf, type, grade: g.id, calm, name: L.gradeName(gid) + (calm ? ' (VIX unter 20)' : ''), fixed: st(sel), part: P, gross: G, perDay: +(sel.length / days).toFixed(2) });
   }
   const ok = (g, w) => g.part.both.n >= 60 && g.part.hold.n >= 15 && g.part.both.win >= w && g.part.train.mean > 0 && g.part.test.mean > 0 && g.part.hold.mean > 0 && g.part.both.lo > 0;
   // Bonferroni-light: bei so vielen Varianten zusaetzlich insgesamt sicher ueber null (lo > 0)
   const cr = grades.filter((g) => ok(g, 0.6)), bp = grades.filter((g) => !cr.includes(g) && ok(g, 0.5));
   out.tf[tf] = { n: A.length, days, split: new Date(split).toISOString().slice(0, 10), holdFrom: new Date(cut).toISOString().slice(0, 10),
     byType: Object.fromEntries(Object.keys(L.SETUPS).map((k) => [k, st(A.filter((t) => t.type === k), 'rPart')])),
+    byTypeGross: Object.fromEntries(Object.keys(L.SETUPS).map((k) => { const a = A.filter((t) => t.type === k); const rp = a.map((t) => t.riskPct).sort((x, y) => x - y); return [k, Object.assign(st(a, 'rPG'), { riskPctMed: rp.length ? +rp[Math.floor(rp.length / 2)].toFixed(3) : null })]; })),
     grades: grades.filter((g) => g.part.both.n >= 60).sort((a, b) => b.part.both.mean - a.part.both.mean).slice(0, 80) };
   cr.forEach((g) => (g.calm ? out.calm.creme : out.creme).push(g.id)); bp.forEach((g) => (g.calm ? out.calm.bplus : out.bplus).push(g.id));
+  // Ohne Kosten bestanden (zeigt, ob guenstigere Ausfuehrung, z. B. Futures, etwas aendern wuerde)
+  out.tf[tf].grossPass = grades.filter((g) => g.gross.both.n >= 60 && g.gross.hold.n >= 15 && g.gross.both.win >= 0.5 && g.gross.train.mean > 0 && g.gross.test.mean > 0 && g.gross.hold.mean > 0 && g.gross.both.lo > 0).sort((a, b) => b.gross.both.mean - a.gross.both.mean).slice(0, 30).map((g) => ({ id: g.id, gross: g.gross, part: g.part.both, perDay: g.perDay }));
   out.tf[tf].keep = Object.fromEntries(cr.concat(bp).map((g) => [g.id, g]));
 }
 writeFileSync(OUT, JSON.stringify(out) + '\n');
