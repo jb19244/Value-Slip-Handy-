@@ -1270,6 +1270,104 @@ function excursionAdvice(trades){
   }
   return out;
 }
+// ================= Weitere belegte Strategien (Studien, eigene Rueckrechnung) =================
+// Handelstag einer Tageskerze (Yahoo stempelt US-Werte 14:30 UTC, Devisen 23:00 UTC des Vortags)
+function dayOf(t){ return new Date(t + 3 * 3600e3).toISOString().slice(0, 10); }
+function smaAt(d1, i, n){ if (i < n - 1) return null; var s = 0; for (var q = i - n + 1; q <= i; q++) s += d1[q].c; return s / n; }
+// Allgemeiner Tages-Trade: Einstieg zum Schluss (entry 'close') oder zur naechsten Eroeffnung ('open'),
+// Ausstieg zum Schluss, sobald exitFn(k) wahr ist, sonst nach maxDays; Notstop stopAtr x ATR. Ergebnis in Prozent nach Kosten.
+function simDayTrade(sig, d1, opt){
+  opt = opt || {}; var i0 = opt.entry === 'open' ? sig.i + 1 : sig.i; if (i0 >= d1.length) return { filled: false };
+  var e = opt.entry === 'open' ? d1[i0].o : d1[i0].c, dir = sig.dir || 1, st = sig.atr ? e - dir * (opt.stopAtr || 3) * sig.atr : null, max = opt.maxDays || 10, cost = opt.costPct || 0;
+  for (var k = opt.entry === 'open' ? i0 : i0 + 1, n = 0; k < d1.length; k++, n++){
+    var x = d1[k];
+    if (st != null && (dir > 0 ? x.l <= st : x.h >= st)){ var px = dir > 0 ? Math.min(st, x.o) : Math.max(st, x.o); return { filled: true, pct: (px / e - 1) * 100 * dir - cost, how: 'Stop', days: n + 1, exitI: k }; }
+    if ((opt.exitFn && opt.exitFn(k, e)) || n + 1 >= max) return { filled: true, pct: (x.c / e - 1) * 100 * dir - cost, how: n + 1 >= max ? 'Zeit' : 'Regel', days: n + 1, exitI: k };
+  }
+  return { filled: true, pct: null, how: 'läuft' };
+}
+// IBS (Internal Bar Strength): Schluss nahe am Tagestief (IBS unter 0,2) im Aufwaertstrend -> Kauf zum Schluss, Verkauf wenn IBS ueber 0,8 (max. 5 Tage)
+function ibs(x){ return x.h > x.l ? (x.c - x.l) / (x.h - x.l) : 0.5; }
+function ibsSignals(d1, opt){
+  opt = opt || {}; var out = [], a = atrSeries(d1), lim = opt.lim || 0.2;
+  for (var i = 200; i < d1.length; i++){ var s = smaAt(d1, i, 200); if (d1[i].c > s && ibs(d1[i]) < lim && a[i]) out.push({ type: 'ibs', i: i, t: d1[i].t, day: dayOf(d1[i].t), dir: 1, atr: a[i], close: d1[i].c, ibs: ibs(d1[i]) }); }
+  return out;
+}
+function ibsExit(d1){ return function(k){ return ibs(d1[k]) > 0.8; }; }
+// Turn of the Month (Lakonishok/Smidt 1988, McConnell/Xu 2008): Kauf zum Schluss des vorletzten Handelstags, Verkauf zum Schluss des 3. Handelstags
+function tomSignals(d1){
+  var out = [], a = atrSeries(d1);
+  for (var i = 1; i < d1.length - 1; i++){
+    var m = dayOf(d1[i].t).slice(0, 7), m1 = dayOf(d1[i + 1].t).slice(0, 7), m2 = i + 2 < d1.length ? dayOf(d1[i + 2].t).slice(0, 7) : null;
+    if (m1 === m && m2 && m2 !== m && a[i]) out.push({ type: 'tom', i: i, t: d1[i].t, day: dayOf(d1[i].t), dir: 1, atr: a[i], close: d1[i].c });
+  }
+  return out;
+}
+function tomExit(d1, sig){ var m0 = dayOf(d1[sig.i].t).slice(0, 7); return function(k){ var cnt = 0; for (var q = sig.i + 1; q <= k; q++) if (dayOf(d1[q].t).slice(0, 7) !== m0) cnt++; return cnt >= 3; }; }
+// Restliche Wochentage im Monat nach dem Tag 'key' (fuer live: ist heute der vorletzte Handelstag?)
+function weekdaysLeft(key){ var d = new Date(key + 'T12:00:00Z'), m = d.getUTCMonth(), n = 0; for (d.setUTCDate(d.getUTCDate() + 1); d.getUTCMonth() === m; d.setUTCDate(d.getUTCDate() + 1)) if (d.getUTCDay() % 6) n++; return n; }
+// Overnight (Cliff/Cooper/Gulen 2008): Kauf zum Schluss, Verkauf zur naechsten Eroeffnung
+function overnightTrades(d1, opt){
+  opt = opt || {}; var out = [];
+  for (var i = 200; i < d1.length - 1; i++){ if (opt.trend && !(d1[i].c > smaAt(d1, i, 200))) continue; out.push({ type: 'overnight', i: i, t: d1[i].t, day: dayOf(d1[i].t), pct: (d1[i + 1].o / d1[i].c - 1) * 100 - (opt.costPct || 0) }); }
+  return out;
+}
+// US-Handelstage aus 1-Std-Kerzen (Yahoo: 09:30, 10:30 ... 15:30 New York)
+function usDays(h1){ var days = [], cur = null; h1.forEach(function(x){ var k = dayOf(x.t); if (!cur || cur.key !== k){ cur = { key: k, bars: [] }; days.push(cur); } cur.bars.push(x); }); return days.filter(function(d){ return d.bars.length >= 6; }); }
+// Market Intraday Momentum (Gao/Han/Li/Zhou, JFE 2018): Rendite seit Vortagesschluss bis Ende der 1. Stunde bestimmt die Richtung der letzten halben Stunde
+function imomTrades(h1, opt){
+  opt = opt || {}; var ds = usDays(h1), out = [];
+  for (var j = 1; j < ds.length; j++){
+    var prev = ds[j - 1].bars[ds[j - 1].bars.length - 1].c, b = ds[j].bars, r1 = b[0].c / prev - 1, last = b[b.length - 1], pre = b[b.length - 2];
+    var dir = r1 > 0 ? 1 : (r1 < 0 ? -1 : 0); if (!dir) continue;
+    if (opt.confirm && (pre.c - pre.o) * dir <= 0) continue;
+    if (opt.minMove && Math.abs(r1) < opt.minMove) continue;
+    out.push({ type: 'imom', t: last.t, day: ds[j].key, dir: dir, r1: r1, pct: (last.c / last.o - 1) * 100 * dir - (opt.costPct || 0) });
+  }
+  return out;
+}
+// Noise Area (Zarattini/Aziz/Barbon 2024, "Beat the Market"): Grenzen = max/min(Eroeffnung, Vortagesschluss) x (1 +/- mittlere Bewegung
+// bis zu dieser Uhrzeit ueber 14 Tage). Schluss einer Stunde ausserhalb -> Einstieg in Richtung; Ausstieg sobald zurueck hinter Grenze/VWAP, sonst zum Schluss.
+function noiseTrades(h1, opt){
+  opt = opt || {}; var ds = usDays(h1), out = [], lb = opt.lb || 14;
+  for (var j = lb + 1; j < ds.length; j++){
+    var b = ds[j].bars, o = b[0].o, pc = ds[j - 1].bars[ds[j - 1].bars.length - 1].c, pos = null, pv = 0, vv = 0;
+    for (var k = 0; k < b.length; k++){
+      var sg = 0, cnt = 0; for (var q = j - lb; q < j; q++){ var bq = ds[q].bars; if (bq[k]){ sg += Math.abs(bq[k].c / bq[0].o - 1); cnt++; } } if (!cnt) break; sg /= cnt;
+      var up = Math.max(o, pc) * (1 + sg), dn = Math.min(o, pc) * (1 - sg), x = b[k], tp = (x.h + x.l + x.c) / 3; pv += tp * (x.v || 1); vv += (x.v || 1); var vw = pv / vv;
+      if (pos){
+        var stopLv = pos.dir > 0 ? Math.max(up, vw) : Math.min(dn, vw);
+        if (k === b.length - 1 || (x.c - stopLv) * pos.dir < 0){ out.push({ type: 'noise', t: pos.t, day: ds[j].key, dir: pos.dir, pct: (x.c / pos.e - 1) * 100 * pos.dir - (opt.costPct || 0), bars: k - pos.k }); pos = null; if (!opt.multi) break; }
+      } else if (k < b.length - 1){
+        if (x.c > up && opt.dirs !== -1) pos = { dir: 1, e: x.c, t: x.t + 3600e3, k: k };
+        else if (x.c < dn && opt.dirs !== 1) pos = { dir: -1, e: x.c, t: x.t + 3600e3, k: k };
+      }
+    }
+  }
+  return out;
+}
+// Depot-Strategien (Wochen bis Monate) auf Monatsschluessen
+function monthEnds(d1){ var out = []; for (var i = 0; i < d1.length; i++){ if (i === d1.length - 1 || dayOf(d1[i + 1].t).slice(0, 7) !== dayOf(d1[i].t).slice(0, 7)) out.push({ i: i, m: dayOf(d1[i].t).slice(0, 7), c: d1[i].c, t: d1[i].t }); } return out; }
+function seriesByMonth(d1){ var o = {}; monthEnds(d1).forEach(function(x){ o[x.m] = x.c; }); return o; }
+// Monatsrenditen einer Regel: pickFn(monthIndex, months) -> Gewicht je Symbol (Summe <= 1), gehalten bis zum naechsten Monatsschluss
+function allocBacktest(series, months, pickFn, costPct){
+  var rets = [], hold = {}, picks = [];
+  for (var k = 0; k < months.length - 1; k++){
+    var w = pickFn(k) || {}, r = 0, turn = 0;
+    Object.keys(w).forEach(function(s){ var a = series[s][months[k]], b = series[s][months[k + 1]]; if (a && b) r += w[s] * (b / a - 1); });
+    Object.keys(Object.assign({}, w, hold)).forEach(function(s){ turn += Math.abs((w[s] || 0) - (hold[s] || 0)); });
+    r -= turn * (costPct || 0) / 100; hold = w; rets.push({ m: months[k + 1], r: r }); picks.push({ m: months[k], w: w });
+  }
+  return { rets: rets, picks: picks };
+}
+function perf(rets){
+  if (!rets.length) return { n: 0 };
+  var eq = 1, peak = 1, dd = 0, s = 0, s2 = 0;
+  rets.forEach(function(x){ eq *= 1 + x.r; peak = Math.max(peak, eq); dd = Math.max(dd, 1 - eq / peak); s += x.r; s2 += x.r * x.r; });
+  var n = rets.length, mu = s / n, sd = Math.sqrt(Math.max(0, s2 / n - mu * mu));
+  return { n: n, cagr: Math.pow(eq, 12 / n) - 1, maxdd: dd, sharpe: sd ? mu / sd * Math.sqrt(12) : 0, total: eq - 1, from: rets[0].m, to: rets[n - 1].m };
+}
+function retOver(series, s, months, k, back){ var a = series[s][months[k - back]], b = series[s][months[k]]; return a && b ? b / a - 1 : null; }
 // END LOGIC
 
 // ===================== App =====================
