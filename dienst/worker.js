@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'd3b6c100eb';
+const WORKER_VER = 'ec3207a95a';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -1758,6 +1758,8 @@ var INSTRUMENTS = [
 ];
 // Liquide Aktien, die der Scanner zusaetzlich durchsucht (alle bei Trade Republic mit Knock-outs handelbar)
 var SCAN_STOCKS = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'GOOGL', 'AMD', 'SAP.DE', 'RHM.DE', 'SIE.DE', 'ALV.DE'];
+// Liquide US-Aktien fuer den ORB "Stocks in Play" (Auswahl nach relativem Volumen am Morgen)
+var PLAY_STOCKS = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'TSLA', 'AMD', 'NFLX', 'AVGO', 'JPM', 'BAC', 'XOM', 'CVX', 'WMT', 'COST', 'LLY', 'UNH', 'V', 'MA', 'INTC', 'MU', 'SMCI', 'PLTR', 'COIN', 'MSTR', 'UBER', 'SHOP', 'BA', 'DIS', 'NKE', 'PYPL', 'CRM', 'ORCL', 'ADBE', 'QCOM', 'SNOW', 'ABNB', 'RIVN', 'SOFI', 'HOOD', 'ARM', 'CRWD', 'PANW', 'MRVL'];
 function scanUniverse(){ return INSTRUMENTS.concat(SCAN_STOCKS.map(stockInstrument)); }
 // Eigene Aktie: Symbol wie bei Yahoo (AAPL, NVDA, SAP.DE, RHM.DE)
 function stockInstrument(sym){
@@ -2465,12 +2467,92 @@ var SETUPS = {
   lbo: { name: 'London-Breakout', fn: scanLBO },
   donch: { name: 'Donchian-Ausbruch', fn: scanDonchian },
   rsi2: { name: 'RSI-2 (Connors)', fn: scanRSI2 },
+  bb: { name: 'Bollinger-Rücksetzer', fn: scanBB },
   gap: { name: 'Gap-Fade', fn: scanGap },
   nr7: { name: 'NR7-Ausbruch', fn: scanNR7 },
   nr7r1: { name: 'NR7-Ausbruch (Ziel 1 R)', fn: function(c, o){ return scanNR7(c, o).map(function(s){ s.type = 'nr7r1'; s.target = s.entry + s.dir * s.risk; s.rr = 1; return s; }); } }
 };
-function setupName(type){ return (SETUPS[type || 'sweep'] || {}).name || type; }
+function setupName(type){ return ({ orbplay: 'ORB Stocks in Play', rsi2d: 'RSI-2 Swing' })[type] || (SETUPS[type || 'sweep'] || {}).name || type; }
 function scanAll(c, opt){ var out = []; Object.keys(SETUPS).forEach(function(k){ var o = Object.assign({}, opt, { any: true }); out = out.concat(SETUPS[k].fn(c, o).map(function(s){ s.type = s.type || 'sweep'; return s; })); }); return out; }
+// ================= Strategien aus der Forschung =================
+// Bollinger-Ruecksetzer (Mean Reversion intraday): im Tagestrend schliesst eine 1-Std-Kerze unter dem unteren Band (20, 2),
+// Kauf zur naechsten Kerze, Ausstieg sobald ueber dem Mittelband (20er-Schnitt), Notstop 2 ATR, spaetestens Tagesende.
+function scanBB(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = [], kz = killzones(instr); if (c.length < 40) return out;
+  var P = prep(c, opt), done = {};
+  for (var i = Math.max(20, P.from); i < c.length; i++){
+    var b = P.bp[i]; if (b.wd === 0 || b.wd === 6 || !kz.some(function(z){ return b.min >= z[0] && b.min < z[1]; })) continue;
+    var m = 0, v = 0, q; for (q = i - 19; q <= i; q++) m += c[q].c; m /= 20; for (q = i - 19; q <= i; q++) v += (c[q].c - m) * (c[q].c - m); var sd = Math.sqrt(v / 20), a = P.a[i];
+    if (!a || !sd) continue;
+    var dir = c[i].c < m - 2 * sd ? 1 : (c[i].c > m + 2 * sd ? -1 : 0); if (!dir || done[b.key + dir]) continue;
+    if (P.bias(b.key) !== dir && !opt.any) continue; done[b.key + dir] = 1;
+    var s = mk(P, instr, c, i, 'bb', 'Bollinger-Band', dir, 'market', c[i].c, c[i].c - dir * 2 * a, c[i].c + dir * 4 * a, { exit: 'sma20' }); if (s) out.push(s);
+  }
+  return out;
+}
+// ORB "Stocks in Play" (Zarattini/Aziz/Barbon): 5-Min-Eroeffnungskerze; Richtung = Farbe der Kerze; Stopp-Order am Hoch (bzw. Tief),
+// Stop 10 % der 14-Tage-ATR, kein Ziel, Schluss zum Handelsende. Nur Aktien mit hohem relativem Volumen in der ersten Kerze.
+function orbPlayDay(m5, d1, day, opt){
+  opt = opt || {};
+  var bars = m5.filter(function(x){ return berlinFast(x.t).key === day; }); if (bars.length < 3) return null;
+  var f = bars[0], prev = {}, firsts = [];
+  m5.forEach(function(x){ var k = berlinFast(x.t).key; if (k < day && !prev[k]){ prev[k] = 1; firsts.push(x.v); } });
+  firsts = firsts.slice(-14); if (firsts.length < 5) return null;
+  var avg = firsts.reduce(function(a, b){ return a + b; }, 0) / firsts.length; if (!(avg > 0)) return null;
+  var dd = d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < day; }).slice(-15); if (dd.length < 15) return null;
+  var tr = 0; for (var k = 1; k < dd.length; k++) tr += Math.max(dd[k].h - dd[k].l, Math.abs(dd[k].h - dd[k - 1].c), Math.abs(dd[k].l - dd[k - 1].c)); var atrD = tr / 14;
+  var dir = f.c > f.o ? 1 : (f.c < f.o ? -1 : 0); if (!dir || f.c < 5 || atrD < 0.5) return null;
+  var e = dir > 0 ? f.h : f.l, st = e - dir * 0.1 * atrD;
+  return { type: 'orbplay', i: m5.indexOf(f), t: f.t + 5 * 60e3, day: day, dir: dir, mode: 'stop', entry: e, stop: st, target: e + dir * 0.1 * atrD * 100, risk: 0.1 * atrD, rr: 0, rvol: f.v / avg, atrD: atrD,
+    expires: bars[bars.length - 1].t + 5 * 60e3, sweep: 'Eröffnungskerze', liqTarget: false, withBias: false, session: 'New York' };
+}
+// Connors RSI-2 auf Tageskerzen: Kurs ueber dem 200-Tage-Schnitt und RSI(2) unter 10 -> Kauf zur Eroeffnung am naechsten Tag,
+// Verkauf am Schluss des Tages, an dem der Kurs ueber dem 5-Tage-Schnitt schliesst. Short spiegelbildlich (unter SMA200, RSI(2) ueber 90).
+// Notstop 3 Tages-ATR (fuer den Knock-out), hoechstens 10 Tage.
+function rsi2DailySignals(d1, opt){
+  opt = opt || {}; var out = [], rs = rsiSeries(d1, 2), a = atrSeries(d1);
+  for (var i = 200; i < d1.length - 0; i++){
+    var s200 = 0; for (var q = i - 199; q <= i; q++) s200 += d1[q].c; s200 /= 200;
+    var dir = d1[i].c > s200 && rs[i] < 10 ? 1 : (d1[i].c < s200 && rs[i] > 90 ? -1 : 0);
+    if (!dir || !a[i]) continue;
+    out.push({ type: 'rsi2d', i: i, t: d1[i].t, day: berlinFast(d1[i].t + 12 * 3600e3).key, dir: dir, atr: a[i], close: d1[i].c, rsi: rs[i] });
+  }
+  return out;
+}
+function simDaily(sig, d1, cost){
+  var i = sig.i + 1; if (i >= d1.length) return { filled: false, how: 'offen' };
+  var e = d1[i].o, st = e - sig.dir * 3 * sig.atr, risk = 3 * sig.atr, r = null, how = '', mae = 0, mfe = 0;
+  for (var k = i; k < d1.length && k <= i + 9; k++){
+    var x = d1[k], adv = ((sig.dir > 0 ? x.l : x.h) - e) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - e) * sig.dir / risk;
+    mae = Math.min(mae, adv); mfe = Math.max(mfe, fav);
+    if (adv <= -1){ r = -1; how = 'Stop'; break; }
+    var s5 = 0; for (var q = k - 4; q <= k; q++) s5 += d1[q].c; s5 /= 5;
+    if ((x.c - s5) * sig.dir > 0){ r = (x.c - e) * sig.dir / risk; how = '5-Tage-Schnitt'; break; }
+    if (k === i + 9){ r = (x.c - e) * sig.dir / risk; how = '10 Tage'; break; }
+  }
+  if (r == null) return { filled: true, how: 'läuft', r: null, entry: e };
+  return { filled: true, r: r - (cost || 0) * 2 / risk, how: how, entry: e, mae: Math.max(mae, -1), mfe: mfe, days: k - i + 1 };
+}
+// News-Fehlausbruch: Schockkerze (15 Min, Spanne ab 3 ATR) in der Handelszeit; kehrt der Kurs in den naechsten 2 Kerzen
+// hinter den Eroeffnungskurs der Schockkerze zurueck (Fehlausbruch), Handel in Gegenrichtung zur Spitze; Stop hinter dem Extrem, Ziel 2R.
+// Momentum-Variante: schliesst die naechste Kerze ueber dem Extrem der Spitze, Handel in Richtung der Spitze; Stop Mitte der Schockkerze, Ziel 2R.
+function scanNews(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = []; if (c.length < 40) return out;
+  var P = prep(c, Object.assign({}, opt, { bar: 15 * 60e3 })), done = {};
+  for (var i = Math.max(20, P.from); i < c.length - 1; i++){
+    var b = P.bp[i]; if (b.wd === 0 || b.wd === 6 || b.min < 480 || b.min > 20 * 60) continue;
+    var a = P.a[i - 1]; if (!a) continue;
+    var rg = c[i].h - c[i].l; if (rg < 3 * a) continue;
+    if (opt.events && !opt.events.some(function(t){ return t >= c[i].t - 60e3 && t < c[i].t + 15 * 60e3; })) continue;
+    if (done[b.key]) continue; done[b.key] = 1;
+    var sDir = c[i].c >= c[i].o ? 1 : -1, ext = sDir > 0 ? c[i].h : c[i].l;
+    for (var j = i + 1; j <= Math.min(i + 2, c.length - 1); j++){
+      if ((c[j].c - c[i].o) * sDir < 0){ var sF = mk(P, instr, c, j, 'newsfade', 'Fehlausbruch nach News', -sDir, 'market', c[j].c, ext + sDir * 0.1 * a, 0, {}); if (sF){ sF.target = sF.entry - sDir * sF.risk * 2; sF.rr = 2; out.push(sF); } break; }
+      if (j === i + 1 && (c[j].c - ext) * sDir > 0){ var mid = (c[i].h + c[i].l) / 2, sM = mk(P, instr, c, j, 'newsmom', 'Momentum nach News', sDir, 'market', c[j].c, mid, 0, {}); if (sM){ sM.target = sM.entry + sDir * sM.risk * 2; sM.rr = 2; out.push(sM); } break; }
+    }
+  }
+  return out;
+}
 // ================= Smart Money, Elliott und Fibonacci automatisch =================
 // Zickzack mit ATR-Schwelle: bestaetigte Wendepunkte + offener letzter Schenkel
 function zigzag(c, mult){
@@ -2618,6 +2700,9 @@ function simulate(sig, c, cost){
     var x = c[i], bpx = berlinFast(x.t);
     var adv = ((sig.dir > 0 ? x.l : x.h) - entry) * sig.dir / risk, fav = ((sig.dir > 0 ? x.h : x.l) - entry) * sig.dir / risk;
     if (i === fill && mode === 'limit') fav = Math.max(0, ((x.c - entry) * sig.dir) / risk);
+    // Stopp-Einstieg in der Fuellkerze: ueblicher Kursweg O-T-H-S bei gruener, O-H-T-S bei roter Kerze.
+    // Laeuft die Kerze in Einstiegsrichtung (gruen bei Long), lag das Tief vor dem Einstieg und zaehlt nicht gegen den Trade.
+    if (i === fill && mode === 'stop' && (x.c - x.o) * sig.dir > 0) adv = (Math.min(entry * sig.dir, x.c * sig.dir) * sig.dir - entry) * sig.dir / risk;
     if (adv < r.mae) r.mae = adv;
     // Stop auf Einstand, sobald 1R erreicht war (gilt ab der Kerze danach)
     if (beOn && adv <= 0){ r.r = 0; r.how = 'Einstand'; r.exitT = x.t; break; }
@@ -2625,9 +2710,10 @@ function simulate(sig, c, cost){
     if (fav > r.mfe) r.mfe = fav;
     if (sig.be && fav >= 1 && !beOn && rr > 1) beOn = true;
     if ((i > fill || mode !== 'limit') && fav >= rr){ r.r = rr; r.how = 'Ziel'; r.exitT = x.t; break; }
-    if (sig.exit === 'sma5' && i >= 4){
-      var m5 = (c[i].c + c[i - 1].c + c[i - 2].c + c[i - 3].c + c[i - 4].c) / 5;
-      if ((x.c - m5) * sig.dir > 0){ r.r = (x.c - entry) * sig.dir / risk; r.how = '5er-Schnitt'; r.exitT = x.t + 3600e3; break; }
+    var mN = sig.exit === 'sma5' ? 5 : (sig.exit === 'sma20' ? 20 : 0);
+    if (mN && i >= mN - 1 && i > fill){
+      var sm = 0; for (var q2 = 0; q2 < mN; q2++) sm += c[i - q2].c; sm /= mN;
+      if ((x.c - sm) * sig.dir > 0){ r.r = (x.c - entry) * sig.dir / risk; r.how = mN + 'er-Schnitt'; r.exitT = x.t; break; }
     }
     if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = ((i > fill ? x.o : x.c) - entry) * sig.dir / risk; r.how = 'Tagesende'; r.exitT = x.t; break; }
   }
@@ -2700,7 +2786,7 @@ function excursionAdvice(trades){
   }
   return out;
 }
-  return { confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
+  return { rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
 const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
@@ -2826,11 +2912,13 @@ async function tradeRoute(request, headers, env, nowMs) {
       watch: (Array.isArray(b.watch) ? b.watch : []).filter((k) => typeof k === 'string' && TL.instrumentByKey(k)).slice(0, 8),
       scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix'].includes(b.quality) ? b.quality : 'triple',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
-      tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [] };
+      tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
+      swing: b.swing !== false, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
+      orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null };
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
-    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), log: (t.log || []).slice(-10), now: nowMs }, headers);
+    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), swingPos: next.swingPos, log: (t.log || []).slice(-10), now: nowMs }, headers);
   }
   if (path === '/trade/test') {
     if (!validSub(t.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in Trade Check ein.', headers);
@@ -2846,6 +2934,8 @@ function berlinClock(ms) {
   const p = {}; f.formatToParts(new Date(ms)).forEach((x) => { p[x.type] = x.value; });
   return { min: (+p.hour) * 60 + (+p.minute), wd: p.weekday };
 }
+// Handelstag einer Tageskerze: Yahoo stempelt US-Werte zur Eroeffnung (14:30 UTC), Devisen um 23:00 UTC des Vortags
+const dKey = (t) => new Date(t + 3 * 3600e3).toISOString().slice(0, 10);
 const hhmm = (ms) => new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' }).format(new Date(ms));
 // Belegte Qualitaetsstufe aus der grossen Rueckrechnung (GitHub legt sie woechentlich ab)
 async function qualityCfg(env, nowMs) {
@@ -2859,6 +2949,20 @@ async function qualityCfg(env, nowMs) {
       const stats = {}; (j.grades || []).forEach((g) => { const a = g.all || {}, h = g.hold || {}, n = (a.n || 0) + (h.n || 0); stats[g.id] = n ? { n, mean: ((a.mean || 0) * (a.n || 0) + (h.mean || 0) * (h.n || 0)) / n, win: ((a.win || 0) * (a.n || 0) + (h.win || 0) * (h.n || 0)) / n } : null; });
       const dossier = {}; Object.keys(j.dossier || {}).forEach((k) => { dossier[k] = { mgmt: j.dossier[k].mgmt }; });
       return { chosen: j.passed ? j.chosen : null, aIds: j.passed ? (j.aIds || []) : [], w60: j.w60 || [], triple: j.triple || [], extra: j.extra || [], stats, top: j.top || null, good: j.good || null, dossier };
+    });
+    return c.data || {};
+  } catch (e) { return {}; }
+}
+// Ergebnisse der Forschungs-Strategien (GitHub legt sie woechentlich ab)
+async function researchCfg(env, nowMs) {
+  try {
+    const c = await cachedKV(env, 'mkt:qx', 12 * 3600e3, nowMs, async () => {
+      if (!env.PAGES_URL) return {};
+      const r = await fetch(env.PAGES_URL + 'dienst/backtest-extra.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA });
+      if (!r.ok) return {};
+      const j = await r.json(), stats = {};
+      Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win }; });
+      return { swing: j.swing || [], passed: j.passed || [], stats };
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -2999,8 +3103,70 @@ async function runTrade(env, nowMs) {
       if (nx) await send('t:' + tr.id + ':n' + nx.t, { body: 'In ' + Math.max(1, Math.round((nx.t - nowMs) / 60e3)) + ' Min: ' + nx.country + ' ' + nx.title + '. Dein ' + tr.name + '-Trade ist offen: Teilgewinn nehmen oder Stop nachziehen?', tag: 'trade-' + tr.id });
     }
   }
+  // 8) ORB "Stocks in Play" (Barbon/Aziz/Zarattini 2024): erste 5-Min-Kerze nach der US-Eroeffnung, nur Aktien mit hohem
+  // relativem Volumen. Nachts: Durchschnittsvolumen der Eroeffnungskerze (14 Tage), Tages-ATR und Tagestrend vorbereiten.
+  let orbBusy = false;
+  if (t.orbOn !== false) {
+    const qx = await researchCfg(env, nowMs), ps = (qx.passed || []).filter((x) => /^orbplay:/.test(x));
+    t.orbPrep = t.orbPrep || {};
+    if (ps.length && (clk.min >= 23 * 60 || clk.min < 2 * 60)) {
+      const due = TL.PLAY_STOCKS.filter((s) => nowMs - ((t.orbPrep[s] || {}).at || 0) > 18 * 3600e3).slice(0, 6);
+      for (const s of due) {
+        const m5 = await candlesOf(s, '5m', '1mo'), d1 = await candlesOf(s, '1d', '1y');
+        const o = { at: nowMs }; t.orbPrep[s] = o; dirty = true; rep.orbPrep = (rep.orbPrep || 0) + 1;
+        if (!m5 || !d1 || d1.length < 60) continue;
+        const seen = {}, firsts = [];
+        for (const x of m5) { const k = TL.berlinFast(x.t).key; if (!seen[k]) { seen[k] = 1; firsts.push(x.v); } }
+        const f14 = firsts.slice(-14); if (f14.length < 5) continue;
+        const dd = d1.slice(-15); let tr = 0;
+        for (let k = 1; k < dd.length; k++) tr += Math.max(dd[k].h - dd[k].l, Math.abs(dd[k].h - dd[k - 1].c), Math.abs(dd[k].l - dd[k - 1].c));
+        Object.assign(o, { v: f14.reduce((a, b) => a + b, 0) / f14.length, atr: tr / 14, b: TL.biasAt(d1, '9999-12-31'), last: TL.berlinFast(d1[d1.length - 1].t + 12 * 3600e3).key });
+      }
+    }
+    // Eroeffnung (US 15:30, in Umstellungswochen 14:30): in Paketen zu 15 Aktien die erste Kerze holen, dann die Top 3 melden
+    if (ps.length && weekday && clk.min >= 14 * 60 + 35 && clk.min < 16 * 60 + 15) {
+      if (!t.orb || t.orb.day !== dayKey) { t.orb = { day: dayKey, got: {}, done: false }; dirty = true; }
+      const ready = TL.PLAY_STOCKS.filter((s) => { const o = t.orbPrep[s]; return o && o.v > 0 && nowMs - o.at < 4 * 86400e3; });
+      if (!t.orb.done) {
+        orbBusy = true;
+        const todo = ready.filter((s) => !(s in t.orb.got)).slice(0, 15);
+        let firstT = t.orb.firstT || 0;
+        for (const s of todo) {
+          const c = await candlesOf(s, '5m', '1d'); if (!c || !c.length) continue;
+          const bars = c.filter((x) => TL.berlinFast(x.t).key === dayKey);
+          if (!bars.length || bars[0].t + 5 * 60e3 > nowMs || bars.length < 2) continue; // Eroeffnungskerze noch nicht fertig
+          const f = bars[0], o = t.orbPrep[s], dir = f.c > f.o ? 1 : (f.c < f.o ? -1 : 0);
+          firstT = firstT || f.t; dirty = true;
+          if (!dir || f.c < 5 || o.atr < 0.5) { t.orb.got[s] = null; continue; }
+          const entry = dir > 0 ? f.h : f.l, risk = 0.1 * o.atr, last = bars[bars.length - 1].c;
+          t.orb.got[s] = { dir, entry, stop: entry - dir * risk, risk, rvol: Math.round(f.v / o.v * 10) / 10, b: o.b, t: f.t + 5 * 60e3, past: (last - entry) * dir > 0, px: last };
+        }
+        t.orb.firstT = firstT;
+        const all = ready.every((s) => s in t.orb.got), late = firstT && nowMs > firstT + 30 * 60e3;
+        if (all || late) {
+          t.orb.done = true; dirty = true;
+          const trendOnly = !ps.includes('orbplay:top3_rvol2');
+          const top = Object.keys(t.orb.got).filter((s) => t.orb.got[s]).map((s) => Object.assign({ s }, t.orb.got[s])).sort((a, b) => b.rvol - a.rvol).slice(0, 3)
+            .filter((g) => g.rvol >= 2 && (!trendOnly || g.b === g.dir));
+          t.orb.top = top.map((g) => g.s);
+          const st0 = qx.stats && qx.stats[trendOnly ? 'orbplay:top3_trend' : 'orbplay:top3_rvol2'];
+          t.signals = Array.isArray(t.signals) ? t.signals : []; t.track = Array.isArray(t.track) ? t.track : [];
+          const exp = (firstT || nowMs) + (6 * 60 + 20) * 60e3; // ca. 15 Min vor US-Schluss
+          for (const g of top) {
+            const ins = TL.stockInstrument(g.s), id = ins.k + ':orbplay:' + dayKey, target = g.entry + g.dir * g.risk * 100, ko = g.stop - g.dir * g.risk * 0.5;
+            if (t.signals.some((x) => x.id === id)) continue;
+            t.signals.unshift({ id, type: 'orbplay', mode: 'stop', k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.entry + g.dir * g.risk * 10, ko, rr: 0, sweep: 'Eröffnungskerze', withBias: g.b === g.dir, bias: g.b, expires: exp, cls: 'ORB', rvol: g.rvol, top: false });
+            t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: 'stop', entry: g.entry, stop: g.stop, target, ko, t: g.t, expires: exp, cls: 'ORB', grade: trendOnly ? 'orbplay:top3_trend' : 'orbplay:top3_rvol2', be: false, state: 'wartet', at: nowMs });
+            const f2 = (x) => (+x).toFixed(2).replace('.', ',');
+            await send('o:' + id, { title: 'ORB Stocks in Play · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + String(g.rvol).replace('.', ',') + '-faches Volumen in der ersten 5-Min-Kerze' + (g.b === g.dir ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') + f2(g.entry) + ' · Stop ' + f2(g.stop) + ' (0,1 Tages-ATR). Kein festes Ziel: laufen lassen, ca. 21:45 schließen. ' + (g.past ? 'Achtung: Kurs ist schon drüber (' + f2(g.px) + '). Nicht hinterherkaufen, nur wenn er zurückkommt. ' : '') + 'Strategie mit wenigen großen Gewinnern: die meisten Trades enden mit −1R.' + (st0 && st0.n ? ' Rückrechnung: ' + st0.n + ' Trades, ' + Math.round(st0.win * 100) + ' % Gewinner, Ø ' + (st0.mean >= 0 ? '+' : '') + st0.mean.toFixed(2).replace('.', ',') + ' R.' : ''), tag: 'orb-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+          }
+          t.signals = t.signals.slice(0, 30); t.track = t.track.slice(-20);
+        }
+      }
+    }
+  }
   // 5) Setup-Scanner in den Hauptzeiten: Sweep -> CHoCH -> FVG auf 1-Std-Kerzen (in der Rueckrechnung ueber 2 Jahre deutlich besser als 15 Min)
-  if (t.scan !== false && weekday) {
+  if (t.scan !== false && weekday && !orbBusy) {
     t.scanAt = t.scanAt || {}; t.bias = t.bias || {}; t.signals = Array.isArray(t.signals) ? t.signals : [];
     const keys = [...new Set(TL.scanUniverse().map((i) => i.k).concat((t.watch || []).filter((k) => /^S:/.test(k))))];
     const due = keys.map((k) => TL.instrumentByKey(k)).filter((ins) => ins && TL.killzones(ins).some((z) => clk.min >= z[0] && clk.min < z[1] + 75) && nowMs - (t.scanAt[ins.k] || 0) >= 14 * 60e3)
@@ -3064,6 +3230,47 @@ async function runTrade(env, nowMs) {
       }
     }
     t.signals = t.signals.filter((x) => nowMs - x.t < 3 * 86400e3);
+  }
+  // 7) Swing: Connors RSI-2 auf Tageskerzen (nur wenn die Rueckrechnung ihn als Swing-Stufe fuehrt)
+  if (t.swing !== false && weekday) {
+    const qx = await researchCfg(env, nowMs), sw = qx.swing || [];
+    t.swingPos = Array.isArray(t.swingPos) ? t.swingPos : []; t.swingAt = t.swingAt || {};
+    if (sw.length) {
+      const idxOnly = !sw.includes('rsi2d:long');
+      const uni = ['SPX', 'NDX', 'DJI', 'DAX', 'XAUUSD'].map((k) => TL.instrumentByKey(k)).concat(idxOnly ? [] : TL.PLAY_STOCKS.slice(0, 30).map(TL.stockInstrument)).filter(Boolean);
+      // a) Neue Signale nach dem US-Handelsschluss (22:10-23:30): Tageskerze ist fertig
+      if (clk.min >= 22 * 60 + 10 && clk.min < 23 * 60 + 30) {
+        const due = uni.filter((ins) => t.swingAt[ins.k] !== dayKey).slice(0, 6);
+        for (const ins of due) {
+          t.swingAt[ins.k] = dayKey; dirty = true; rep.swing = (rep.swing || 0) + 1;
+          const d1 = await candlesOf(ins.y, '1d', '1y'); if (!d1 || d1.length < 210) continue;
+          const last = d1[d1.length - 1]; if (dKey(last.t) !== dayKey) continue;
+          const g = TL.rsi2DailySignals(d1).filter((x) => x.i === d1.length - 1 && x.dir > 0)[0];
+          if (!g || t.swingPos.some((p) => p.k === ins.k && (p.state === 'wartet' || p.state === 'offen'))) continue;
+          const id = ins.k + ':rsi2d:' + dayKey, stopRef = g.close - 3 * g.atr, s0 = qx.stats && qx.stats[sw[0]];
+          t.swingPos.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: 1, sigDay: dayKey, ref: g.close, atr: g.atr, stop: stopRef, state: 'wartet', at: nowMs });
+          await send('w:' + id, { title: 'Swing-Signal · ' + ins.name, body: ins.name + ' Long (Connors RSI-2): Kurs über dem 200-Tage-Schnitt, RSI(2) ' + g.rsi.toFixed(0) + '. Morgen zur Eröffnung kaufen (zuletzt ' + fmtp(g.close, ins.k) + '). Stop 3 ATR: ca. ' + fmtp(stopRef, ins.k) + '. Verkauft wird, sobald der Kurs über dem 5-Tage-Schnitt schließt, spätestens nach 10 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' R.' : ''), tag: 'swing-' + ins.k, url: './' });
+        }
+      }
+      // b) Offene Swing-Positionen kurz vor Handelsschluss pruefen (DAX 17:15, sonst 21:40)
+      for (const p of t.swingPos.filter((x) => x.state === 'wartet' || x.state === 'offen')) {
+        const ins = TL.instrumentByKey(p.k); if (!ins) continue;
+        const pre = ins.k === 'DAX' || /\.DE$/.test(ins.y) ? 17 * 60 + 15 : 21 * 60 + 40;
+        const d1 = await candlesOf(ins.y, '1d', '3mo'); if (!d1 || d1.length < 10) continue;
+        const after = d1.filter((x) => dKey(x.t) > p.sigDay);
+        if (!after.length) continue;
+        if (p.state === 'wartet') { p.state = 'offen'; p.entry = after[0].o; p.stop = p.entry - 3 * p.atr; p.days = 0; dirty = true; await send('w:' + p.id + ':fill', { body: p.name + ' Swing gekauft zur Eröffnung ca. ' + fmtp(p.entry, p.k) + '. Stop ' + fmtp(p.stop, p.k) + '. Ich melde mich zum Verkauf.', tag: 'swing-' + p.k }); }
+        const risk = 3 * p.atr, lo = Math.min(...after.map((x) => x.l)), lastC = d1[d1.length - 1].c;
+        const fin = (state, r, txt) => { p.state = state; p.r = Math.round(r * 100) / 100; p.exitAt = nowMs; dirty = true; t.trackLog = (t.trackLog || []).concat([{ id: p.id, k: p.k, name: p.name, dir: 1, cls: 'Swing', t: p.at, state, r: p.r }]).slice(-200); return send('w:' + p.id + ':done', { body: txt, tag: 'swing-' + p.k }); };
+        if (lo <= p.stop) { await fin('stop', -1, '❌ SL erreicht: ' + p.name + ' Swing bei ' + fmtp(p.stop, p.k) + ' (−1R).'); continue; }
+        if (clk.min >= pre && clk.min < pre + 15) {
+          const s5 = d1.slice(-5).reduce((a, x) => a + x.c, 0) / 5, r = (lastC - p.entry) / risk, nDays = after.length;
+          if (lastC > s5) { await fin(r >= 0 ? 'ziel' : 'tagesende', r, '✅ Jetzt verkaufen: ' + p.name + ' schließt über dem 5-Tage-Schnitt. Stand ' + fmtp(lastC, p.k) + ' (' + (r >= 0 ? '+' : '') + r.toFixed(2).replace('.', ',') + 'R).'); continue; }
+          if (nDays >= 10) { await fin('tagesende', r, 'Swing ' + p.name + ': 10 Tage erreicht, jetzt verkaufen. Stand ' + (r >= 0 ? '+' : '') + r.toFixed(2).replace('.', ',') + 'R.'); continue; }
+        }
+      }
+      t.swingPos = t.swingPos.filter((x) => x.state === 'wartet' || x.state === 'offen' || nowMs - (x.exitAt || x.at) < 3 * 86400e3);
+    }
   }
   // 6) Gemeldete Signale verfolgen: ausgeloest, 1R, Ziel, Stop, Einstand, Tagesende, verfallen
   const live = (t.track || []).filter((x) => x.state === 'wartet' || x.state === 'offen');
