@@ -101,7 +101,10 @@ const BREIT = [
 // Devisen (Tageskerzen von Yahoo mit unpassendem Schlusskurs) und Erdgas/Oel (Spruenge beim Kontraktwechsel) bewusst nicht dabei
 const COST = { idx: 0.07, cmd: 0.10, etf: 0.08, fx: 0.03 }, CUT = Date.parse('2014-01-01');
 const sma5Exit = (d1) => (k) => { if (k < 4) return false; let t = 0; for (let q = k - 4; q <= k; q++) t += d1[q].c; return d1[k].c > t / 5; };
-const bm = [], oosR = [], oosI = [];
+const bm = [], oosR = [], oosI = [], ibsUS = [], ibsEU = [];
+// Regionen fest nach Boersenplatz (nicht nach Ergebnis): US = US-Indizes und US-ETFs, Europa = europaeische Indizes
+const US_SYMS = ['^GSPC', '^NDX', '^DJI', '^RUT', 'XLK', 'XLF', 'XLE', 'XLV', 'XLY', 'XLP', 'XLI', 'XLB', 'XLU', 'IWM', 'DIA', 'SMH', 'XBI', 'KRE', 'ITB'];
+const EU_SYMS = ['^GDAXI', '^MDAXI', '^STOXX50E', '^FTSE', '^FCHI', '^SSMI', '^AEX', '^IBEX', 'FTSEMIB.MI'];
 let oosDays = 0;
 for (const [s, nm, cls] of BREIT) {
   const d1 = await chart(s, '1d', 'max'); await wait(300); if (d1.length < 1500) continue;
@@ -113,9 +116,13 @@ for (const [s, nm, cls] of BREIT) {
   bm.push(m); oosDays = Math.max(oosDays, d1.filter((x) => x.t >= CUT).length);
   if (m.rsi2.sel) oos(rs).forEach((x) => oosR.push(x));
   if (m.ibs.sel) oos(is).forEach((x) => oosI.push(x));
+  if (US_SYMS.includes(s)) is.forEach((x) => ibsUS.push(x)); if (EU_SYMS.includes(s)) is.forEach((x) => ibsEU.push(x));
 }
 out.breadth = { markets: bm, cut: '2014-01-01', oosDays };
 out.sets['breit:rsi2'] = evalSet('RSI-2 auf ' + bm.filter((m) => m.rsi2.sel).length + ' ausgewählten Märkten (nur ab 2014 gezählt)', oosR, oosDays);
+out.sets['breit:ibs_us'] = evalSet('IBS auf allen US-Indizes und US-Sektoren (19 Märkte, seit 2000)', ibsUS, nDays);
+out.sets['breit:ibs_eu'] = evalSet('IBS auf europäischen Indizes (9 Märkte, seit 2000)', ibsEU, nDays);
+{ const x = out.sets['breit:ibs_us']; x.swingOk = x.all.n >= 100 && x.all.win >= 0.6 && x.all.lo > 0 && [x.train, x.test, x.hold].every((y) => y.n && y.mean > 0); x.syms = US_SYMS; }
 out.sets['breit:ibs'] = evalSet('IBS auf ' + bm.filter((m) => m.ibs.sel).length + ' ausgewählten Märkten (nur ab 2014 gezählt)', oosI, oosDays);
 // Swing-Freigabe wie bei RSI-2 (Tag): mind. 100 Trades, 60 % Gewinner, sicher ueber null, in allen drei Zeitraeumen im Plus
 { const x = out.sets['breit:rsi2']; x.swingOk = x.all.n >= 100 && x.all.win >= 0.6 && x.all.lo > 0 && [x.train, x.test, x.hold].every((y) => y.n && y.mean > 0); }
