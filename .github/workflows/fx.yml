@@ -1,0 +1,33 @@
+# Daytrading-Rueckrechnung Devisen, Gold, Silber, Oel, DAX und US-Index-CFDs auf 5/15 Min (Dukascopy, frei, ohne Schluessel)
+name: Devisen-Daytrading-Rueckrechnung
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * 6'
+  push:
+    branches: [main]
+    paths: ['dienst/backtest7.mjs', '.github/workflows/fx.yml']
+permissions:
+  contents: write
+concurrency: fx
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Datenpaket
+        run: npm i --no-save --no-audit --no-fund dukascopy-node
+      - name: Rechnen
+        env:
+          NODE_OPTIONS: --max-old-space-size=12000
+        run: node dienst/backtest7.mjs
+      - name: Speichern
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dienst/backtest-fx.json
+          git diff --cached --quiet || (git commit -m "Devisen-Daytrading-Rueckrechnung aktualisiert [skip ci]" && git pull --rebase -X theirs -q && git push)
