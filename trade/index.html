@@ -2184,6 +2184,14 @@ function hardTest(b, picked){
     (hs.length ? '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th></tr>' + hs.map(function(x){ return '<tr><td>' + esc(x[0]) + '</td><td>' + x[1].n + '</td><td>' + fmt(x[1].win * 100, 0) + ' %</td><td class="' + (x[1].mean >= 0 ? 'good' : 'bad') + '">' + sgn(x[1].mean, 2) + '</td></tr>'; }).join('') + '</table>' : '<p class="hint">Im Härtetest gab es noch keine Trades dieser Stufen.</p>') +
     (pz.length ? '<p class="hint"><b>Zufalls-Check:</b> Es wurden ' + (b.tests || '') + ' Kombinationen getestet. Bereinigt um diese Zahl ist ' + pz.map(function(g){ return esc(g.name.split(': ').pop()) + (g.pAdj < 0.05 ? ' sehr wahrscheinlich kein Zufall' : (g.pAdj < 0.5 ? ' eher kein Zufall, aber nicht sicher' : ' noch nicht vom Zufall zu unterscheiden')); }).join('; ') + '.</p>' : '');
 }
+function viewFxSets(){
+  var b = V.bf, t = b && b.tf && (b.tf.m15 || b.tf.m5); if (!t || !t.byType) return '';
+  var nm = { sweep: 'Liquiditäts-Sweep (SMC)', pullback: 'Pullback in den Trend', orb: 'Eröffnungs-Ausbruch', lbo: 'London-Ausbruch', donch: 'Donchian-Ausbruch', rsi2: 'RSI-2', bb: 'Bollinger', gap: 'Lücke', nr7: 'NR7-Ausbruch', nr7r1: 'NR7 mit 1R-Ziel' };
+  var best = (t.grades || [])[0];
+  return '<div class="label" style="margin-top:14px">Daytrading auf 15 Min: 8 Devisenpaare, Gold, Silber, Öl, DAX, S&P 500, Nasdaq, Dow (seit 2019, 1-Min-genau), Ø in R nach Kosten</div><table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø</th></tr>' +
+    Object.keys(t.byType).filter(function(k){ return t.byType[k].n; }).map(function(k){ var x = t.byType[k]; return '<tr><td>' + esc(nm[k] || k) + '</td><td>' + x.n + '</td><td>' + fmt(x.win * 100, 0) + ' %</td><td class="' + (x.mean >= 0 ? 'good' : 'bad') + '">' + sgn(x.mean, 2) + ' R</td></tr>'; }).join('') + '</table>' +
+    (best ? '<p class="hint">Beste Stufe: ' + esc(best.name) + ' mit ' + fmt(best.part.both.win * 100, 0) + ' % Gewinnern und ' + sgn(best.part.both.mean, 2) + ' R. Das ist derselbe NR7-Effekt, den der Stunden-Scanner schon meldet.</p>' : '');
+}
 function viewScalpSets(){
   var b = V.bs; if (!b || !b.sets) return '';
   var ks = Object.keys(b.sets).filter(function(k){ return !/:all$/.test(k) || k === 'orbplay:all'; }).filter(function(k){ return k !== 'orbplay:stk' && k !== 'noise:etf'; });
@@ -2229,7 +2237,7 @@ function viewResearch(){
   return '<section class="card"><div class="row"><h2>Strategien aus der Forschung</h2><span class="muted small">' + esc(dm(Date.parse(b.at))) + '</span></div>' +
     '<p class="hint" style="margin-top:4px">ORB „Stocks in Play“ (5 Min, ' + (b.orbDays || 0) + ' Handelstage, 45 US-Aktien), Connors RSI-2 auf Tageskerzen (bis 10 Jahre), News-Fehlausbruch und -Momentum (15 Min). Mit Kosten, Prüfung in drei Zeiträumen. ✅ = in allen dreien mindestens +0,05 R.</p>' +
     '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
-    viewMoreSets() + viewScalpSets() +
+    viewMoreSets() + viewScalpSets() + viewFxSets() +
     (b.orbGross && b.orbGross.n ? '<p class="hint">ORB Top 3 ohne Kosten: Ø ' + sgn(b.orbGross.mean, 2) + ' R. Der Unterschied zeigt, wie viel Spread und Gebühren bei so engen Stops kosten.</p>' : '') + '</section>';
 }
 function viewBt(){
@@ -2473,6 +2481,7 @@ render = function(){ _render(); bind($('#page')); };
 
 // ---------- Start
 try { var qs = new URLSearchParams(location.search).get('sig'); if (qs) V.wantSig = qs; } catch (e) {}
+fetch('../dienst/backtest-fx.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.tf){ V.bf = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-scalp.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bs = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-more.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bm = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-extra.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bx = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
