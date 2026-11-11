@@ -185,7 +185,7 @@ table.st td:first-child{overflow-wrap:anywhere;padding-right:8px}
 .list-plain li:last-child{border-bottom:0}
 .chart{width:100%;height:240px;display:block;margin-top:10px;touch-action:manipulation;border-radius:10px;background:var(--bg)}
 .chart text{font-family:var(--font-b);font-size:9px;fill:var(--muted)}
-.zones{display:grid;grid-template-columns:1fr;gap:4px;margin-top:8px}.zone{display:flex;align-items:center;gap:4px;font-size:12px;font-variant-numeric:tabular-nums}.zone .zn{font-weight:700;min-width:64px}.zone button{flex:1}.zone button{background:var(--surface2);border:0;color:var(--fg);border-radius:6px;padding:5px 6px;font:inherit;font-size:12px}.zone button[aria-pressed=true]{background:var(--link);color:#000}.zone button.zo{flex:0 0 auto;color:var(--link)}.ck{display:grid;grid-template-columns:10px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line,#222)}.ck:first-of-type{border-top:0}.ck-dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}.ck-dot.on{background:var(--good);box-shadow:0 0 0 3px rgba(47,208,122,.18)}.ck-n,.ck-v{display:flex;flex-direction:column;gap:2px}.ck-v{text-align:right;align-items:flex-end;font-variant-numeric:tabular-nums}
+.zones{display:grid;grid-template-columns:1fr;gap:4px;margin-top:8px}.zone{display:flex;align-items:center;gap:4px;font-size:12px;font-variant-numeric:tabular-nums}.zone .zn{font-weight:700;min-width:64px}.zone button{flex:1}.zone button{background:var(--surface2);border:0;color:var(--fg);border-radius:6px;padding:5px 6px;font:inherit;font-size:12px}.zone button[aria-pressed=true]{background:var(--link);color:#000}.zone button.zo{flex:0 0 auto;color:var(--link)}.fd{padding:12px 0;border-top:1px solid var(--line,#222)}.fd:first-of-type{border-top:0}.fd-kpi,.fd-plan{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:8px 0}.fd-kpi span,.fd-plan span{display:flex;flex-direction:column;background:var(--surface2,#1a1b1e);border-radius:10px;padding:6px 8px;font-size:12px;color:var(--muted)}.fd-kpi b,.fd-plan b{font-size:15px;color:var(--text,#fff);font-variant-numeric:tabular-nums}.fd-kpi small{font-size:11px}.fd-ck{list-style:none;padding:0;margin:8px 0 0;font-size:13px}.fd-ck li{display:flex;gap:6px;padding:2px 0}.fd-ck li span{color:var(--text,#ddd)}.ck{display:grid;grid-template-columns:10px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line,#222)}.ck:first-of-type{border-top:0}.ck-dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}.ck-dot.on{background:var(--good);box-shadow:0 0 0 3px rgba(47,208,122,.18)}.ck-n,.ck-v{display:flex;flex-direction:column;gap:2px}.ck-v{text-align:right;align-items:flex-end;font-variant-numeric:tabular-nums}
 .pickbar{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}
 .pickbar b{font-family:var(--font-d);font-size:18px;margin-right:auto}
 .sig{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:11px 0;border-bottom:1px solid var(--line);width:100%;text-align:left}
@@ -1535,7 +1535,7 @@ function render(){
   var p = $('#page');
   if (S.tab === 'heute') p.innerHTML = viewHeute();
   else if (S.tab === 'check') p.innerHTML = viewCheck();
-  else if (S.tab === 'markt') p.innerHTML = viewMarkt();
+  else if (S.tab === 'markt') p.innerHTML = viewFinder() + viewMarkt();
   else if (S.tab === 'buch') p.innerHTML = viewBuch();
   else p.innerHTML = viewMehr();
   after();
@@ -1931,7 +1931,7 @@ function viewSignals(limit){
   }).join('') + more + gradeLine() + '</section>';
 }
 function useSignal(id){
-  var g = allSignals().filter(function(x){ return x.id === id; })[0]; if (!g) return;
+  var g = allSignals().concat(FINDER.list || []).filter(function(x){ return x.id === id; })[0]; if (!g) return;
   var i = instr(g.k);
   S.form.k = g.k; S.form.dir = g.dir; S.form.entry = fmtIn(g.entry, i.dec); S.form.stop = fmtIn(g.stop, i.dec); S.form.target = fmtIn(g.target, i.dec);
   S.form.ko = fmtIn(g.ko, i.dec); S.form.ratio = S.ko[g.k] || ''; S.form.setups = g.type === 'pullback' ? ['BOS', 'Fair Value Gap'] : (g.type && g.type !== 'sweep' ? [setupName(g.type)] : ['Liquidity Sweep', 'CHoCH', 'Fair Value Gap']);
@@ -2101,7 +2101,91 @@ function viewLive(){
 }
 
 // ===================== Markt =====================
+// ================= Trade Finder (nur Daytrading) =================
+// Scannt alle Devisen, Rohstoffe und Indizes auf 1-Std-Kerzen, nimmt nur heutige Setups, ordnet jedem die beste passende Stufe der
+// Rueckrechnung zu (nur Stufen, die in 1. Haelfte, 2. Haelfte UND Haertetest im Plus waren) und prueft es live in 8 Punkten.
+var FINDER = { at: 0, busy: false, list: null, err: '' };
+function finderUniverse(){ return INSTRUMENTS.filter(function(i){ return ['fx', 'cmd', 'idx'].indexOf(i.type) >= 0; }).map(function(i){ return i.k; }); }
+function finderLoad(force){
+  if (FINDER.busy || (!force && FINDER.list && Date.now() - FINDER.at < 5 * 60e3)) return;
+  FINDER.busy = true; FINDER.err = ''; finderPaint();
+  var ks = finderUniverse(), data = [], ix = 0;
+  var one = function(k){ var i = instr(k); return Promise.all([candles(i.y, '60m', '1mo'), candles(i.y, '1d', '1y')]).then(function(r){ data.push({ k: k, h1: r[0], d1: r[1] }); }).catch(function(){}); };
+  var run = function(){ if (ix >= ks.length) return Promise.resolve(); var k = ks[ix++]; return one(k).then(run); };
+  var ctx = Promise.all([candles('^VIX', '1d', '6mo').catch(function(){ return []; }), candles('DX-Y.NYB', '1d', '1y').catch(function(){ return []; }), V.cal ? null : getCal()]);
+  Promise.all([ctx, run(), run(), run(), run()]).then(function(r){ FINDER.vix = r[0][0]; FINDER.dxy = r[0][1]; FINDER.list = finderBuild(data); FINDER.at = Date.now(); })
+    .catch(function(e){ FINDER.err = e.message || 'Fehler beim Laden'; }).then(function(){ FINDER.busy = false; finderPaint(); });
+}
+function finderPaint(){ var el = $('#finder'); if (el){ el.outerHTML = viewFinder(); var n = $('#finder'); if (n) bind(n); } }
+function openRiskCount(){ return (V.track || []).filter(function(x){ return x.state === 'wartet' || x.state === 'offen'; }).length + (V.ibsPos || []).filter(function(p){ return p.state === 'offen'; }).length + (V.swingPos || []).filter(function(p){ return p.state === 'offen' || p.state === 'wartet'; }).length; }
+function finderBuild(data){
+  var now = Date.now(), today = berlinParts(now).key, bp = berlinParts(now), b1 = V.bt1 || {}, out = [];
+  var ok3 = function(g){ var P = g.part; return P && P.both && P.both.n >= 40 && P.train && P.train.mean > 0 && P.test && P.test.mean > 0 && P.hold && P.hold.n >= 10 && P.hold.mean > 0; };
+  var grades = (b1.grades || []).filter(ok3);
+  data.forEach(function(d){
+    var i = instr(d.k); if (!i || !d.h1 || d.h1.length < 60 || !d.d1 || d.d1.length < 60) return;
+    var last = d.h1[d.h1.length - 1].c, a = atrSeries(d.h1), atr = a[a.length - 1];
+    scanAll(d.h1, { instr: i, d1: d.d1, bar: 3600e3 }).filter(function(g){ return g.day === today; }).forEach(function(g){
+      Object.assign(g, marketContext(g.day, i, g.dir, FINDER.vix, FINDER.dxy));
+      try { if (['sweep', 'pullback', 'nr7r1', 'topdown'].indexOf(g.type) >= 0) g.conf = confluence(g, d.h1.slice(0, g.i + 1)); } catch (e) {}
+      // 1) Beleg: beste passende Stufe, die in allen drei Zeitraeumen im Plus war
+      var best = grades.filter(function(x){ return x.type === g.type && gradeMatch(x.id, g, g.ampel); }).sort(function(x, y){ return y.part.both.mean - x.part.both.mean; })[0];
+      if (!best) return;
+      // 2) Stand jetzt: schon ausgeloest, Ziel/Stop erreicht, abgelaufen?
+      var sim = simulate(g, d.h1, 0), risk = Math.abs(g.entry - g.stop);
+      if (sim.filled && sim.r != null) return;                          // schon erledigt
+      if (now > g.expires && !sim.filled) return;                        // Order abgelaufen
+      var dist = (last - g.entry) * g.dir / risk;                        // > 0: Kurs schon ueber dem Einstieg
+      if (sim.filled && dist > 0.3) return;                              // zu weit gelaufen, nicht hinterherkaufen
+      var news = (V.cal || []).filter(function(e){ var t = Date.parse(e.date); return e.impact === 'High' && i.ccy.indexOf(e.country) >= 0 && t > now - 15 * 60e3 && t < now + 60 * 60e3; })[0];
+      var kz = killzones(i).some(function(z){ return bp.min >= z[0] && bp.min < z[1]; }) && bp.wd !== 'Sat' && bp.wd !== 'Sun';
+      var heat = +S.cfg.heat || 5, rp = +S.cfg.risk || 1, open = openRiskCount(), room = heat - open * rp;
+      var conf = g.conf ? g.conf.score : null, P = best.part, win = P.both.win;
+      var checks = [
+        { ok: true, t: 'Stufe „' + best.name + '“ in 1. Hälfte, 2. Hälfte und Härtetest im Plus (' + P.both.n + ' Trades seit ' + (b1.from || '2 Jahren') + ')' },
+        { ok: win >= 0.6, t: fmt(win * 100, 0) + ' % Gewinner mit Teilgewinn bei TP1' + (win >= 0.6 ? '' : ' (unter 60 %)') },
+        { ok: !!g.withBias, t: g.withBias ? 'Mit dem Tagestrend' : 'Gegen den Tagestrend' },
+        { ok: conf == null || conf >= 3, t: conf == null ? 'SMC/Fib/Elliott: für dieses Setup nicht nötig' : 'SMC/Fib/Elliott: ' + conf + ' von 6 Bestätigungen' },
+        { ok: !news, t: news ? 'Wichtige News ' + hm(Date.parse(news.date)) + ': ' + news.title : 'Keine wichtigen News in der nächsten Stunde' },
+        { ok: kz, t: kz ? 'Jetzt Hauptzeit, genug Bewegung' : 'Außerhalb der Hauptzeit' },
+        { ok: sim.filled ? dist <= 0.3 : true, t: sim.filled ? 'Schon ausgelöst, Kurs ' + (dist >= 0 ? fmt(dist, 1) + 'R über' : fmt(-dist, 1) + 'R unter') + ' dem Einstieg: Einstieg noch möglich' : 'Kurs ' + fmt(Math.abs(dist), 1) + 'R vom Einstieg entfernt, Order wartet' },
+        { ok: room >= rp * 0.25, t: room >= rp ? 'Risikobudget frei (' + open + (open === 1 ? ' Trade' : ' Trades') + ' offen)' : (room >= rp * 0.25 ? 'Risikobudget fast voll: kleiner einsteigen' : 'Risikobudget voll (' + open + (open === 1 ? ' Trade' : ' Trades') + ' offen)') }
+      ];
+      var nOk = checks.filter(function(c){ return c.ok; }).length, must = checks[1].ok && checks[4].ok && checks[6].ok && checks[7].ok;
+      var cat = must && checks[2].ok ? 'jetzt' : (win >= 0.5 && checks[4].ok && checks[6].ok ? 'b' : 'watch');
+      if (cat === 'b' && bp.min < 16 * 60) cat = 'watch';
+      var eur = (+S.cfg.account || 0) * Math.max(0, Math.min(rp, room)) / 100;
+      out.push({ id: g.k + ':' + g.type + ':' + g.t, k: g.k, name: i.name, type: g.type, mode: g.mode || 'limit', t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.target, tp1: g.entry + g.dir * risk,
+        ko: g.stop - g.dir * risk * 0.5, rr: Math.round(g.rr * 10) / 10, sweep: g.sweep, withBias: g.withBias, liqTarget: g.liqTarget, expires: g.expires, conf: g.conf, vix: g.vix, vixLo: g.vixLo, usdOk: g.usdOk,
+        grade: best.id, gradeName: best.name, P: P, checks: checks, nOk: nOk, cat: cat, filled: !!sim.filled, dist: dist, eur: eur, last: last, dec: i.dec, atr: atr,
+        score: P.both.mean * (0.5 + 0.5 * nOk / checks.length) * (cat === 'jetzt' ? 2 : cat === 'b' ? 1.3 : 1) });
+    });
+  });
+  return out.sort(function(x, y){ return y.score - x.score; });
+}
+function viewFinder(){
+  var L = FINDER.list, h = '<section class="card" id="finder"><div class="row"><h2>Trade Finder</h2><button class="link" data-act="finder">' + (FINDER.busy ? 'Suche läuft …' : 'Neu suchen') + '</button></div>' +
+    '<p class="hint" style="margin-top:2px">Nur Daytrading: alle ' + finderUniverse().length + ' Devisen, Rohstoffe und Indizes auf Stundenkerzen. Gezeigt wird nur, was zu einer Stufe gehört, die in drei getrennten Zeiträumen nach Kosten im Plus war, und was jetzt noch handelbar ist.' + (FINDER.at ? ' Stand ' + hm(FINDER.at) + '.' : '') + '</p>';
+  if (FINDER.err) return h + '<p class="hint bad">' + esc(FINDER.err) + '</p></section>';
+  if (!L) return h + '<p class="hint">' + (FINDER.busy ? 'Ich scanne die Märkte …' : 'Tippe auf „Neu suchen“.') + '</p></section>';
+  var grp = { jetzt: [], b: [], watch: [] }; L.forEach(function(x){ grp[x.cat].push(x); });
+  var card = function(x){
+    var i = instr(x.k) || { dec: x.dec }, d = i.dec, P = x.P, pill = x.cat === 'jetzt' ? '<span class="pill good">Jetzt handelbar</span>' : (x.cat === 'b' ? '<span class="pill warn">B+ · ab 16 Uhr</span>' : '<span class="pill">Beobachten</span>');
+    return '<div class="fd"><div class="row"><span><b>' + esc(x.name) + '</b> <span class="' + (x.dir > 0 ? 'good' : 'bad') + '">' + (x.dir > 0 ? 'Long' : 'Short') + '</span> · ' + esc(setupName(x.type)) + '</span>' + pill + '</div>' +
+      '<div class="fd-kpi"><span><b>' + fmt(P.both.win * 100, 0) + ' %</b><small>Gewinner</small></span><span><b>' + sgn(P.both.mean, 2) + ' R</b><small>Ø je Trade</small></span><span><b>' + sgn(P.hold.mean, 2) + ' R</b><small>Härtetest</small></span><span><b>' + P.both.n + '</b><small>Trades</small></span></div>' +
+      '<div class="fd-plan"><span>' + (x.mode === 'stop' ? 'Stopp-Kauf' : x.mode === 'market' ? 'Einstieg jetzt' : 'Limit') + '<b>' + fmt(x.entry, d) + '</b></span><span>Stop<b>' + fmt(x.stop, d) + '</b></span><span>TP1 · ½<b>' + fmt(x.tp1, d) + '</b></span><span>TP2<b>' + fmt(x.target, d) + '</b></span></div>' +
+      '<div class="muted small">CRV ' + fmt(x.rr, 1) + (x.eur ? ' · Risiko ' + eur(x.eur) : '') + ' · K.-o.-Schwelle nicht enger als ' + fmt(x.ko, d) + ' · gültig bis ' + hm(x.expires) + ' · aktuell ' + fmt(x.last, d) + '</div>' +
+      '<ul class="fd-ck">' + x.checks.map(function(c){ return '<li class="' + (c.ok ? 'good' : 'bad') + '">' + (c.ok ? '✓' : '✗') + ' <span>' + esc(c.t) + '</span></li>'; }).join('') + '</ul>' +
+      '<p class="hint" style="margin:6px 0 0">Plan: Order wie oben. Bei TP1 die Hälfte verkaufen und den Stop auf den Einstieg ziehen, Rest bis TP2. Spätestens 21:45 alles schließen.</p>' +
+      '<button class="btn" style="margin-top:8px" data-act="finderuse" data-id="' + esc(x.id) + '">In die Order übernehmen</button></div>';
+  };
+  h += '<div class="label" style="margin-top:6px">Jetzt handelbar (' + grp.jetzt.length + ')</div>' + (grp.jetzt.length ? grp.jetzt.slice(0, 5).map(card).join('') : '<p class="hint">Gerade kein Setup, das alle Pflichtpunkte erfüllt (60 %+, keine News, noch handelbar, Risikobudget frei, mit Tagestrend). Lieber kein Trade als ein schlechter.</p>');
+  if (grp.b.length) h += '<div class="label" style="margin-top:12px">B+ ab 16 Uhr (' + grp.b.length + ')</div>' + grp.b.slice(0, 3).map(card).join('');
+  if (grp.watch.length) h += '<details style="margin-top:12px"><summary class="label">Beobachten (' + grp.watch.length + '): positive Stufe, aber ein Pflichtpunkt fehlt</summary>' + grp.watch.slice(0, 5).map(card).join('') + '</details>';
+  return h + '</section>';
+}
 function viewMarkt(){
+  setTimeout(function(){ finderLoad(false); }, 0);
   var now = Date.now(), b = berlinParts(now), m = b.min;
   var pct = function(min){ return (min / 1440 * 100).toFixed(2) + '%'; };
   var seg = function(cls, a, z, txt){ return '<span class="' + cls + '" style="left:' + pct(a) + ';width:' + pct(z - a) + '">' + txt + '</span>'; };
@@ -2482,6 +2566,8 @@ function onAct(e){
   if (a === 'kosug') return setField('ko', el.dataset.p);
   if (a === 'tf'){ S.tf = el.dataset.tf; V.pick = null; save(); return rerender(); }
   if (a === 'usesig') return useSignal(el.dataset.id);
+  if (a === 'finder') return finderLoad(true);
+  if (a === 'finderuse') return useSignal(el.dataset.id);
   if (a === 'sigall'){ V.sigAll = !V.sigAll; return rerender(); }
   if (a === 'quality'){ S.cfg.push.quality = el.dataset.q; save(); syncTrade(); return rerender(); }
   if (a === 'tevclose'){ var tt = S.trades.filter(function(x){ return x.id === el.dataset.id; })[0], ev = V.tev[el.dataset.id]; if (tt && ev) return closeTrade(tt.id, ev.done === 'ziel' ? tt.target : tt.stop); return; }
