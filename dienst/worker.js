@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'ba70bc5eac';
+const WORKER_VER = 'daed5d9aed';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2460,9 +2460,56 @@ function scanNR7raw(c, opt){
   }
   return out;
 }
+// Top-down-Analyse: Wochen-/Tagestrend (Schluss ueber 20-Tage-Schnitt, dieser ueber 50-Tage-Schnitt), letztes Tagesbein in Trendrichtung,
+// Ruecksetzer in die OTE-Zone (61,8-78,6 %) dieses Beins, dann Bruch der kleinen Struktur (CHoCH) in Trendrichtung -> Einstieg,
+// Stop hinter dem Extrem des Ruecksetzers, Ziel das Hoch/Tief des Tagesbeins (Liquiditaet), mind. 2R.
+function scanTopDown(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = [], kz = killzones(instr), d1 = opt.d1; if (c.length < 60 || !d1 || d1.length < 60) return out;
+  var P = prep(c, opt), sw = swings(c, 2), legCache = {}, done = {}, touch = {};
+  var leg = function(day){
+    if (legCache[day] !== undefined) return legCache[day];
+    var arr = [], q; for (q = 0; q < d1.length; q++){ if (berlinFast(d1[q].t + 12 * 3600e3).key >= day) break; arr.push(d1[q]); }
+    var r = null, n = arr.length;
+    if (n >= 60){
+      var s20 = 0, s50 = 0; for (q = n - 20; q < n; q++) s20 += arr[q].c; for (q = n - 50; q < n; q++) s50 += arr[q].c; s20 /= 20; s50 /= 50;
+      var last = arr[n - 1].c, dir = last > s20 && s20 > s50 ? 1 : (last < s20 && s20 < s50 ? -1 : 0);
+      if (dir){
+        var hiI = n - 20, loI = n - 20; for (q = n - 20; q < n; q++){ if (arr[q].h > arr[hiI].h) hiI = q; if (arr[q].l < arr[loI].l) loI = q; }
+        var hi = arr[hiI].h, lo = arr[loI].l, rng = hi - lo;
+        if (rng > 0 && (dir > 0 ? loI < hiI : hiI < loI)) r = { dir: dir, hi: hi, lo: lo, z1: dir > 0 ? hi - rng * 0.786 : lo + rng * 0.618, z2: dir > 0 ? hi - rng * 0.618 : lo + rng * 0.786 };
+      }
+    }
+    return (legCache[day] = r);
+  };
+  var hiIdx = 0, loIdx = 0, refH = null, refL = null;
+  for (var i = 2; i < c.length; i++){
+    while (hiIdx < sw.hi.length && sw.hi[hiIdx].i + 2 <= i){ refH = sw.hi[hiIdx]; hiIdx++; }
+    while (loIdx < sw.lo.length && sw.lo[loIdx].i + 2 <= i){ refL = sw.lo[loIdx]; loIdx++; }
+    var b = P.bp[i]; if (b.wd === 0 || b.wd === 6) continue;
+    var L = leg(b.key); if (!L) continue;
+    var x = c[i], T = touch[b.key], zw = L.z2 - L.z1;
+    var inZone = L.dir > 0 ? (x.l <= L.z2 && x.l >= L.z1 - zw) : (x.h >= L.z1 && x.h <= L.z2 + zw);
+    if (inZone && !T) T = touch[b.key] = { i: i, ext: L.dir > 0 ? x.l : x.h };
+    if (!T) continue;
+    T.ext = L.dir > 0 ? Math.min(T.ext, x.l) : Math.max(T.ext, x.h);
+    if (i <= T.i || done[b.key] || i < P.from) continue;
+    if (!kz.some(function(z){ return b.min >= z[0] && b.min < z[1]; })) continue;
+    var ref = L.dir > 0 ? refH : refL; if (!ref || ref.i < T.i - 12) continue;
+    if (!((x.c - ref.p) * L.dir > 0)) continue;
+    var a = P.a[i]; if (!a) continue;
+    var entry = x.c, stop = T.ext - L.dir * a * 0.1, risk = (entry - stop) * L.dir;
+    if (!(risk > a * 0.2 && risk < a * 5)) continue;
+    var tg = L.dir > 0 ? L.hi : L.lo, rr = (tg - entry) * L.dir / risk; if (rr < 2) continue;
+    done[b.key] = 1;
+    var s = mk(P, instr, c, i, 'topdown', 'Top-down: Tagestrend, OTE-Zone, Strukturbruch', L.dir, 'market', entry, stop, rr <= 6 ? tg : entry + L.dir * risk * 6, { liqTarget: rr <= 6, level: ref.p, ote: [L.z1, L.z2] });
+    if (s) out.push(s);
+  }
+  return out;
+}
 var SETUPS = {
   sweep: { name: 'Liquidity Sweep', fn: function(c, o){ return scanSetups(c, o); } },
   pullback: { name: 'Trend-Pullback', fn: function(c, o){ return scanPullbacks(c, o); } },
+  topdown: { name: 'Top-down (Tag → OTE → Struktur)', fn: scanTopDown },
   orb: { name: 'Opening Range Breakout', fn: scanORB },
   lbo: { name: 'London-Breakout', fn: scanLBO },
   donch: { name: 'Donchian-Ausbruch', fn: scanDonchian },
