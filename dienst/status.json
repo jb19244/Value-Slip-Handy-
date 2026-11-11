@@ -1,7 +1,7 @@
 {
-  "ok": true,
-  "at": "2026-11-11T05:08:05.942Z",
-  "step": "fertig",
-  "msg": "Push-Dienst läuft.",
-  "url": "https://value-slip.75rk4v4jg4.workers.dev"
+  "ok": false,
+  "at": "2026-11-11T05:12:02.980Z",
+  "step": "worker",
+  "msg": "Hochladen fehlgeschlagen (400 10021: Uncaught SyntaxError: Unexpected token ':'\n  at worker.js:3464:870\n).",
+  "url": ""
 }
