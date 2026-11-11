@@ -1,0 +1,454 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Trade Check
+//
+// TRADE CHECK · SMC KONFLUENZ PRO
+// Zeigt genau die Setups, die in der Trade-Check-App die Rückrechnung bestanden haben, plus den kompletten SMC-Kontext.
+//
+//  ★ CRÈME (gemeldet, belegt):
+//    1) Liquidity Sweep mit Tagestrend bei VIX ≥ 20  – 1 Std, 31 Märkte, 2 Jahre: 60 % Gewinner (mit Teilverkauf bei +1R), Ø +0,24 R, Härtetest 77 %
+//    2) NR7-Ausbruch mit Tagestrend bei VIX ≥ 20, Ziel 1R – 60 % Gewinner, Ø +0,09 R
+//  ◆ KONTEXT: Sweep mit Tagestrend bei VIX < 20 (50 %, ±0, kein Vorteil) · Top-down Tages-OTE (B+: 52 %, +0,09 R)
+//  ● SWING (Tageschart-Signale): RSI-2 (30 Märkte, 68 % Gewinner, +0,16 %/Trade) · IBS (18 US-Märkte, 64 %, +0,17 %/Trade)
+//
+// Regeln wie in der App: Killzones London 08:00–11:00 und New York 14:30–17:00 (Berlin). Sweep von Asien-Range, Vortag,
+// London-Range (in New York) oder Vorwoche; danach Strukturbruch über das Extrem der 5 Kerzen davor und Einstieg in der
+// Mitte der größten Fair Value Gap (≥ 0,3 ATR); Stop 0,1 ATR hinter dem Sweep-Extrem; Ziel nächste Liquidität mit CRV 2–6,
+// sonst 2,5R. TP1 = +1R (Hälfte verkaufen, Stop auf Einstand). Tagestrend = Vortagesschluss über/unter EMA 50 (Tag).
+// Nichts in diesem Indikator schaut in die Zukunft: Tages-, 4H- und VIX-Werte stammen aus abgeschlossenen Kerzen.
+// Empfohlener Chart: 1 Stunde (dort wurden die Stufen getestet). Kein Anlagerat; jede Statistik stammt aus der Rückrechnung.
+
+//@version=5
+indicator("Trade Check · SMC Konfluenz Pro", "TC SMC Pro", overlay = true, max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ───────────────────────── Eingaben ─────────────────────────
+G1 = "★ Signale (Crème)"
+showSweep   = input.bool(true,  "Liquidity Sweep + FVG", group = G1)
+showNR7     = input.bool(true,  "NR7-Ausbruch", group = G1)
+onlyCreme   = input.bool(false, "Nur Crème zeigen (Tagestrend + VIX ≥ 20)", group = G1, tooltip = "Aus: zeigt zusätzlich Sweeps mit Tagestrend bei ruhigem Markt (blau, ohne belegten Vorteil) und – falls unten eingeschaltet – gegen den Trend.")
+showCounter = input.bool(false, "Sweeps gegen den Tagestrend zeigen (grau, ohne Beleg)", group = G1)
+vixSym      = input.symbol("CBOE:VIX", "VIX-Symbol", group = G1)
+vixLevel    = input.float(20, "VIX-Grenze für Crème", step = 0.5, group = G1)
+
+G2 = "Risiko"
+acct   = input.float(5000, "Kontogröße (€)", minval = 0, group = G2)
+riskP  = input.float(1.0, "Risiko je Trade (%)", minval = 0.05, step = 0.05, group = G2)
+
+G3 = "SMC-Kontext"
+showLevels = input.bool(true,  "Asien-Range, Vortag, Vorwoche", group = G3)
+showKZ     = input.bool(true,  "Killzones einfärben", group = G3)
+showFVG    = input.bool(true,  "Offene Fair Value Gaps (≥ 0,3 ATR)", group = G3)
+showOB     = input.bool(true,  "Order Blocks am Strukturbruch", group = G3)
+showBOS    = input.bool(true,  "BOS / CHoCH", group = G3)
+pivLen     = input.int(3, "Swing-Länge für BOS/CHoCH", minval = 2, maxval = 10, group = G3)
+showOTE    = input.bool(true,  "Top-down: Tages-OTE-Zone (61,8–78,6 %)", group = G3)
+
+G4 = "Swing-Signale (Tag)"
+showSwing = input.bool(true, "RSI-2 und IBS im Dashboard", group = G4)
+
+G5 = "Dashboard"
+showDash = input.bool(true, "Dashboard anzeigen", group = G5)
+dashPos  = input.string("Oben rechts", "Position", options = ["Oben rechts", "Unten rechts", "Oben links", "Unten links"], group = G5)
+
+// ───────────────────────── Farben ─────────────────────────
+cGood  = color.new(#2FD07A, 0)
+cBad   = color.new(#FF5A5F, 0)
+cGold  = color.new(#F5C451, 0)
+cLink  = color.new(#7FB2FF, 0)
+cMuted = color.new(#8A8F98, 0)
+cText  = color.new(#E8EAED, 0)
+
+// ───────────────────────── Zeit (Berlin) ─────────────────────────
+TZ = "Europe/Berlin"
+bMin  = hour(time, TZ) * 60 + minute(time, TZ)
+bDow  = dayofweek(time, TZ)                  // 1 = So … 7 = Sa
+bDay  = year(time, TZ) * 10000 + month(time, TZ) * 100 + dayofmonth(time, TZ)
+newDay = bDay != bDay[1]
+weekday = bDow != dayofweek.saturday and bDow != dayofweek.sunday
+inKZ  = weekday and ((bMin >= 480 and bMin < 660) or (bMin >= 870 and bMin < 1020))
+atr   = ta.atr(14)
+barSec = timeframe.in_seconds()
+win   = math.max(4, math.round(3 * 3600 / math.max(barSec, 60)))
+
+// ───────────────────────── Höhere Zeitebenen (ohne Neuzeichnen) ─────────────────────────
+dBias = request.security(syminfo.tickerid, "D", (close > ta.ema(close, 50) ? 1 : -1)[1], lookahead = barmerge.lookahead_on)
+vix   = request.security(vixSym, "D", close[1], lookahead = barmerge.lookahead_on)
+vixHi = not na(vix) and vix >= vixLevel
+[pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+f_struct() =>
+    ph = ta.pivothigh(high, 2, 2)
+    pl = ta.pivotlow(low, 2, 2)
+    var float lh = na
+    var float ll = na
+    var int d = 0
+    if not na(ph)
+        lh := ph
+    if not na(pl)
+        ll := pl
+    if not na(lh) and close > lh
+        d := 1
+    else if not na(ll) and close < ll
+        d := -1
+    d
+h4dir = request.security(syminfo.tickerid, "240", f_struct()[1], lookahead = barmerge.lookahead_on)
+
+// Tagesbein für Top-down (letzte 20 abgeschlossene Tage)
+[dHi20, dLo20, dHiB, dLoB, dC1, dS20, dS50] = request.security(syminfo.tickerid, "D", [ta.highest(high, 20)[1], ta.lowest(low, 20)[1], ta.highestbars(high, 20)[1], ta.lowestbars(low, 20)[1], close[1], ta.sma(close, 20)[1], ta.sma(close, 50)[1]], lookahead = barmerge.lookahead_on)
+// Swing: RSI-2 (abgeschlossener Tag) und IBS (laufender Tag, gilt kurz vor Schluss)
+[rsi2D, cD1, sma200D1, sma5D1] = request.security(syminfo.tickerid, "D", [ta.rsi(close, 2)[1], close[1], ta.sma(close, 200)[1], ta.sma(close, 5)[1]], lookahead = barmerge.lookahead_on)
+[hD, lD, cD, sma200D] = request.security(syminfo.tickerid, "D", [high, low, close, ta.sma(close, 200)], lookahead = barmerge.lookahead_off)
+
+// ───────────────────────── Tages-, Asien-, London-Level ─────────────────────────
+var float curHi = na
+var float curLo = na
+var float asHi = na
+var float asLo = na
+var float lnHi = na
+var float lnLo = na
+var float pdh = na
+var float pdl = na
+var bool prevWeekday = false
+var array<float> ranges = array.new<float>()
+var bool swAL = false
+var bool swAH = false
+var bool swPL = false
+var bool swPH = false
+var bool swLL = false
+var bool swLH = false
+var bool swWL = false
+var bool swWH = false
+var bool nr7Today = false
+float dayHiBefore = curHi
+float dayLoBefore = curLo
+if newDay
+    if prevWeekday and not na(curHi)
+        pdh := curHi
+        pdl := curLo
+        array.push(ranges, curHi - curLo)
+        if array.size(ranges) > 7
+            array.shift(ranges)
+    prevWeekday := weekday
+    curHi := high
+    curLo := low
+    asHi := na
+    asLo := na
+    lnHi := na
+    lnLo := na
+    swAL := false
+    swAH := false
+    swPL := false
+    swPH := false
+    swLL := false
+    swLH := false
+    swWL := false
+    swWH := false
+    dayHiBefore := na
+    dayLoBefore := na
+    // NR7: gestriger Bereich kleiner als jeder der 6 Tage davor und mindestens 1 ATR
+    nr7Today := false
+    if weekday and array.size(ranges) == 7
+        r = array.get(ranges, 6)
+        nr = true
+        for q = 0 to 5
+            if array.get(ranges, q) <= r
+                nr := false
+        nr7Today := nr and r >= atr
+else
+    curHi := math.max(curHi, high)
+    curLo := math.min(curLo, low)
+if bMin < 480
+    asHi := na(asHi) ? high : math.max(asHi, high)
+    asLo := na(asLo) ? low : math.min(asLo, low)
+if bMin >= 480 and bMin < 720
+    lnHi := na(lnHi) ? high : math.max(lnHi, high)
+    lnLo := na(lnLo) ? low : math.min(lnLo, low)
+
+// ───────────────────────── Liquidity Sweep → Strukturbruch → FVG ─────────────────────────
+type Pend
+    int   i
+    int   dir
+    float level
+    float ext
+    float ref
+    int   broke
+    float dHi
+    float dLo
+    string name
+    int   day
+
+type Sig
+    int   bar
+    int   dir
+    float entry
+    float stop
+    float tp1
+    float tp2
+    float rr
+    string tier
+    string name
+    bool  liq
+
+var array<Pend> pend = array.new<Pend>()
+var Sig last = na
+
+f_tierColor(t) => t == "CRÈME" ? cGold : t == "TREND" ? cLink : cMuted
+
+f_draw(Sig s, float gLo, float gHi) =>
+    col = f_tierColor(s.tier)
+    x2 = bar_index + win
+    box.new(bar_index - 2, gHi, x2, gLo, border_color = color.new(col, 60), bgcolor = color.new(col, 88))
+    line.new(bar_index, s.entry, x2, s.entry, color = col, width = 2)
+    line.new(bar_index, s.stop, x2, s.stop, color = cBad, style = line.style_dashed)
+    line.new(bar_index, s.tp1, x2, s.tp1, color = color.new(cGood, 30), style = line.style_dotted)
+    line.new(bar_index, s.tp2, x2, s.tp2, color = cGood, width = 2)
+    risk = math.abs(s.entry - s.stop)
+    eur = acct * riskP / 100
+    qty = risk > 0 ? eur / risk : na
+    stat = s.tier == "CRÈME" ? "Beleg: 60 % Gewinner, Ø +0,24 R, Härtetest 77 % (1 Std, 2 Jahre)" : s.tier == "TREND" ? "Kontext: mit Tagestrend bei VIX < 20 – 50 % Gewinner, Ø ±0 R, kein Vorteil belegt" : "Ohne Beleg: gegen den Tagestrend"
+    txt = s.tier + (s.dir > 0 ? " LONG" : " SHORT") + "\n" + s.name + "\nLimit " + str.tostring(s.entry, format.mintick) + " · SL " + str.tostring(s.stop, format.mintick) + "\nTP1 ½ " + str.tostring(s.tp1, format.mintick) + " · TP2 " + str.tostring(s.tp2, format.mintick) + " (CRV " + str.tostring(s.rr, "#.0") + ")"
+    label.new(bar_index, s.dir > 0 ? s.stop : s.stop, txt, style = s.dir > 0 ? label.style_label_up : label.style_label_down, color = color.new(col, 15), textcolor = color.black, size = size.small,
+         tooltip = stat + "\nRisiko " + str.tostring(eur, "#") + " € = " + str.tostring(qty, "#.##") + " Einheiten Basiswert\nPlan: TP1 Hälfte verkaufen + Stop auf Einstand, Rest bis TP2, spätestens 21:45 schließen.")
+
+newSig = false
+refHi5 = ta.highest(high, 5)[1]
+refLo5 = ta.lowest(low, 5)[1]
+f_addLevel(bool cond, int d, float lv, string nm) =>
+    if cond and not na(lv)
+        pierced = d > 0 ? low < lv : high > lv
+        back = d > 0 ? close > lv : close < lv
+        prevP = d > 0 ? (close[1] < lv and low[1] < lv) : (close[1] > lv and high[1] > lv)
+        if (pierced and back) or (prevP and back)
+            ext = d > 0 ? math.min(low, low[1]) : math.max(high, high[1])
+            ref = d > 0 ? refHi5 : refLo5
+            array.push(pend, Pend.new(bar_index, d, lv, ext, ref, 0, dayHiBefore, dayLoBefore, nm, bDay))
+            true
+        else
+            false
+    else
+        false
+
+if true
+    // offene Kandidaten weiterführen
+    if array.size(pend) > 0
+        for k = array.size(pend) - 1 to 0
+            s = array.get(pend, k)
+            drop = bar_index - s.i > win or s.day != bDay
+            if not drop and s.broke == 0
+                if (s.dir > 0 and low < s.ext - atr * 0.05) or (s.dir < 0 and high > s.ext + atr * 0.05)
+                    s.ext := s.dir > 0 ? math.min(s.ext, low) : math.max(s.ext, high)
+                    if math.abs(close - s.level) > atr * 0.8 and (close - s.level) * s.dir < 0
+                        drop := true
+            if not drop and s.broke == 0 and (close - s.ref) * s.dir > 0
+                s.broke := bar_index
+            if not drop and s.broke > 0
+                // größte FVG der Verdrängung seit dem Sweep
+                float gLo = na
+                float gHi = na
+                minG = atr * 0.3
+                j0 = math.max(s.i + 2, s.broke - 3)
+                for j = j0 to bar_index
+                    o = bar_index - j
+                    float cl = na
+                    float ch = na
+                    if s.dir > 0 and low[o] > high[o + 2]
+                        cl := high[o + 2]
+                        ch := low[o]
+                    if s.dir < 0 and high[o] < low[o + 2]
+                        cl := high[o]
+                        ch := low[o + 2]
+                    if not na(cl) and ch - cl >= minG and (na(gLo) or ch - cl > gHi - gLo)
+                        gLo := cl
+                        gHi := ch
+                if not na(gLo)
+                    entry = (gLo + gHi) / 2
+                    stop = s.ext - s.dir * atr * 0.1
+                    risk = (entry - stop) * s.dir
+                    if risk > atr * 0.3 and risk < atr * 4
+                        // Ziel: nächste Liquidität mit CRV 2–6 (Asien-Extrem, Vortag, Tagesextrem vor dem Sweep)
+                        float best = na
+                        float bestRR = na
+                        c1 = s.dir > 0 ? asHi : asLo
+                        c2 = s.dir > 0 ? pdh : pdl
+                        c3 = s.dir > 0 ? s.dHi : s.dLo
+                        for cv in array.from(c1, c2, c3)
+                            if not na(cv)
+                                rrv = (cv - entry) * s.dir / risk
+                                if rrv >= 2 and rrv <= 6 and (na(bestRR) or rrv < bestRR)
+                                    best := cv
+                                    bestRR := rrv
+                        tp2 = na(best) ? entry + s.dir * risk * 2.5 : best
+                        rr = (tp2 - entry) * s.dir / risk
+                        withB = dBias == s.dir
+                        tier = withB and vixHi ? "CRÈME" : withB ? "TREND" : "GEGEN TREND"
+                        ok = showSweep and (tier == "CRÈME" or (not onlyCreme and (tier == "TREND" or showCounter)))
+                        if ok
+                            sg = Sig.new(bar_index, s.dir, entry, stop, entry + s.dir * risk, tp2, rr, tier, "Sweep " + s.name + " → FVG", not na(best))
+                            f_draw(sg, gLo, gHi)
+                            last := sg
+                            newSig := true
+                            alert((tier == "CRÈME" ? "★ CRÈME " : tier + " ") + syminfo.ticker + (s.dir > 0 ? " LONG" : " SHORT") + " · Limit " + str.tostring(entry, format.mintick) + " · SL " + str.tostring(stop, format.mintick) + " · TP1 " + str.tostring(entry + s.dir * risk, format.mintick) + " · TP2 " + str.tostring(tp2, format.mintick), alert.freq_once_per_bar_close)
+                    drop := true
+                else if bar_index - s.broke >= 3
+                    drop := true
+            if drop
+                array.remove(pend, k)
+    // neue Sweeps nur in der Killzone an Wochentagen
+    if inKZ
+        if bMin >= 480 and not swAL
+            swAL := f_addLevel(true, 1, asLo, "Asien-Tief")
+        if bMin >= 480 and not swAH
+            swAH := f_addLevel(true, -1, asHi, "Asien-Hoch")
+        if not swPL
+            swPL := f_addLevel(true, 1, pdl, "Vortagestief")
+        if not swPH
+            swPH := f_addLevel(true, -1, pdh, "Vortageshoch")
+        if bMin >= 870 and not swLL
+            swLL := f_addLevel(true, 1, lnLo, "London-Tief")
+        if bMin >= 870 and not swLH
+            swLH := f_addLevel(true, -1, lnHi, "London-Hoch")
+        if not swWL
+            swWL := f_addLevel(true, 1, pwl, "Vorwochentief")
+        if not swWH
+            swWH := f_addLevel(true, -1, pwh, "Vorwochenhoch")
+
+// ───────────────────────── NR7-Ausbruch (Crème: mit Trend, VIX ≥ 20, Ziel 1R) ─────────────────────────
+var line nrE = na
+var line nrS = na
+var line nrT = na
+var label nrL = na
+nr7Creme = showNR7 and nr7Today and newDay and vixHi and not na(pdh)
+if nr7Creme
+    d = dBias
+    e = d > 0 ? pdh : pdl
+    st = d > 0 ? pdl : pdh
+    tp = e + d * math.abs(e - st)
+    nrE := line.new(bar_index, e, bar_index + 24, e, color = cGold, width = 2)
+    nrS := line.new(bar_index, st, bar_index + 24, st, color = cBad, style = line.style_dashed)
+    nrT := line.new(bar_index, tp, bar_index + 24, tp, color = cGood, width = 2)
+    nrL := label.new(bar_index, e, "★ CRÈME NR7 " + (d > 0 ? "LONG" : "SHORT") + "\nStopp-Order " + str.tostring(e, format.mintick) + " · SL " + str.tostring(st, format.mintick) + " · Ziel 1R " + str.tostring(tp, format.mintick), style = d > 0 ? label.style_label_down : label.style_label_up, color = color.new(cGold, 15), textcolor = color.black, size = size.small,
+         tooltip = "Gestern war der engste Tag der letzten 7 (NR7). Beleg: 60 % Gewinner, Ø +0,09 R (1 Std, 2 Jahre). Nur in Trendrichtung, Order gilt heute.")
+    alert("★ CRÈME NR7 " + syminfo.ticker + (d > 0 ? " LONG" : " SHORT") + " · Stopp-Order " + str.tostring(e, format.mintick) + " · SL " + str.tostring(st, format.mintick) + " · Ziel " + str.tostring(tp, format.mintick), alert.freq_once_per_bar_close)
+
+// ───────────────────────── SMC-Kontext: Level, Killzones, FVG, OB, BOS/CHoCH, OTE ─────────────────────────
+bgcolor(showKZ and inKZ ? color.new(cLink, 93) : na, title = "Killzone")
+plot(showLevels ? asHi : na, "Asien-Hoch", color = color.new(cMuted, 30), style = plot.style_linebr)
+plot(showLevels ? asLo : na, "Asien-Tief", color = color.new(cMuted, 30), style = plot.style_linebr)
+plot(showLevels ? pdh : na, "Vortageshoch", color = color.new(cBad, 40), style = plot.style_linebr, linewidth = 1)
+plot(showLevels ? pdl : na, "Vortagestief", color = color.new(cGood, 40), style = plot.style_linebr, linewidth = 1)
+plot(showLevels ? pwh : na, "Vorwochenhoch", color = color.new(cBad, 70), style = plot.style_linebr, linewidth = 2)
+plot(showLevels ? pwl : na, "Vorwochentief", color = color.new(cGood, 70), style = plot.style_linebr, linewidth = 2)
+
+// offene FVGs (≥ 0,3 ATR), werden gelöscht, sobald gefüllt
+var array<box> fvgs = array.new<box>()
+var array<int> fvgDir = array.new<int>()
+if showFVG
+    if low > high[2] and low - high[2] >= atr * 0.3
+        array.push(fvgs, box.new(bar_index - 2, low, bar_index + 5, high[2], border_color = na, bgcolor = color.new(cGood, 85), extend = extend.right))
+        array.push(fvgDir, 1)
+    if high < low[2] and low[2] - high >= atr * 0.3
+        array.push(fvgs, box.new(bar_index - 2, low[2], bar_index + 5, high, border_color = na, bgcolor = color.new(cBad, 85), extend = extend.right))
+        array.push(fvgDir, -1)
+    if array.size(fvgs) > 0
+        for k = array.size(fvgs) - 1 to 0
+            b = array.get(fvgs, k)
+            d = array.get(fvgDir, k)
+            filled = d > 0 ? low <= box.get_bottom(b) : high >= box.get_top(b)
+            if filled
+                box.delete(b)
+                array.remove(fvgs, k)
+                array.remove(fvgDir, k)
+    while array.size(fvgs) > 12
+        box.delete(array.shift(fvgs))
+        array.shift(fvgDir)
+
+// BOS / CHoCH und Order Blocks auf der Chart-Zeitebene
+ph = ta.pivothigh(high, pivLen, pivLen)
+pl = ta.pivotlow(low, pivLen, pivLen)
+var float sh = na
+var int shI = na
+var float slo = na
+var int slI = na
+var int trend = 0
+if not na(ph)
+    sh := ph
+    shI := bar_index - pivLen
+if not na(pl)
+    slo := pl
+    slI := bar_index - pivLen
+if not na(sh) and close > sh and close[1] <= sh
+    isCh = trend < 0
+    if showBOS
+        line.new(shI, sh, bar_index, sh, color = isCh ? cGold : cGood, style = line.style_dashed)
+        label.new(math.round((shI + bar_index) / 2), sh, isCh ? "CHoCH" : "BOS", style = label.style_none, textcolor = isCh ? cGold : cGood, size = size.tiny)
+    if showOB
+        for q = 1 to 10
+            if close[q] < open[q]
+                box.new(bar_index - q, math.max(open[q], close[q]), bar_index + 20, low[q], border_color = color.new(cGood, 50), bgcolor = color.new(cGood, 90), text = "OB", text_color = cGood, text_size = size.tiny, text_halign = text.align_right)
+                break
+    trend := 1
+    sh := na
+if not na(slo) and close < slo and close[1] >= slo
+    isCh = trend > 0
+    if showBOS
+        line.new(slI, slo, bar_index, slo, color = isCh ? cGold : cBad, style = line.style_dashed)
+        label.new(math.round((slI + bar_index) / 2), slo, isCh ? "CHoCH" : "BOS", style = label.style_none, textcolor = isCh ? cGold : cBad, size = size.tiny)
+    if showOB
+        for q = 1 to 10
+            if close[q] > open[q]
+                box.new(bar_index - q, high[q], bar_index + 20, math.min(open[q], close[q]), border_color = color.new(cBad, 50), bgcolor = color.new(cBad, 90), text = "OB", text_color = cBad, text_size = size.tiny, text_halign = text.align_right)
+                break
+    trend := -1
+    slo := na
+
+// Top-down: Tagestrend (Schluss > SMA20 > SMA50) und OTE-Zone 61,8–78,6 % des letzten 20-Tage-Beins
+tdDir = dC1 > dS20 and dS20 > dS50 ? 1 : dC1 < dS20 and dS20 < dS50 ? -1 : 0
+legOk = tdDir > 0 ? dLoB < dHiB : tdDir < 0 ? dHiB < dLoB : false
+rng = dHi20 - dLo20
+oteTop = tdDir > 0 ? dHi20 - rng * 0.618 : dLo20 + rng * 0.786
+oteBot = tdDir > 0 ? dHi20 - rng * 0.786 : dLo20 + rng * 0.618
+var box oteBox = na
+if showOTE and newDay
+    box.delete(oteBox)
+    if tdDir != 0 and legOk and rng > 0
+        oteBox := box.new(bar_index, oteTop, bar_index + 24, oteBot, border_color = color.new(cLink, 40), bgcolor = color.new(cLink, 90), text = "Tages-OTE " + (tdDir > 0 ? "Long" : "Short"), text_color = cLink, text_size = size.tiny, text_halign = text.align_left)
+
+// ───────────────────────── Swing-Signale (Tag) ─────────────────────────
+rsiSig = cD1 > sma200D1 and rsi2D < 10
+rsiExit = cD1 > sma5D1
+ibsNow = hD > lD ? (cD - lD) / (hD - lD) : 0.5
+ibsSig = cD > sma200D and ibsNow < 0.2
+
+// ───────────────────────── Dashboard ─────────────────────────
+pos = dashPos == "Oben rechts" ? position.top_right : dashPos == "Unten rechts" ? position.bottom_right : dashPos == "Oben links" ? position.top_left : position.bottom_left
+var table T = table.new(pos, 2, 13, bgcolor = color.new(#111214, 5), border_color = color.new(#2A2D33, 0), border_width = 1, frame_color = color.new(#2A2D33, 0), frame_width = 1)
+f_row(int r, string k, string v, color c) =>
+    table.cell(T, 0, r, k, text_color = cMuted, text_size = size.small, text_halign = text.align_left)
+    table.cell(T, 1, r, v, text_color = c, text_size = size.small, text_halign = text.align_left)
+if showDash and barstate.islast
+    table.cell(T, 0, 0, "TRADE CHECK", text_color = cGold, text_size = size.normal, text_halign = text.align_left)
+    table.cell(T, 1, 0, syminfo.ticker + " · " + timeframe.period, text_color = cText, text_size = size.small, text_halign = text.align_left)
+    f_row(1, "Tagestrend", dBias > 0 ? "▲ aufwärts → nur Long" : "▼ abwärts → nur Short", dBias > 0 ? cGood : cBad)
+    f_row(2, "4H-Struktur", h4dir > 0 ? "▲ BOS nach oben" : h4dir < 0 ? "▼ BOS nach unten" : "unklar", h4dir > 0 ? cGood : h4dir < 0 ? cBad : cMuted)
+    f_row(3, "VIX", na(vix) ? "–" : str.tostring(vix, "#.0") + (vixHi ? "  ≥ 20 → Crème aktiv" : "  < 20 → Crème ruht"), vixHi ? cGold : cMuted)
+    f_row(4, "Killzone", inKZ ? "JETZT (" + (bMin < 720 ? "London" : "New York") + ")" : "keine · London 08–11, NY 14:30–17", inKZ ? cGood : cMuted)
+    f_row(5, "Konfluenz", (dBias == h4dir ? "Tag + 4H gleich ✓" : "Tag ≠ 4H ✗") + (vixHi ? " · VIX ✓" : " · VIX ✗"), dBias == h4dir and vixHi ? cGood : cMuted)
+    if not na(last)
+        f_row(6, "Letztes Signal", last.tier + (last.dir > 0 ? " LONG · " : " SHORT · ") + last.name, f_tierColor(last.tier))
+        f_row(7, "Order", "Limit " + str.tostring(last.entry, format.mintick) + " · SL " + str.tostring(last.stop, format.mintick), cText)
+        f_row(8, "Ziele", "TP1 ½ " + str.tostring(last.tp1, format.mintick) + " · TP2 " + str.tostring(last.tp2, format.mintick) + " · CRV " + str.tostring(last.rr, "#.0"), cGood)
+        rk = math.abs(last.entry - last.stop)
+        f_row(9, "Risiko", str.tostring(acct * riskP / 100, "#") + " € = " + str.tostring(rk > 0 ? acct * riskP / 100 / rk : na, "#.##") + " Einh. Basiswert", cText)
+    else
+        f_row(6, "Letztes Signal", "noch keins im sichtbaren Bereich", cMuted)
+    if showSwing
+        f_row(10, "Swing RSI-2", rsiSig ? "KAUF zur Eröffnung (RSI2 " + str.tostring(rsi2D, "#.0") + ") · 68 %" : "kein Signal" + (cD1 > sma200D1 ? " · über SMA200" : " · unter SMA200"), rsiSig ? cGood : cMuted)
+        f_row(11, "IBS (Tag)", str.tostring(ibsNow, "#.00") + (ibsSig ? " → KAUF kurz vor Schluss · 64 %" : ""), ibsSig ? cGood : cMuted)
+    f_row(12, "Belege", "Crème Sweep 60 % · NR7 60 % · Härtetest bestanden", cMuted)
+
+// ───────────────────────── Alarme ─────────────────────────
+alertcondition(nr7Creme, "Crème NR7", "Trade Check: Crème NR7-Ausbruch – Stopp-Orders am Vortageshoch/-tief")
+lastTier = na(last) ? "" : last.tier
+alertcondition(newSig and lastTier == "CRÈME", "Crème Sweep", "Trade Check: Crème Liquidity Sweep → FVG-Einstieg")
+alertcondition(newSig and lastTier == "TREND", "Trend-Sweep (Kontext)", "Trade Check: Sweep mit Tagestrend bei ruhigem Markt (ohne belegten Vorteil)")
+alertcondition(rsiSig and newDay, "Swing RSI-2", "Trade Check: RSI-2-Kaufsignal (über SMA200, RSI2 < 10) – Kauf zur Eröffnung")
+alertcondition(ibsSig and bMin >= 21 * 60 + 30 and bMin < 22 * 60, "IBS kurz vor Schluss", "Trade Check: IBS < 0,2 über SMA200 – kurz vor Schluss kaufen")
