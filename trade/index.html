@@ -1041,10 +1041,83 @@ function scanWave3(c, opt){
   }
   return out;
 }
+// Multi-Timeframe-SMC (Konfluenz-Modell): 4H-Struktur (letzter Break of Structure) gibt die Richtung vor ->
+// Liquidity Sweep eines 4H-Swing-Tiefs/-Hochs oder des Vortagestiefs/-hochs (Docht durch, Schluss zurueck) ->
+// CHoCH auf der kleinen Zeitebene (Schluss ueber dem letzten Zwischenhoch, innerhalb von 24 Kerzen) ->
+// Limit-Einstieg im Ruecksetzer: Mitte der FVG des Impulses (sonst Order Block) in der Discount-Zone (unter 50 % des Impulses),
+// Stop knapp hinter dem Sweep-Extrem, Ziel die naechste unberuehrte Liquiditaet (4H-Swing, Vortageshoch/-tief), CRV mind. 2.
+function h4Of(src){
+  var out = [], cur = null, ck = null;
+  src.forEach(function(x){ var k = Math.floor(x.t / 14400e3); if (k !== ck){ if (cur) out.push(cur); cur = { t: x.t, o: x.o, h: x.h, l: x.l, c: x.c, endT: (k + 1) * 14400e3 }; ck = k; } else { cur.h = Math.max(cur.h, x.h); cur.l = Math.min(cur.l, x.l); cur.c = x.c; } });
+  if (cur) out.push(cur); return out;
+}
+// 4H-Struktur: Richtung nach dem letzten Bruch eines bestaetigten Swings (BOS), je abgeschlossener 4H-Kerze
+function h4Structure(h4){
+  var s4 = swings(h4, 2), dirAt = [], dir = 0, hiI = 0, loI = 0, refH = null, refL = null;
+  for (var j = 0; j < h4.length; j++){
+    while (hiI < s4.hi.length && s4.hi[hiI].i + 2 <= j){ refH = s4.hi[hiI]; hiI++; }
+    while (loI < s4.lo.length && s4.lo[loI].i + 2 <= j){ refL = s4.lo[loI]; loI++; }
+    if (refH && h4[j].c > refH.p) dir = 1; else if (refL && h4[j].c < refL.p) dir = -1;
+    dirAt.push(dir);
+  }
+  return { dirAt: dirAt, sw: s4 };
+}
+function scanSMC(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = [], kz = killzones(instr); if (c.length < 200) return out;
+  var P = prep(c, opt), a = P.a, bar = P.bar, sl = swings(c, 2);
+  var h4 = h4Of(opt.h1 && opt.h1.length > 100 ? opt.h1 : c), H = h4Structure(h4), n4 = 0;
+  var S = { 1: null, '-1': null }, swept = {}, hiI = 0, loI = 0, minorH = null, minorL = null;
+  for (var i = 2; i < c.length; i++){
+    var T = c[i].t + bar; while (n4 < h4.length && h4[n4].endT <= T) n4++;
+    while (hiI < sl.hi.length && sl.hi[hiI].i + 2 <= i){ minorH = sl.hi[hiI]; hiI++; }
+    while (loI < sl.lo.length && sl.lo[loI].i + 2 <= i){ minorL = sl.lo[loI]; loI++; }
+    if (n4 < 10) continue;
+    var dir = H.dirAt[n4 - 1]; if (!dir) continue;
+    var b = P.bp[i], x = c[i], at = a[i]; if (!at || b.wd === 0 || b.wd === 6) continue;
+    var pd = P.prevOf[b.key] && P.days[P.prevOf[b.key]];
+    // Liquiditaet: bestaetigte 4H-Swings (letzte 6) und Vortageshoch/-tief
+    var lv4 = (dir > 0 ? H.sw.lo : H.sw.hi).filter(function(p){ return p.i + 2 < n4; }).slice(-6).map(function(p){ return p.p; });
+    if (pd) lv4.push(dir > 0 ? pd.lo : pd.hi);
+    var st = S[dir];
+    if (st && (i - st.i > 24 || st.done)) st = S[dir] = null;
+    if (!st){
+      var hit = lv4.filter(function(lv){ return dir > 0 ? (x.l < lv && x.c > lv) : (x.h > lv && x.c < lv); }).sort(function(p, q){ return (q - p) * dir; })[0];
+      var mref = dir > 0 ? minorH : minorL;
+      if (hit != null && mref && !swept[dir + ':' + hit] && i >= P.from){ swept[dir + ':' + hit] = 1; S[dir] = { i: i, lv: hit, ext: dir > 0 ? x.l : x.h, extI: i, mref: mref.p }; }
+      continue;
+    }
+    if ((dir > 0 ? x.l < st.ext : x.h > st.ext)){ st.ext = dir > 0 ? x.l : x.h; st.extI = i; }
+    if (!((x.c - st.mref) * dir > 0)) continue;                       // noch kein CHoCH
+    st.done = true;
+    if (!kz.some(function(z){ return b.min >= z[0] && b.min < z[1]; })) continue;
+    var hi = -Infinity, lo = Infinity; for (var q = st.extI; q <= i; q++){ hi = Math.max(hi, c[q].h); lo = Math.min(lo, c[q].l); }
+    var leg = hi - lo; if (!(leg > 0)) continue;
+    var half = dir > 0 ? lo + leg * 0.5 : hi - leg * 0.5, zone = null, kind = null;
+    for (q = i; q >= st.extI + 2 && !zone; q--){
+      var g = dir > 0 ? (c[q].l > c[q - 2].h ? { lo: c[q - 2].h, hi: c[q].l } : null) : (c[q].h < c[q - 2].l ? { lo: c[q].h, hi: c[q - 2].l } : null);
+      if (g && (g.lo + g.hi) / 2 * dir <= half * dir && g.hi - g.lo >= at * 0.1){ zone = g; kind = 'FVG'; }
+    }
+    // Order Block: letzte Gegenkerze am Sweep-Extrem bzw. direkt davor (Ursprung des Impulses)
+    if (!zone){ for (q = st.extI; q >= Math.max(1, st.extI - 3); q--){ if ((c[q].c - c[q].o) * dir < 0){ var ob = { lo: Math.min(c[q].o, c[q].c), hi: Math.max(c[q].o, c[q].c) }; if ((dir > 0 ? ob.hi : ob.lo) * dir <= half * dir){ zone = ob; kind = 'Order Block'; } break; } } }
+    if (!zone) continue;
+    var entry = kind === 'FVG' ? (zone.lo + zone.hi) / 2 : (dir > 0 ? zone.hi : zone.lo), stop = st.ext - dir * at * 0.1, risk = (entry - stop) * dir;
+    if (!(risk > at * 0.15 && risk < at * 6)) continue;
+    var tl = (dir > 0 ? H.sw.hi : H.sw.lo).filter(function(p){ return p.i + 2 < n4; }).map(function(p){ return p.p; });
+    if (pd) tl.push(dir > 0 ? pd.hi : pd.lo);
+    var tg = tl.map(function(p){ return { p: p, rr: (p - entry) * dir / risk }; }).filter(function(o){ return o.rr >= 2 && o.rr <= 8; }).sort(function(o1, o2){ return o1.rr - o2.rr; })[0];
+    if (!tg) continue;
+    var sb = (b.min >= 540 && b.min < 600) || (b.min >= 960 && b.min < 1020) || (b.min >= 1200 && b.min < 1260);
+    var sg = mk(P, instr, c, i, 'smcmtf', '4H-Trend, Sweep, CHoCH, Einstieg in ' + kind, dir, 'limit', entry, stop, tg.p,
+      { liqTarget: true, level: st.lv, fvg: [zone.lo, zone.hi], expires: Math.min(endOfDay(P, c, i), c[i].t + bar + 4 * 3600e3), smc: { sweep: st.lv, ext: st.ext, kind: kind, sb: sb, depth: (dir > 0 ? hi - entry : entry - lo) / leg, h4: dir } });
+    if (sg){ sg.withBias = true; out.push(sg); }
+  }
+  return out;
+}
 var SETUPS = {
   sweep: { name: 'Liquidity Sweep', fn: function(c, o){ return scanSetups(c, o); } },
   pullback: { name: 'Trend-Pullback', fn: function(c, o){ return scanPullbacks(c, o); } },
   topdown: { name: 'Top-down (Tag → OTE → Struktur)', fn: scanTopDown },
+  smcmtf: { name: 'SMC 4H-Trend + Sweep + CHoCH + FVG/OB', fn: scanSMC },
   wave3: { name: 'Elliott Welle 3', fn: scanWave3 },
   wave3s: { name: 'Elliott Welle 3 (bis Ziel halten, max. 5 Tage)', fn: function(c, o){ return scanWave3(c, o).map(function(g){ g.type = 'wave3s'; g.days = 5; return g; }); } },
   orb: { name: 'Opening Range Breakout', fn: scanORB },
@@ -1227,6 +1300,10 @@ function confluence(sig, c){
 }
 // ---- Qualitaetsstufen: feste Liste, die Auswahl trifft die Rueckrechnung (Jahr 1), geprueft wird auf Jahr 2
 var GRADES = [
+  { id: 'smc_sb', name: 'SMC: im Silver-Bullet-Fenster', fn: function(s){ return !!(s.smc && s.smc.sb); } },
+  { id: 'smc_fvg', name: 'SMC: Einstieg in FVG', fn: function(s){ return !!(s.smc && s.smc.kind === 'FVG'); } },
+  { id: 'smc_deep', name: 'SMC: Einstieg tief im Discount (ab 61,8 %)', fn: function(s){ return !!(s.smc && s.smc.depth >= 0.618); } },
+  { id: 'smc_rr3', name: 'SMC: CRV ab 3', fn: function(s){ return !!(s.smc && s.rr >= 3); } },
   { id: 'w3_five', name: 'Welle 3: Welle 1 klar 5-teilig', fn: function(s){ return !!(s.w3 && s.w3.five); } },
   { id: 'w3_rsi', name: 'Welle 3: RSI dreht aus der Tiefzone', fn: function(s){ return !!(s.w3 && s.w3.rsiOk); } },
   { id: 'w3_golden', name: 'Welle 3: Welle 2 bei 50-61,8 %', fn: function(s){ return !!(s.w3 && s.w3.depth <= 0.618); } },
@@ -1649,8 +1726,8 @@ function viewKo(f, i){
 }
 function koHint(i){ return i.type === 'fx' ? '100' : (i.k === 'XAGUSD' ? '1' : (i.type === 'cmd' || i.type === 'stock' ? '0,1' : '0,01')); }
 function viewChartCard(i, d){
-  var tf = S.tf === '60m' ? '60m' : '15m';
-  return '<section class="card" style="padding:12px 12px 10px"><div class="seg">' + [['15m', '15 Min'], ['60m', '1 Std']].map(function(x){ return '<button data-act="tf" data-tf="' + x[0] + '" aria-pressed="' + (tf === x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div>' + chartSvg(i, d, tf) + zoneChips(i) +
+  var tf = S.tf === '60m' || S.tf === '240m' ? S.tf : '15m';
+  return '<section class="card" style="padding:12px 12px 10px"><div class="seg">' + [['15m', '15 Min'], ['60m', '1 Std'], ['240m', '4 Std']].map(function(x){ return '<button data-act="tf" data-tf="' + x[0] + '" aria-pressed="' + (tf === x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div>' + chartSvg(i, d, tf) + h4Line(d) + zoneChips(i) +
     (V.pick != null ? '<div class="pickbar"><b>' + fmt(V.pick, i.dec) + '</b><button class="btn sm ghost" data-act="lvset" data-f="entry" data-p="' + V.pick + '">Einstieg</button><button class="btn sm ghost" data-act="lvset" data-f="stop" data-p="' + V.pick + '">Stop</button><button class="btn sm ghost" data-act="lvset" data-f="target" data-p="' + V.pick + '">Ziel</button><button class="btn sm ghost" data-act="lvset" data-f="ko" data-p="' + V.pick + '">KO</button></div>' : '<p class="hint" style="margin-top:6px">Tippe auf einen Zonen-Preis oder in den Chart, um ihn als Einstieg, Stop, Ziel oder KO zu übernehmen.</p>') + '</section>';
 }
 // Zonen aus dem Chart mit Marktpreisen: Tippen auf eine Kante uebernimmt den Preis
@@ -1674,16 +1751,22 @@ function viewLevels(i, d, noChart){
   });
   if (!placed && px != null) rows.push(nowRow(px, i));
   var cot = d.cot ? '<span>COT ' + fmt(d.cot.idx, 0) + '</span>' : '';
-  var tf = S.tf === '60m' ? '60m' : '15m';
-  var chartHtml = '<div class="seg" style="margin-top:10px"><button data-act="tf" data-tf="15m" aria-pressed="' + (tf === '15m') + '">15 Min</button><button data-act="tf" data-tf="60m" aria-pressed="' + (tf === '60m') + '">1 Std</button></div>' + chartSvg(i, d, tf) + zoneChips(i) +
+  var tf = S.tf === '60m' || S.tf === '240m' ? S.tf : '15m';
+  var chartHtml = '<div class="seg" style="margin-top:10px"><button data-act="tf" data-tf="15m" aria-pressed="' + (tf === '15m') + '">15 Min</button><button data-act="tf" data-tf="60m" aria-pressed="' + (tf === '60m') + '">1 Std</button><button data-act="tf" data-tf="240m" aria-pressed="' + (tf === '240m') + '">4 Std</button></div>' + h4Line(d) + chartSvg(i, d, tf) + zoneChips(i) +
     (V.pick != null ? '<div class="pickbar"><b>' + fmt(V.pick, i.dec) + '</b><button class="btn sm ghost" data-act="lvset" data-f="entry" data-p="' + V.pick + '">Einstieg</button><button class="btn sm ghost" data-act="lvset" data-f="stop" data-p="' + V.pick + '">Stop</button><button class="btn sm ghost" data-act="lvset" data-f="target" data-p="' + V.pick + '">Ziel</button><button class="btn sm ghost" data-act="lvset" data-f="ko" data-p="' + V.pick + '">KO</button></div>' : '<p class="hint" style="margin-top:6px">Tippe in den Chart, um einen Kurs als Einstieg, Stop, Ziel oder KO-Schwelle zu setzen.</p>');
   return '<section class="card"><div class="row"><h2>Marktbild</h2><span class="small" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">' + trend + sDesc(st1, '1 Std') + sDesc(st15, '15 Min') + cot + '</span></div>' +
     (noChart ? '' : chartHtml) + '<p class="hint" style="margin-top:12px">Wichtige Marken. Tippe E, S oder Z, um sie als Einstieg, Stop oder Ziel zu übernehmen.</p><ul class="ladder">' + rows.join('') + '</ul></section>';
 }
 // ---------- Kerzenchart mit Asien-Range, Vortageslinien, offenen FVGs, letztem Strukturbruch und deinen Linien
+// 4H-Struktur in einer Zeile: Richtung nach dem letzten Break of Structure
+function h4Line(d){
+  if (!d || !d.h1 || d.h1.length < 60) return '';
+  var h4 = h4Of(d.h1), st = h4Structure(h4), dir = st.dirAt[st.dirAt.length - 1];
+  return '<p class="hint" style="margin:6px 0 0">4H-Struktur: <b class="' + (dir > 0 ? 'good' : dir < 0 ? 'bad' : '') + '">' + (dir > 0 ? 'aufwärts (letzter BOS nach oben) → nur Long' : dir < 0 ? 'abwärts (letzter BOS nach unten) → nur Short' : 'unklar → abwarten') + '</b></p>';
+}
 function chartSvg(i, d, tf){
-  var all = tf === '60m' ? d.h1 : d.m15; if (!all || all.length < 20) return '';
-  var c = all.slice(tf === '60m' ? -100 : -110), n = c.length, W = 340, H = 240, padR = 46, padT = 8, padB = 16;
+  var all = tf === '240m' ? (d.h1 ? h4Of(d.h1) : null) : (tf === '60m' ? d.h1 : d.m15); if (!all || all.length < 20) return '';
+  var c = all.slice(tf === '15m' ? -110 : -100), n = c.length, W = 340, H = 240, padR = 46, padT = 8, padB = 16;
   var hi = -Infinity, lo = Infinity; c.forEach(function(x){ if (x.h > hi) hi = x.h; if (x.l < lo) lo = x.l; });
   var f = S.form, lines = [];
   var off = 0;
@@ -1704,7 +1787,7 @@ function chartSvg(i, d, tf){
   if (lv && lv.asia && tf === '15m'){ var a0 = -1, a1 = -1; c.forEach(function(q, k){ var b = berlinParts(q.t); if (b.key === lv.todayKey && b.min < 480){ if (a0 < 0) a0 = k; a1 = k; } }); if (a0 >= 0) g += '<rect x="' + (a0 * cw) + '" y="' + y(lv.asia.hi) + '" width="' + ((a1 - a0 + 1) * cw) + '" height="' + Math.max(1, y(lv.asia.lo) - y(lv.asia.hi)) + '" fill="var(--muted)" opacity=".12"/>'; zt.push(['Asien', lv.asia.hi, lv.asia.lo, 'var(--muted)']); }
   // offene FVGs
   var base = all.length - n;
-  fvgs(all, tf === '60m' ? 48 : 80).slice(-4).forEach(function(q){ var k = q.i - base; if (k < 0 || k >= n) return; g += '<rect x="' + (k * cw) + '" y="' + y(q.hi) + '" width="' + (W - padR - k * cw) + '" height="' + Math.max(1, y(q.lo) - y(q.hi)) + '" fill="' + (q.dir > 0 ? 'var(--good)' : 'var(--bad)') + '" opacity=".14"/>'; zt.push(['FVG', q.hi, q.lo, q.dir > 0 ? 'var(--good)' : 'var(--bad)']); });
+  fvgs(all, tf === '15m' ? 80 : 48).slice(-4).forEach(function(q){ var k = q.i - base; if (k < 0 || k >= n) return; g += '<rect x="' + (k * cw) + '" y="' + y(q.hi) + '" width="' + (W - padR - k * cw) + '" height="' + Math.max(1, y(q.lo) - y(q.hi)) + '" fill="' + (q.dir > 0 ? 'var(--good)' : 'var(--bad)') + '" opacity=".14"/>'; zt.push(['FVG', q.hi, q.lo, q.dir > 0 ? 'var(--good)' : 'var(--bad)']); });
   // Order Blocks
   obc.forEach(function(z){ g += '<rect x="' + (z.i * cw) + '" y="' + y(z.hi) + '" width="' + (W - padR - z.i * cw) + '" height="' + Math.max(1, y(z.lo) - y(z.hi)) + '" fill="' + (z.dir > 0 ? 'var(--good)' : 'var(--bad)') + '" opacity=".22"/>'; zt.push(['OB', z.hi, z.lo, z.dir > 0 ? 'var(--good)' : 'var(--bad)']); });
   // Elliott-Wellen
@@ -1738,7 +1821,7 @@ function chartSvg(i, d, tf){
   labels.forEach(function(L){ g += '<text x="' + (W - padR + 3) + '" y="' + (L.y + 3) + '" style="fill:' + L.col + (L.b ? ';font-weight:600' : '') + '">' + L.t + '</text>'; });
   if (V.pick != null && V.pick - zoff < hi && V.pick - zoff > lo) g += '<line x1="0" x2="' + (W - padR) + '" y1="' + y(V.pick - zoff) + '" y2="' + y(V.pick - zoff) + '" stroke="var(--fg)" stroke-width=".8" stroke-dasharray="2 2"/>';
   V.chartMap = { hi: hi, lo: lo, padT: padT, padB: padB, H: H, off: zoff };
-  return '<svg class="chart" id="chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Kerzenchart ' + esc(i.name) + ' ' + (tf === '60m' ? '1 Stunde' : '15 Minuten') + '">' + g + '</svg>';
+  return '<svg class="chart" id="chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Kerzenchart ' + esc(i.name) + ' ' + (tf === '240m' ? '4 Stunden' : tf === '60m' ? '1 Stunde' : '15 Minuten') + '">' + g + '</svg>';
 }
 function nowRow(px, i){ return '<li class="lv now"><span class="n">Aktueller Kurs</span><span class="p">' + fmt(px, i.dec) + '</span><span class="acts"><button data-act="lvset" data-f="entry" data-p="' + px + '" aria-label="Als Einstieg">E</button></span></li>'; }
 var ICON = { pro: '✓', contra: '✕', warn: '!', neutral: '·' };
