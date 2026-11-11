@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '94ba236843';
+const WORKER_VER = '0c31f9d22d';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3762,6 +3762,26 @@ async function runTrade(env, nowMs) {
       await send('be:' + dayKey, { title: 'Abend-Bilanz', body: lines.join(' '), tag: 'brief', url: './' });
     }
     for (const k of Object.keys(t.briefs)) if (k.slice(2) < berlinDay(nowMs - 5 * 86400e3)) { delete t.briefs[k]; dirty = true; }
+  }
+  // 12) Wochenbericht Sonntag 18:00: Ergebnis der Woche je Strategie, beste und schwaechste Trades, Termine der neuen Woche
+  if (clk.wd === 'Sun' && t.brief !== false && clk.min >= 18 * 60 && clk.min < 18 * 60 + 15) {
+    t.briefs = t.briefs || {};
+    if (!t.briefs['w:' + dayKey]) {
+      const eurR = t.acct > 0 && t.riskP > 0 ? t.acct * t.riskP / 100 : 0, wk = (t.trackLog || []).filter((x) => x.r != null && nowMs - x.t < 7 * 86400e3 && x.t < nowMs);
+      const grp = (c) => /Swing/.test(c) ? 'Swing' : /IBS/.test(c) ? 'IBS' : /B\+|B grün/.test(c) ? 'B+' : 'Crème', g = {};
+      wk.forEach((x) => { const k = grp(x.cls || ''); g[k] = g[k] || { n: 0, r: 0, w: 0 }; g[k].n++; g[k].r += x.r; if (x.r > 0) g[k].w++; });
+      const sr = wk.reduce((a, x) => a + x.r, 0), fr = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1).replace('.', ',');
+      const lines = [];
+      lines.push(wk.length ? 'Woche: ' + wk.length + ' Signale, ' + wk.filter((x) => x.r > 0).length + ' Gewinner, ' + fr(sr) + ' R' + (eurR ? ' (' + (sr >= 0 ? '+' : '−') + Math.round(Math.abs(sr) * eurR) + ' €)' : '') + '.' : 'Diese Woche keine abgeschlossenen Signale.');
+      const gk = Object.keys(g); if (gk.length > 1) lines.push('Je Strategie: ' + gk.map((k) => k + ' ' + g[k].n + '× ' + fr(g[k].r) + ' R').join(', ') + '.');
+      if (wk.length > 2) { const so = wk.slice().sort((a, b) => b.r - a.r); lines.push('Bester: ' + so[0].name + ' ' + fr(so[0].r) + ' R, schwächster: ' + so[so.length - 1].name + ' ' + fr(so[so.length - 1].r) + ' R.'); }
+      let c = cal; if (!c) { try { c = (await getCalendar(env, nowMs)).data; } catch (e) { c = []; } }
+      const ev = (c || []).filter((e) => e.impact === 'High' && (!t.ccys || !t.ccys.length || t.ccys.includes(e.country))).map((e) => Object.assign({}, e, { t: Date.parse(e.date) })).filter((e) => e.t > nowMs && e.t < nowMs + 6 * 86400e3);
+      if (ev.length) { const wd = new Intl.DateTimeFormat('de-DE', { weekday: 'short', timeZone: 'Europe/Berlin' }); lines.push('Neue Woche: ' + ev.slice(0, 6).map((e) => wd.format(new Date(e.t)) + ' ' + hhmm(e.t) + ' ' + e.country + ' ' + e.title).join(', ') + '.'); }
+      lines.push('Ein Wochenergebnis sagt wenig, entscheidend ist der Schnitt über viele Trades. Bleib bei den Regeln.');
+      t.briefs['w:' + dayKey] = 1; t.brief = { kind: 'w', day: dayKey, at: nowMs, lines }; dirty = true;
+      await send('bw:' + dayKey, { title: 'Wochenbericht', body: lines.join(' '), tag: 'brief', url: './' });
+    }
   }
   // Aufraeumen: alte Sendungen vergessen
   for (const k of Object.keys(t.sent)) if (nowMs - t.sent[k] > 3 * 86400e3) { delete t.sent[k]; dirty = true; }
