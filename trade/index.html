@@ -2862,13 +2862,19 @@ function viewDepot(){
       '<div class="muted small">' + fmt(d.all.cagr, 1) + ' % pro Jahr, größter Verlust −' + fmt(d.all.maxdd, 0) + ' % · Kaufen und Halten (' + esc(d.bench === 'SPY' ? 'S&P 500' : (DEPOT_NAMES[d.bench] || d.bench)) + '): ' + fmt(d.bh.cagr, 1) + ' % pro Jahr, −' + fmt(d.bh.maxdd, 0) + ' %' + (d.note ? ' · ' + esc(d.note) : '') + '</div></div>'; }).join('') +
     '<p class="hint">✅ = bessere Rendite pro Risiko und kleinere Einbrüche als Kaufen und Halten, in jedem Zeitraum im Plus. Mehr Rendite als Kaufen und Halten bringen sie meist nicht: Ihr Vorteil ist, dass sie große Crashs (2008, 2022) größtenteils auslassen.</p></section>';
 }
+function viewProSets(){
+  var b = V.bp; if (!b || !b.sets) return '';
+  var nm = { 'pairs:daily': 'Pairs Trading (20 Paare, Tageskerzen)', 'smallcap:gapgo': 'Small-Cap Gap and Go', 'smallcap:gapgoR': 'Small-Cap Gap and Go (R)' }, u = function(k){ return /pairs/.test(k) ? ' %' : ' R'; };
+  return '<div class="label" style="margin-top:14px">Profi-Strategien</div><table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ var x = b.sets[k], a = x.all || {}, h = x.hold || {};
+    return '<tr><td>' + esc(nm[k] || k) + '</td><td>' + (a.n || 0) + '</td><td>' + (a.n ? fmt(a.win * 100, 0) + ' %' : '–') + '</td><td class="' + ((a.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (a.n ? sgn(a.mean, 2) + u(k) : '–') + '</td><td class="' + ((h.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (h.n ? sgn(h.mean, 2) : '–') + '</td></tr>'; }).join('') + '</table><p class="hint">Beide fallen durch: ohne Orderflow-Daten und mit Privatanleger-Kosten bleibt kein Vorteil. Deshalb nicht im Scanner.</p>';
+}
 function viewResearch(){
   var b = V.bx; if (!b || !b.sets) return '';
   var row = function(x){ return '<tr><td>' + (x.passed ? '✅ ' : '') + esc(x.name) + '</td><td>' + x.all.n + '</td><td>' + (x.all.n ? fmt(x.all.win * 100, 0) + ' %' : '–') + '</td><td class="' + ((x.all.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.all.n ? sgn(x.all.mean, 2) : '–') + '</td><td class="' + ((x.hold.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.hold.n ? sgn(x.hold.mean, 2) : '–') + '</td></tr>'; };
   return '<section class="card"><div class="row"><h2>Strategien aus der Forschung</h2><span class="muted small">' + esc(dm(Date.parse(b.at))) + '</span></div>' +
     '<p class="hint" style="margin-top:4px">ORB „Stocks in Play“ (5 Min, ' + (b.orbDays || 0) + ' Handelstage, 45 US-Aktien), Connors RSI-2 auf Tageskerzen (bis 10 Jahre), News-Fehlausbruch und -Momentum (15 Min). Mit Kosten, Prüfung in drei Zeiträumen. ✅ = in allen dreien mindestens +0,05 R.</p>' +
     '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
-    viewMoreSets() + viewScalpSets() + viewFxSets() +
+    viewMoreSets() + viewScalpSets() + viewFxSets() + viewProSets() +
     (b.orbGross && b.orbGross.n ? '<p class="hint">ORB Top 3 ohne Kosten: Ø ' + sgn(b.orbGross.mean, 2) + ' R. Der Unterschied zeigt, wie viel Spread und Gebühren bei so engen Stops kosten.</p>' : '') + '</section>';
 }
 function viewBt(){
@@ -3131,6 +3137,7 @@ render = function(){ _render(); bind($('#page')); };
 try { var qs = new URLSearchParams(location.search).get('sig'); if (qs) V.wantSig = qs; } catch (e) {}
 fetch('../dienst/backtest-fx.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.tf){ V.bf = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-scalp.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bs = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
+fetch('../dienst/backtest-pro.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bp = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-more.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bm = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-extra.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bx = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-1h.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.grades){ V.bt1 = b; if (S.tab === 'buch' || S.tab === 'markt') rerender(); } }).catch(function(){});
