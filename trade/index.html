@@ -2178,7 +2178,7 @@ function viewCockpit(){
   if (b1.creme) row('Crème de la Crème (Intraday)', b1.creme.length > 0, ca && ca.all && ca.all.n ? ((ca.all.win * ca.all.n + (ca.hold.win || 0) * (ca.hold.n || 0)) / (ca.all.n + (ca.hold.n || 0))) : null, ca ? ca.perDay : null, b1.creme.length ? b1.creme.length + (b1.creme.length === 1 ? ' Stufe' : ' Stufen') + ' · London und New York · TP1 bei +1R' : 'diese Woche keine Stufe bestanden');
   if (b1.bplus) row('B+ (ab 16 Uhr)', b1.bplus.length > 0 && S.cfg.push.bgreen !== false, null, null, b1.bplus.length ? b1.bplus.length + (b1.bplus.length === 1 ? ' Stufe' : ' Stufen') + ' mit 50 %+ und Plus in allen Zeiträumen' : 'keine Stufe bestanden');
   var r2 = bm.sets && bm.sets['breit:rsi2']; if (r2) row('Swing RSI-2', !!r2.swingOk, r2.all.win, r2.perDay, '30 Märkte · Signal abends, Kauf zur Eröffnung');
-  var ib = bm.sets && bm.sets['ibs:idx']; if (ib) row('IBS-Mean-Reversion', !!ib.passed, ib.all.win, ib.perDay, 'S&P 500, Nasdaq, Dow, DAX · kurz vor Schluss');
+  var ibu = bm.sets && bm.sets['breit:ibs_us'], ib = ibu && ibu.swingOk ? ibu : (bm.sets && bm.sets['ibs:idx']); if (ib) row('IBS-Mean-Reversion', !!(ib.swingOk || ib.passed), ib.all.win, ib.perDay, ib === ibu ? '19 US-Märkte (Indizes, Sektoren) · kurz vor Schluss' : 'S&P 500, Nasdaq, Dow · kurz vor Schluss');
   var orb = bx.sets && bx.sets['orbplay:top3_rvol2']; if (orb) row('ORB Stocks in Play', (bx.passed || []).some(function(k){ return /^orbplay:/.test(k); }), (bx.passed || []).some(function(k){ return /^orbplay:/.test(k); }) ? orb.all.win : null, null, '15:45 · wenige große Gewinner');
   if (bm.depotPassed) row('Depot-Strategien', bm.depotPassed.length > 0, null, null, bm.depotPassed.length + (bm.depotPassed.length === 1 ? ' Regel' : ' Regeln') + ' · Wechsel am Monatsanfang');
   if (!rows.length) return '';
@@ -2298,7 +2298,7 @@ function viewMehr(){
       (true ? '<label class="switch"><span>' + ((p.quality || 'creme') === 'creme' ? 'B+ ab 16:00 (nur Stufen mit mind. 50 % Gewinnern)' : 'B-Setups ab 16:00: nur Ampel grün + Premium/Discount + Liquiditätsziel + CRV ab 2') + '</span><input type="checkbox" data-push="bgreen"' + (p.bgreen !== false ? ' checked' : '') + '></label>' : '') +
       '<label class="switch"><span>ORB „Stocks in Play“ (US-Eröffnung)</span><input type="checkbox" data-push="orb"' + (p.orb !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Swing RSI-2 (abends, Haltedauer Tage)</span><input type="checkbox" data-push="swing"' + (p.swing !== false ? ' checked' : '') + '></label>' +
-      '<label class="switch"><span>IBS-Mean-Reversion (Indizes, kurz vor Schluss)</span><input type="checkbox" data-push="ibs"' + (p.ibs !== false ? ' checked' : '') + '></label>' +
+      '<label class="switch"><span>IBS-Mean-Reversion (US-Märkte, kurz vor Schluss)</span><input type="checkbox" data-push="ibs"' + (p.ibs !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Depot-Strategien (monatlich)</span><input type="checkbox" data-push="depot"' + (p.depot !== false ? ' checked' : '') + '></label>' +
       '<p class="hint">Diese Strategien melden sich nur, solange sie die Rückrechnung bestehen (siehe Tagebuch → Strategien aus der Forschung).</p>' +
       '<label class="switch"><span>Hauptzeiten (08:00 und 14:30)</span><input type="checkbox" data-push="kz"' + (p.kz ? ' checked' : '') + '></label>' +
