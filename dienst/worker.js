@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'c9db28809c';
+const WORKER_VER = '371682dffa';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3461,7 +3461,7 @@ async function runTrade(env, nowMs) {
         if (!(last.c > sma && ib < 0.2 && atr)) continue;
         const id = k + ':ibs:' + dayKey, stop = last.c - 3 * atr;
         t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf' });
-        await send('b:' + id, { title: 'IBS-Signal · ' + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + (ins.type === 'etf' ? ' Umsetzen über einen passenden UCITS-ETF (US-ETFs gibt es bei Trade Republic nicht).' : '') + ((s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + (ins.type === 'etf' ? ' Umsetzen über einen passenden UCITS-ETF oder Knock-out auf den Sektor (US-ETFs gibt es bei Trade Republic nicht).' : ''), tag: 'ibs-' + k, url: './' });
+        await send('b:' + id, { title: 'IBS-Signal · ' + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + (ins.type === 'etf' ? ' Umsetzen über einen passenden UCITS-ETF (US-ETFs gibt es bei Trade Republic nicht).' : '') + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : ''), tag: 'ibs-' + k, url: './' });
       }
     }
     t.ibsPos = t.ibsPos.filter((p) => p.state === 'offen' || nowMs - (p.exitAt || p.at) < 3 * 86400e3);
