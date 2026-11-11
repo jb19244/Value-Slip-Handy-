@@ -53,7 +53,7 @@ for (const sym of SYMS) {
   for (const [tf, c, bar] of [['m5', raw, 300e3], ['m15', m15, 900e3]]) {
     for (const setup of Object.keys(L.SETUPS)) {
       const res = L.backtest({ instr: ins, m15: c, h1, d1, bar, setup, any: true, be: false, noCheck: setup !== 'sweep' && setup !== 'pullback', conf: ['sweep', 'pullback', 'nr7r1'].includes(setup) });
-      res.forEach((t) => { Object.assign(t.sig, L.marketContext(t.sig.day, ins, t.sig.dir, vix, dxy)); t.type = setup; t.sym = sym; delete t.checks; if (replay(t)) all[tf].push(t); });
+      res.forEach((t) => { Object.assign(t.sig, L.marketContext(t.sig.day, ins, t.sig.dir, vix, dxy)); t.type = setup; t.sym = sym; t.cls = ins.type; delete t.checks; if (replay(t)) all[tf].push(t); });
     }
     console.log(sym, tf, c.length, 'Kerzen,', all[tf].length, 'Trades bisher,', Math.round((Date.now() - T0) / 1000), 's');
   }
@@ -85,6 +85,44 @@ for (const tf of ['m5', 'm15']) {
   out.tf[tf].grossPass = grades.filter((g) => g.gross.both.n >= 60 && g.gross.hold.n >= 15 && g.gross.both.win >= 0.5 && g.gross.train.mean > 0 && g.gross.test.mean > 0 && g.gross.hold.mean > 0 && g.gross.both.lo > 0).sort((a, b) => b.gross.both.mean - a.gross.both.mean).slice(0, 30).map((g) => ({ id: g.id, gross: g.gross, part: g.part.both, perDay: g.perDay }));
   out.tf[tf].keep = Object.fromEntries(cr.concat(bp).map((g) => [g.id, g]));
 }
+
+// ---- Gewinner gegen Verlierer: Welche Umstaende unterscheiden sie? Suche nur auf der 1. Haelfte (Training),
+// Pruefung auf 2. Haelfte und Haertetest. Bestanden nur, wenn beide spaeteren Zeitraeume im Plus sind und zusammen 60 %+ Gewinner haben.
+const FEAT = {
+  zeit: (t) => { const m = L.berlinFast(t.sig.t).min; return m < 600 ? 'vor 10' : m < 780 ? '10-13' : m < 960 ? '13-16' : m < 1140 ? '16-19' : 'ab 19'; },
+  tag: (t) => ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][L.berlinFast(t.sig.t).wd],
+  vix: (t) => t.sig.vix == null ? '?' : t.sig.vix < 15 ? 'unter 15' : t.sig.vix < 20 ? '15-20' : t.sig.vix < 25 ? '20-25' : 'ab 25',
+  usd: (t) => t.sig.usdOk == null ? 'egal' : t.sig.usdOk ? 'Dollar passt' : 'Dollar dagegen',
+  crv: (t) => t.sig.rr < 2.5 ? 'CRV unter 2,5' : t.sig.rr < 4 ? 'CRV 2,5-4' : 'CRV ab 4',
+  stop: (t) => t.riskPct < 0.15 ? 'Stop eng' : t.riskPct < 0.35 ? 'Stop mittel' : 'Stop weit',
+  smc: (t) => { const s = t.sig.conf && t.sig.conf.score; return s == null ? '?' : s <= 2 ? 'SMC 0-2' : s <= 4 ? 'SMC 3-4' : 'SMC 5-6'; },
+  trend: (t) => t.sig.withBias ? 'mit Tagestrend' : 'gegen Tagestrend',
+  markt: (t) => ({ fx: 'Devisen', cmd: 'Rohstoffe', idx: 'Indizes' })[t.cls] || t.cls,
+  ziel: (t) => t.sig.liqTarget ? 'Ziel an Liquidität' : 'Ziel fest',
+  ampel: (t) => t.ampel || '?',
+  richtung: (t) => t.sig.dir > 0 ? 'Long' : 'Short'
+};
+const rStat = (a) => { const n = a.length; if (!n) return { n: 0 }; const m = a.reduce((x, y) => x + y, 0) / n, sd = Math.sqrt(a.reduce((x, y) => x + (y - m) ** 2, 0) / Math.max(1, n - 1)); return { n, mean: +m.toFixed(3), win: +(a.filter((x) => x > 0).length / n).toFixed(3), lo: +(m - 1.96 * sd / Math.sqrt(n)).toFixed(3), t: sd ? m / sd * Math.sqrt(n) : 0 }; };
+out.mining = {};
+for (const tf of Object.keys(all)) for (const type of ['topdown', 'sweep', 'pullback', 'orb', 'lbo', 'donch', 'nr7']) {
+  const A = all[tf].filter((t) => t.type === type && t.r != null).sort((a, b) => a.at - b.at); if (A.length < 300) continue;
+  A.forEach((t) => { t.f = {}; for (const k of Object.keys(FEAT)) t.f[k] = FEAT[k](t); t.rp = t.rPart != null ? t.rPart : t.r; });
+  const s1 = A[Math.floor(A.length * 0.375)].at, s2 = A[Math.floor(A.length * 0.75)].at;
+  const TR = A.filter((t) => t.at < s1), TE = A.filter((t) => t.at >= s1 && t.at < s2), HO = A.filter((t) => t.at >= s2);
+  const keys = Object.keys(FEAT), vals = {}; keys.forEach((k) => { vals[k] = [...new Set(A.map((t) => t.f[k]))]; });
+  const conds = []; keys.forEach((k) => vals[k].forEach((v) => conds.push([[k, v]])));
+  for (let a = 0; a < keys.length; a++) for (let b = a + 1; b < keys.length; b++) vals[keys[a]].forEach((v1) => vals[keys[b]].forEach((v2) => conds.push([[keys[a], v1], [keys[b], v2]])));
+  const match = (t, c) => c.every(([k, v]) => t.f[k] === v), minN = Math.max(30, Math.floor(TR.length * 0.03));
+  const scored = conds.map((c) => ({ c, tr: rStat(TR.filter((t) => match(t, c)).map((t) => t.rp)) })).filter((x) => x.tr.n >= minN && x.tr.mean > 0 && x.tr.win >= 0.55).sort((a, b) => b.tr.t - a.tr.t).slice(0, 12);
+  const top = scored.map((x) => { const te = rStat(TE.filter((t) => match(t, x.c)).map((t) => t.rp)), ho = rStat(HO.filter((t) => match(t, x.c)).map((t) => t.rp)), both = rStat(TE.concat(HO).filter((t) => match(t, x.c)).map((t) => t.rp));
+    return { cond: x.c.map(([k, v]) => v).join(' + '), spec: x.c, train: x.tr, test: te, hold: ho, later: both, ok: te.n >= 15 && ho.n >= 10 && te.mean > 0 && ho.mean > 0 && both.win >= 0.6 && both.lo > 0 }; });
+  // Beschreibend: Anteil je Merkmal bei Gewinnern und Verlierern (alle Zeitraeume)
+  const W = A.filter((t) => t.rp > 0), Lz = A.filter((t) => t.rp <= 0), diff = [];
+  keys.forEach((k) => vals[k].forEach((v) => { const pw = W.filter((t) => t.f[k] === v).length / Math.max(1, W.length), pl = Lz.filter((t) => t.f[k] === v).length / Math.max(1, Lz.length); if (pw + pl > 0.04) diff.push({ k, v, gewinner: +pw.toFixed(3), verlierer: +pl.toFixed(3), d: +(pw - pl).toFixed(3) }); }));
+  out.mining[tf + ':' + type] = { n: A.length, base: rStat(A.map((t) => t.rp)), tested: conds.length, top, diff: diff.sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 12) };
+}
+out.minedOk = Object.entries(out.mining).flatMap(([k, m]) => m.top.filter((x) => x.ok).map((x) => ({ id: k, cond: x.cond, spec: x.spec, later: x.later })));
 writeFileSync(OUT, JSON.stringify(out) + '\n');
+console.log('Gefundene Filter, die spaeter bestehen:', JSON.stringify(out.minedOk));
 console.log(JSON.stringify({ info, creme: out.creme, bplus: out.bplus, calm: out.calm }, null, 1));
 for (const tf of Object.keys(out.tf)) { console.log(tf, out.tf[tf].n, 'Trades', out.tf[tf].days, 'Tage'); console.log(JSON.stringify(out.tf[tf].byType)); out.tf[tf].grades.slice(0, 15).forEach((g) => console.log(g.id.padEnd(40), g.part.both.n, 'win', g.part.both.win, 'mean', g.part.both.mean, '|', g.part.train.mean, g.part.test.mean, g.part.hold.mean, 'lo', g.part.both.lo, g.perDay)); }
