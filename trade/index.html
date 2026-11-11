@@ -1375,6 +1375,18 @@ function retOver(series, s, months, k, back){ var a = series[s][months[k - back]
 // Namen fuer Depot-Bausteine (bei Trade Republic als UCITS-ETF oder Sparplan handelbar)
 var DEPOT_NAMES = { '^GSPC': 'S&P 500', '^NDX': 'Nasdaq 100', '^GDAXI': 'DAX', 'GC=F': 'Gold', SPY: 'S&P 500', EFA: 'Industrieländer ohne USA (MSCI EAFE)', AGG: 'Anleihen (Aggregate)', XLK: 'US-Technologie', XLF: 'US-Finanzen', XLE: 'US-Energie', XLV: 'US-Gesundheit', XLY: 'US-Zyklischer Konsum', XLP: 'US-Basiskonsum', XLI: 'US-Industrie', XLB: 'US-Grundstoffe', XLU: 'US-Versorger' };
 function depotText(w){ var ks = Object.keys(w || {}); if (!ks.length) return 'Cash (nicht investiert)'; return ks.map(function(k){ return (DEPOT_NAMES[k] || k) + (ks.length > 1 ? ' ' + Math.round(w[k] * 100) + ' %' : ''); }).join(', '); }
+// Was man bei Trade Republic dafuer kauft: Knock-out auf den Basiswert oder ein UCITS-ETF mit (fast) gleichem Index.
+// none = kein passendes Produkt, das Signal wird dann nicht gemeldet.
+var TR_PRODUCT = {
+  '^RUT': { ko: 'Russell 2000' }, IWM: { ko: 'Russell 2000' }, DIA: { ko: 'Dow Jones' }, '^MDAXI': { ko: 'MDAX' }, '^STOXX50E': { ko: 'Euro Stoxx 50' }, '^FTSE': { ko: 'FTSE 100' },
+  '^FCHI': { ko: 'CAC 40' }, '^SSMI': { ko: 'SMI' }, '^AEX': { ko: 'AEX' }, '^IBEX': { ko: 'IBEX 35' }, 'FTSEMIB.MI': { ko: 'FTSE MIB' }, 'HG=F': { ko: 'Kupfer' },
+  XLK: { etf: 'SPDR S&P U.S. Technology Select Sector UCITS ETF' }, XLF: { etf: 'SPDR S&P U.S. Financials Select Sector UCITS ETF' }, XLE: { etf: 'SPDR S&P U.S. Energy Select Sector UCITS ETF' },
+  XLV: { etf: 'SPDR S&P U.S. Health Care Select Sector UCITS ETF' }, XLY: { etf: 'SPDR S&P U.S. Consumer Discretionary Select Sector UCITS ETF' }, XLP: { etf: 'SPDR S&P U.S. Consumer Staples Select Sector UCITS ETF' },
+  XLI: { etf: 'SPDR S&P U.S. Industrials Select Sector UCITS ETF' }, XLB: { etf: 'SPDR S&P U.S. Materials Select Sector UCITS ETF' }, XLU: { etf: 'SPDR S&P U.S. Utilities Select Sector UCITS ETF' },
+  SMH: { etf: 'VanEck Semiconductor UCITS ETF' }, XBI: { etf: 'iShares Nasdaq US Biotechnology UCITS ETF (ähnlicher Index)' }, EEM: { etf: 'iShares MSCI EM UCITS ETF' }, EWZ: { etf: 'iShares MSCI Brazil UCITS ETF' },
+  TLT: { etf: 'iShares $ Treasury Bond 20+yr UCITS ETF' }, KRE: { none: true }, ITB: { none: true }, EWJ: { etf: 'iShares Core MSCI Japan IMI UCITS ETF' }, FXI: { etf: 'iShares China Large Cap UCITS ETF' }
+};
+function trProduct(y){ return TR_PRODUCT[y] || { ko: null }; }
 // END LOGIC
 
 // ===================== App =====================
@@ -2015,6 +2027,20 @@ function viewSim(){
     (m1 ? '<p class="hint">Rechne mit Verlustserien von ' + m1.streak + ' Trades, in jedem zwanzigsten Jahr sogar ' + m1.streak95 + '. Das gehört dazu und ist kein Zeichen, dass die Strategie kaputt ist.</p>' : '') + '</section>';
 }
 // ---------- Live-Bilanz der gemeldeten Signale (echte Ergebnisse seit dem Start)
+// Live gegen Rueckrechnung je Strategie: zeigt frueh, ob eine Strategie live schlechter laeuft als erwartet
+function liveByStrategy(L2){
+  if (!L2.length) return '';
+  var grp = function(c){ c = String(c || ''); return /Crème|A\+|^A$|3×|60/.test(c) ? 'Crème (Intraday)' : (/B\+|B grün/.test(c) ? 'B+ (ab 16 Uhr)' : (/Swing/.test(c) ? 'Swing RSI-2' : (/IBS/.test(c) ? 'IBS' : (/ORB/.test(c) ? 'ORB' : 'Andere')))); };
+  var bm = V.bm || {}, b1 = V.bt1 || {}, ca = b1.cremeAll, exp = {
+    'Crème (Intraday)': ca && ca.all && ca.all.n ? ca.all.win : null,
+    'Swing RSI-2': bm.sets && bm.sets['breit:rsi2'] ? bm.sets['breit:rsi2'].all.win : null,
+    'IBS': bm.sets && (bm.sets['breit:ibs_us'] || bm.sets['ibs:idx']) ? (bm.sets['breit:ibs_us'] || bm.sets['ibs:idx']).all.win : null };
+  var g = {}; L2.forEach(function(x){ var k = grp(x.cls); (g[k] = g[k] || []).push(x.r); });
+  return '<table class="st" style="margin-top:10px"><tr><th>Strategie</th><th>Trades</th><th>Treffer</th><th>erwartet</th><th>Summe</th></tr>' + Object.keys(g).map(function(k){ var a = g[k], w = a.filter(function(r){ return r > 0; }).length / a.length, sum = a.reduce(function(x, y){ return x + y; }, 0), e = exp[k];
+    var warn = e != null && a.length >= 20 && w < e - 0.15;
+    return '<tr><td>' + esc(k) + (warn ? ' ⚠️' : '') + '</td><td>' + a.length + '</td><td>' + fmt(w * 100, 0) + ' %</td><td class="muted">' + (e != null ? fmt(e * 100, 0) + ' %' : '–') + '</td><td class="' + (sum >= 0 ? 'good' : 'bad') + '">' + sgn(sum, 1) + ' R</td></tr>'; }).join('') + '</table>' +
+    '<p class="hint">⚠️ = nach mindestens 20 Trades mehr als 15 Punkte unter der Rückrechnung. Bis dahin sind Abweichungen normal, Glück und Pech gleichen sich erst über viele Trades aus.</p>';
+}
 function viewLive(){
   var L2 = (V.trackLog || []).filter(function(x){ return x.r != null; }), open = (V.track || []).filter(function(x){ return x.state === 'wartet' || x.state === 'offen'; });
   if (!L2.length && !open.length) return '<section class="card"><h2>Live-Bilanz</h2><p class="hint">Hier stehen die echten Ergebnisse aller gemeldeten Signale, ob du sie gehandelt hast oder nicht. Das ist der ehrliche Test, ob der Vorteil auch nach der Rückrechnung hält.' + (S.cfg.push.on ? '' : ' Dafür müssen die Benachrichtigungen an sein.') + '</p></section>';
@@ -2023,6 +2049,7 @@ function viewLive(){
   var pe = paperStats();
   return '<section class="card"><div class="row"><h2>Live-Bilanz</h2><span class="muted small">gemeldete Signale' + (pe.n ? ' · ' + sgn(pe.eur, 0) + ' € auf Papier' : '') + '</span></div>' +
     (s ? '<dl class="kv"><div><dt>Trades</dt><dd>' + s.n + '</dd></div><div><dt>Summe</dt><dd class="' + (s.sum >= 0 ? 'good' : 'bad') + '">' + sgn(s.sum, 1) + ' R</dd></div><div><dt>Treffer</dt><dd>' + fmt(s.win * 100, 0) + ' %</dd></div><div><dt>Ø je Trade</dt><dd class="' + (s.mean >= 0 ? 'good' : 'bad') + '">' + sgn(s.mean, 2) + ' R</dd></div></dl>' : '') +
+    liveByStrategy(L2) +
     '<ul class="list-plain">' + open.concat((V.trackLog || []).slice().reverse().slice(0, 15)).map(function(x){ var i = instr(x.k) || { name: x.name }; return '<li><div class="row"><span><span class="pill good">' + esc(x.cls) + '</span> <b>' + esc(x.name) + '</b> <span class="' + (x.dir > 0 ? 'good' : 'bad') + '">' + (x.dir > 0 ? 'Long' : 'Short') + '</span> <span class="muted">' + dm(x.t) + ' ' + hm(x.t) + '</span></span><span class="' + (x.r == null ? 'muted' : (x.r >= 0 ? 'good' : 'bad')) + ' num">' + (x.r != null ? sgn(x.r, 2) + ' R' : esc(st[x.state] || x.state)) + '</span></div></li>'; }).join('') + '</ul></section>';
 }
 
@@ -2166,7 +2193,7 @@ function viewScalpSets(){
 }
 function viewMoreSets(){
   var b = V.bm; if (!b || !b.sets) return '';
-  var row = function(x){ return '<tr><td>' + (x.passed ? '✅ ' : '') + esc(x.name) + (x.bias === 'survivor' ? ' <span class="muted tiny">(heutige Gewinner-Aktien, zu optimistisch)</span>' : '') + '</td><td>' + x.all.n + '</td><td>' + (x.all.n ? fmt(x.all.win * 100, 0) + ' %' : '–') + '</td><td class="' + ((x.all.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.all.n ? sgn(x.all.mean, 2) + ' %' : '–') + '</td><td class="' + ((x.hold.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.hold.n ? sgn(x.hold.mean, 2) + ' %' : '–') + '</td></tr>'; };
+  var row = function(x){ return '<tr><td>' + (x.passed ? '✅ ' : '') + esc(x.name) + (x.bias === 'survivor' ? ' <span class="muted tiny">(heutige Gewinner-Aktien, zu optimistisch)</span>' : '') + (x.cost2 && x.cost2.n ? ' <span class="muted tiny">· mit doppelten Kosten ' + sgn(x.cost2.mean, 2) + ' %</span>' : '') + '</td><td>' + x.all.n + '</td><td>' + (x.all.n ? fmt(x.all.win * 100, 0) + ' %' : '–') + '</td><td class="' + ((x.all.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.all.n ? sgn(x.all.mean, 2) + ' %' : '–') + '</td><td class="' + ((x.hold.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (x.hold.n ? sgn(x.hold.mean, 2) + ' %' : '–') + '</td></tr>'; };
   return '<div class="label" style="margin-top:14px">Weitere Studien (Tag seit 2000, Stunde 2 Jahre), Ø in % je Trade nach Kosten</div><table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
     '<p class="hint">✅ heißt hier strenger: in allen drei Zeiträumen im Plus, insgesamt sicher über null und besser als einfach investiert zu sein.</p>';
 }
@@ -2285,6 +2312,8 @@ function viewMehr(){
     '<div class="label" style="margin-top:14px">Risiko pro Trade</div><div class="seg" style="margin-top:6px">' + risks.map(function(r){ return '<button data-act="risk" data-r="' + r + '" aria-pressed="' + (+c.risk === r) + '">' + fmt(r, r % 1 ? 1 : 0) + ' %</button>'; }).join('') + '</div>' +
     '<p class="hint">Bei ' + eur(c.account) + ' riskierst du ' + eur(c.account * c.risk / 100) + ' pro Trade. Die Positionsgröße im Check richtet sich danach.</p>' +
     '<div class="label" style="margin-top:14px">Tagesgrenzen</div><div class="fields f2"><label class="field"><span>Max. Trades pro Tag</span><input inputmode="numeric" data-cfg="maxTrades" value="' + esc(c.maxTrades || 2) + '"></label><label class="field"><span>Schluss bei Tagesverlust (R)</span><input inputmode="decimal" data-cfg="maxLossR" value="' + esc(fmtIn(c.maxLossR || 2, 1)) + '"></label></div>' +
+    '<div class="fields f2" style="margin-top:8px"><label class="field"><span>Max. Risiko aller offenen Trades (% vom Konto)</span><input inputmode="decimal" data-cfg="heat" value="' + esc(fmtIn(c.heat || 5, 1)) + '"></label></div>' +
+    '<p class="hint">Wenn viele Signale gleichzeitig kommen, verkleinert jede Mitteilung das Risiko automatisch, damit alle offenen Trades zusammen diese Grenze nicht überschreiten. Ist sie voll, steht ⚠️ in der Mitteilung.</p>' +
     '<p class="hint">Profis hören nach einem schlechten Tag auf. Unter „Heute“ siehst du, wenn die Grenze erreicht ist.</p></section>' + viewSim();
   h += '<section class="card"><h2>Watchlist</h2><p class="hint" style="margin-top:4px">Diese Märkte siehst du im Check und im Marktüberblick. Ihre Währungen bestimmen, welche Termine du siehst.</p><ul class="list-plain">' +
     INSTRUMENTS.concat(Object.keys(S.names).map(function(k){ return instr(k); }).filter(Boolean)).map(function(i){ return '<li><label class="switch" style="padding:0"><span>' + esc(i.name) + (i.type === 'stock' ? ' <span class="muted tiny">' + esc(i.y) + '</span>' : '') + '</span><input type="checkbox" data-watch="' + esc(i.k) + '"' + (S.watch.indexOf(i.k) >= 0 ? ' checked' : '') + '></label></li>'; }).join('') + '</ul><p class="hint">Aktien fügst du im Check über „＋ Andere“ hinzu.</p></section>';
@@ -2322,7 +2351,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -2367,7 +2396,7 @@ function bind(root){
   $$('[data-act]', root).forEach(function(el){ el.addEventListener('click', onAct); });
   $$('input[data-f]', root).forEach(function(el){ el.addEventListener('input', function(){ S.form[el.dataset.f] = el.value; if (el.dataset.f === 'ratio') S.ko[S.form.k] = el.value; save();
     if (el.dataset.f === 'entry' || el.dataset.f === 'stop'){ var kb = $('.kobox'), i = instr(S.form.k); if (kb && i){ var w = document.createElement('div'); w.innerHTML = viewKo(S.form, i); var nb = w.firstChild; kb.replaceWith(nb); bind(nb); } } }); });
-  $$('input[data-cfg]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.cfg; if (k === 'url'){ S.cfg.url = el.value.trim(); mem = {}; } else { var v = pnum(el.value); if (v >= 0) S.cfg[k] = v; } save(); rerender(); }); });
+  $$('input[data-cfg]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.cfg; if (k === 'url'){ S.cfg.url = el.value.trim(); mem = {}; } else { var v = pnum(el.value); if (v >= 0) S.cfg[k] = v; } save(); if (['account', 'risk', 'heat'].indexOf(k) >= 0) syncTrade().catch(function(){}); rerender(); }); });
   $$('input[data-watch]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.watch, i = S.watch.indexOf(k); if (el.checked && i < 0) S.watch.push(k); if (!el.checked && i >= 0) S.watch.splice(i, 1); save(); syncTrade(); }); });
   $$('input[data-push]', root).forEach(function(el){ el.addEventListener('change', function(){ S.cfg.push[el.dataset.push] = el.checked; save(); syncTrade(); }); });
   $$('input[data-fib]', root).forEach(function(el){ el.addEventListener('input', function(){ S.fib[el.dataset.fib] = el.value; save(); }); });
@@ -2432,7 +2461,7 @@ function onAct(e){
   if (a === 'closego') return closeTrade(el.dataset.id, pnum($('#xp').value));
   if (a === 'tdel'){ S.trades = S.trades.filter(function(x){ return x.id !== el.dataset.id; }); save(); return rerender(); }
   if (a === 'csv') return csv();
-  if (a === 'risk'){ S.cfg.risk = +el.dataset.r; save(); return rerender(); }
+  if (a === 'risk'){ S.cfg.risk = +el.dataset.r; save(); syncTrade().catch(function(){}); return rerender(); }
   if (a === 'lead'){ S.cfg.push.lead = +el.dataset.m; save(); syncTrade(); return rerender(); }
   if (a === 'pon') return pushOn();
   if (a === 'poff'){ post('/trade/sync', syncBody({ off: true, on: false })).catch(function(){}); S.cfg.push.on = false; V.pushMsg = ''; save(); return rerender(); }

@@ -37,6 +37,8 @@ function evalSet(name, trades, days, extra) {
   const o = Object.assign({ name, unit: '%', all: st(trades), train: st(tr), test: st(te), hold: st(ho), perDay: +(trades.length / Math.max(1, days)).toFixed(2),
     from: ts.length ? L.dayOf(ts[0]) : null }, extra || {});
   // Long-Strategien auf Tageskerzen muessen mehr bringen als einfach investiert zu sein (Ueberrendite gegen die mittlere Tagesrendite)
+  // Robustheit: dieselben Trades mit doppelten Kosten (schlechtere Ausfuehrung, hoeherer Spread)
+  if (trades.length && trades[0].cost != null) o.cost2 = st(trades.map((t) => ({ pct: t.pct - t.cost })));
   if (trades.length && trades[0].ex != null) { const ex = (a) => st(a.map((t) => ({ pct: t.ex }))); o.ex = { all: ex(trades), train: ex(tr), test: ex(te), hold: ex(ho) }; }
   o.passed = o.all.n >= 100 && o.hold.n >= 20 && o.all.lo > 0 && [o.train, o.test, o.hold].every((x) => x.n && x.mean > 0) && (!o.ex || [o.ex.train, o.ex.test, o.ex.hold].every((x) => x.n && x.mean > 0));
   return o;
@@ -52,7 +54,7 @@ const ibsT = [], tomT = [], onT = [], onTr = [];
 const drift = (d1) => { let s = 0; for (let k = 1; k < d1.length; k++) s += d1[k].c / d1[k - 1].c - 1; return s / (d1.length - 1) * 100; };
 for (const s of IDX) {
   const d1 = day[s]; if (!d1 || d1.length < 400) continue; const dr = drift(d1);
-  L.ibsSignals(d1).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'close', exitFn: L.ibsExit(d1), maxDays: 5, stopAtr: 3, costPct: COST_IDX }); if (r.pct != null) ibsT.push({ t: g.t, s, pct: r.pct, days: r.days, ex: r.pct - dr * r.days }); });
+  L.ibsSignals(d1).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'close', exitFn: L.ibsExit(d1), maxDays: 5, stopAtr: 3, costPct: COST_IDX }); if (r.pct != null) ibsT.push({ t: g.t, s, cost: COST_IDX, pct: r.pct, days: r.days, ex: r.pct - dr * r.days }); });
   L.tomSignals(d1).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'close', exitFn: L.tomExit(d1, g), maxDays: 6, stopAtr: 4, costPct: COST_IDX }); if (r.pct != null) tomT.push({ t: g.t, s, pct: r.pct, days: r.days, ex: r.pct - dr * r.days }); });
 }
 for (const s of ['SPY', 'QQQ']) { const d1 = day[s]; if (!d1 || d1.length < 400) continue; const dr = drift(d1); L.overnightTrades(d1, { costPct: COST_IDX }).forEach((x) => onT.push(Object.assign({ s, ex: x.pct - dr }, x))); L.overnightTrades(d1, { costPct: COST_IDX, trend: true }).forEach((x) => onTr.push(Object.assign({ s, ex: x.pct - dr }, x))); }
@@ -109,8 +111,8 @@ let oosDays = 0;
 for (const [s, nm, cls] of BREIT) {
   const d1 = await chart(s, '1d', 'max'); await wait(300); if (d1.length < 1500) continue;
   const dr = drift(d1), cost = COST[cls], rs = [], is = [];
-  L.rsi2DailySignals(d1).filter((g) => g.dir > 0).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'open', exitFn: sma5Exit(d1), maxDays: 10, stopAtr: 3, costPct: cost }); if (r.pct != null) rs.push({ t: g.t, s, nm, pct: r.pct, ex: r.pct - dr * r.days, days: r.days }); });
-  L.ibsSignals(d1).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'close', exitFn: L.ibsExit(d1), maxDays: 5, stopAtr: 3, costPct: cost }); if (r.pct != null) is.push({ t: g.t, s, nm, pct: r.pct, ex: r.pct - dr * r.days, days: r.days }); });
+  L.rsi2DailySignals(d1).filter((g) => g.dir > 0).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'open', exitFn: sma5Exit(d1), maxDays: 10, stopAtr: 3, costPct: cost }); if (r.pct != null) rs.push({ t: g.t, s, nm, cost, pct: r.pct, ex: r.pct - dr * r.days, days: r.days }); });
+  L.ibsSignals(d1).forEach((g) => { const r = L.simDayTrade(g, d1, { entry: 'close', exitFn: L.ibsExit(d1), maxDays: 5, stopAtr: 3, costPct: cost }); if (r.pct != null) is.push({ t: g.t, s, nm, cost, pct: r.pct, ex: r.pct - dr * r.days, days: r.days }); });
   const ins = (a) => a.filter((x) => x.t < CUT), oos = (a) => a.filter((x) => x.t >= CUT), sel = (a) => { const x = st(ins(a)), e = st(ins(a).map((y) => ({ pct: y.ex }))); return x.n >= 30 && x.win >= 0.6 && x.mean > 0 && e.mean > 0; };
   const m = { s, nm, cls, from: L.dayOf(d1[0].t), rsi2: { is: st(ins(rs)), oos: st(oos(rs)), sel: sel(rs) }, ibs: { is: st(ins(is)), oos: st(oos(is)), sel: sel(is) } };
   bm.push(m); oosDays = Math.max(oosDays, d1.filter((x) => x.t >= CUT).length);

@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '371682dffa';
+const WORKER_VER = 'ba70bc5eac';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2892,7 +2892,19 @@ function retOver(series, s, months, k, back){ var a = series[s][months[k - back]
 // Namen fuer Depot-Bausteine (bei Trade Republic als UCITS-ETF oder Sparplan handelbar)
 var DEPOT_NAMES = { '^GSPC': 'S&P 500', '^NDX': 'Nasdaq 100', '^GDAXI': 'DAX', 'GC=F': 'Gold', SPY: 'S&P 500', EFA: 'Industrieländer ohne USA (MSCI EAFE)', AGG: 'Anleihen (Aggregate)', XLK: 'US-Technologie', XLF: 'US-Finanzen', XLE: 'US-Energie', XLV: 'US-Gesundheit', XLY: 'US-Zyklischer Konsum', XLP: 'US-Basiskonsum', XLI: 'US-Industrie', XLB: 'US-Grundstoffe', XLU: 'US-Versorger' };
 function depotText(w){ var ks = Object.keys(w || {}); if (!ks.length) return 'Cash (nicht investiert)'; return ks.map(function(k){ return (DEPOT_NAMES[k] || k) + (ks.length > 1 ? ' ' + Math.round(w[k] * 100) + ' %' : ''); }).join(', '); }
-  return { depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
+// Was man bei Trade Republic dafuer kauft: Knock-out auf den Basiswert oder ein UCITS-ETF mit (fast) gleichem Index.
+// none = kein passendes Produkt, das Signal wird dann nicht gemeldet.
+var TR_PRODUCT = {
+  '^RUT': { ko: 'Russell 2000' }, IWM: { ko: 'Russell 2000' }, DIA: { ko: 'Dow Jones' }, '^MDAXI': { ko: 'MDAX' }, '^STOXX50E': { ko: 'Euro Stoxx 50' }, '^FTSE': { ko: 'FTSE 100' },
+  '^FCHI': { ko: 'CAC 40' }, '^SSMI': { ko: 'SMI' }, '^AEX': { ko: 'AEX' }, '^IBEX': { ko: 'IBEX 35' }, 'FTSEMIB.MI': { ko: 'FTSE MIB' }, 'HG=F': { ko: 'Kupfer' },
+  XLK: { etf: 'SPDR S&P U.S. Technology Select Sector UCITS ETF' }, XLF: { etf: 'SPDR S&P U.S. Financials Select Sector UCITS ETF' }, XLE: { etf: 'SPDR S&P U.S. Energy Select Sector UCITS ETF' },
+  XLV: { etf: 'SPDR S&P U.S. Health Care Select Sector UCITS ETF' }, XLY: { etf: 'SPDR S&P U.S. Consumer Discretionary Select Sector UCITS ETF' }, XLP: { etf: 'SPDR S&P U.S. Consumer Staples Select Sector UCITS ETF' },
+  XLI: { etf: 'SPDR S&P U.S. Industrials Select Sector UCITS ETF' }, XLB: { etf: 'SPDR S&P U.S. Materials Select Sector UCITS ETF' }, XLU: { etf: 'SPDR S&P U.S. Utilities Select Sector UCITS ETF' },
+  SMH: { etf: 'VanEck Semiconductor UCITS ETF' }, XBI: { etf: 'iShares Nasdaq US Biotechnology UCITS ETF (ähnlicher Index)' }, EEM: { etf: 'iShares MSCI EM UCITS ETF' }, EWZ: { etf: 'iShares MSCI Brazil UCITS ETF' },
+  TLT: { etf: 'iShares $ Treasury Bond 20+yr UCITS ETF' }, KRE: { none: true }, ITB: { none: true }, EWJ: { etf: 'iShares Core MSCI Japan IMI UCITS ETF' }, FXI: { etf: 'iShares China Large Cap UCITS ETF' }
+};
+function trProduct(y){ return TR_PRODUCT[y] || { ko: null }; }
+  return { trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
 const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
@@ -3019,7 +3031,7 @@ async function tradeRoute(request, headers, env, nowMs) {
       scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix', 'creme'].includes(b.quality) ? b.quality : 'creme',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
-      swing: b.swing !== false, bgreen: b.bgreen !== false, ibsOn: b.ibs !== false, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
+      swing: b.swing !== false, bgreen: b.bgreen !== false, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null };
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
@@ -3102,6 +3114,25 @@ async function moreCfg(env, nowMs) {
     });
     return c.data || {};
   } catch (e) { return {}; }
+}
+// Produkt bei Trade Republic und Risiko fuer diesen Trade: Obergrenze fuer alle offenen Positionen zusammen (heat, % vom Konto)
+function openCount(t) {
+  return (t.swingPos || []).filter((p) => p.state === 'offen' || p.state === 'wartet').length + (t.ibsPos || []).filter((p) => p.state === 'offen').length
+    + (t.track || []).filter((x) => x.state === 'wartet' || x.state === 'offen').length;
+}
+function riskTxt(t, stopPct) {
+  if (!(t.acct > 0 && t.riskP > 0)) return '';
+  const n = openCount(t), heat = t.heat || 5, hs = String(heat).replace('.', ','), room = heat - n * t.riskP;
+  const rp = Math.max(0, Math.min(t.riskP, room)), eur = Math.round(t.acct * rp / 100);
+  if (rp < t.riskP * 0.25) return ' ⚠️ Risikobudget voll: schon ' + n + ' Positionen offen (Grenze ' + hs + ' % vom Konto). Diesen auslassen oder erst nach einem Ausstieg.';
+  const stake = stopPct > 0 ? Math.round(eur / (stopPct / 100) / 10) * 10 : null;
+  return ' Risiko: ' + eur + ' €' + (rp < t.riskP ? ' (verkleinert, ' + n + ' Positionen offen, Grenze ' + hs + ' %)' : '') + (stake ? ', ohne Hebel ca. ' + stake.toLocaleString('de-DE') + ' € Positionsgröße' : '') + '.';
+}
+function tradeTxt(t, ins, stopPct) {
+  const pr = TL.trProduct(ins.y), r = riskTxt(t, stopPct);
+  if (pr.etf) { const eur = t.acct > 0 && t.riskP > 0 ? t.acct * t.riskP / 100 / (stopPct / 100) : 0;
+    return ' Bei Trade Republic: ' + pr.etf + ' (ohne Hebel).' + r + (eur && eur < 3000 ? ' Hinweis: Unter ca. 3.000 € Positionsgröße frisst die Ordergebühr den Vorteil.' : ''); }
+  return ' Bei Trade Republic: Knock-out auf ' + (pr.ko || ins.name) + '.' + r;
 }
 const nyMin = (ms) => { const p = {}; new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms)).forEach((x) => { p[x.type] = x.value; }); return (+p.hour) * 60 + (+p.minute); };
 async function runTrade(env, nowMs) {
@@ -3368,7 +3399,7 @@ async function runTrade(env, nowMs) {
           const proof = gs && gs.n ? (t.quality === 'creme' && q.statsP ? ' Mit Teilgewinn bisher: ' : ' Bisher: ') + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Gewinner, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' + (gs.win < 0.6 && mixLbl !== 'B+' ? ' ⚠️ Unter deiner 60-%-Marke.' : '') : '';
           const bgTxt = mixLbl === 'B grün' ? ' B-Setup mit allen Pflicht-Bedingungen: Ampel grün ✓, ' + (g.dir > 0 ? 'Discount' : 'Premium') + ' ✓, Ziel an Liquidität ✓, CRV ' + g.rr.toFixed(1).replace('.', ',') + ' ✓.' + (gs && gs.n ? '' : ' Diese Stufe wird ab der nächsten Rückrechnung gemessen.') : '';
           sig.winRate = gs && gs.n ? Math.round(gs.win * 1000) / 1000 : null;
-          await send('s:' + id, { title: ((t.quality === 'mix' || t.quality === 'creme') ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · TP1 ' + fmtp(sig.tp1, ins.k) + ' (Hälfte schließen, Stop auf Einstand) · TP2 ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + bgTxt + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+          await send('s:' + id, { title: ((t.quality === 'mix' || t.quality === 'creme') ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · TP1 ' + fmtp(sig.tp1, ins.k) + ' (Hälfte schließen, Stop auf Einstand) · TP2 ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + bgTxt + riskTxt(t, 0) + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
         }
       }
     }
@@ -3381,7 +3412,7 @@ async function runTrade(env, nowMs) {
     if (sw.length || sel.length) {
       const idxOnly = !sw.includes('rsi2d:long');
       // Breite (32 Maerkte, ab 2014 geprueft) ersetzt die Einzelaktien, deren Rueckrechnung durch die Gewinner-Auswahl zu gut war
-      const uni = sel.length ? sel.map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: m.cls })
+      const uni = sel.length ? sel.filter((m) => !TL.trProduct(m.s).none).map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: m.cls })
         : ['SPX', 'NDX', 'DJI', 'DAX', 'XAUUSD'].map((k) => TL.instrumentByKey(k)).concat(idxOnly ? [] : TL.PLAY_STOCKS.slice(0, 30).map(TL.stockInstrument)).filter(Boolean);
       // a) Neue Signale nach dem US-Handelsschluss (22:10-23:30): Tageskerze ist fertig
       if (clk.min >= 22 * 60 + 10 && clk.min < 23 * 60 + 30) {
@@ -3394,7 +3425,7 @@ async function runTrade(env, nowMs) {
           if (!g || t.swingPos.some((p) => p.k === ins.k && (p.state === 'wartet' || p.state === 'offen'))) continue;
           const id = ins.k + ':rsi2d:' + dayKey, stopRef = g.close - 3 * g.atr, s0 = sel.length ? (qb.stats && qb.stats['breit:rsi2']) : (qx.stats && qx.stats[sw[0]]);
           t.swingPos.push({ id, k: ins.k, y: ins.y, name: ins.name, eu: EU_Y.includes(ins.y), etf: ins.type === 'etf', dir: 1, sigDay: dayKey, ref: g.close, atr: g.atr, stop: stopRef, state: 'wartet', at: nowMs });
-          await send('w:' + id, { title: 'Swing-Signal · ' + ins.name, body: ins.name + ' Long (Connors RSI-2): Kurs über dem 200-Tage-Schnitt, RSI(2) ' + g.rsi.toFixed(0) + '. Morgen zur Eröffnung kaufen (zuletzt ' + fmtp(g.close, ins.k) + '). Stop 3 ATR: ca. ' + fmtp(stopRef, ins.k) + '. Verkauft wird, sobald der Kurs über dem 5-Tage-Schnitt schließt, spätestens nach 10 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + (s0.unit === '%' ? ' % nach Kosten.' : ' R.') : '') + (ins.type === 'etf' ? ' Umsetzen über einen passenden UCITS-ETF (bei Trade Republic gibt es keine US-ETFs).' : ''), tag: 'swing-' + ins.k, url: './' });
+          await send('w:' + id, { title: 'Swing-Signal · ' + ins.name, body: ins.name + ' Long (Connors RSI-2): Kurs über dem 200-Tage-Schnitt, RSI(2) ' + g.rsi.toFixed(0) + '. Morgen zur Eröffnung kaufen (zuletzt ' + fmtp(g.close, ins.k) + '). Stop 3 ATR: ca. ' + fmtp(stopRef, ins.k) + '. Verkauft wird, sobald der Kurs über dem 5-Tage-Schnitt schließt, spätestens nach 10 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + (s0.unit === '%' ? ' % nach Kosten.' : ' R.') : '') + tradeTxt(t, ins, 3 * g.atr / g.close * 100), tag: 'swing-' + ins.k, url: './' });
         }
       }
       // b) Offene Swing-Positionen kurz vor Handelsschluss pruefen (DAX 17:15, sonst 21:40)
@@ -3428,7 +3459,7 @@ async function runTrade(env, nowMs) {
     t.ibsPos = Array.isArray(t.ibsPos) ? t.ibsPos : []; t.ibsSent = t.ibsSent || {};
     // Universum: alle US-Indizes und US-Sektoren, wenn die Regionen-Pruefung besteht (Europa faellt seit 2014 durch), sonst die 3 US-Indizes
     const us = qm.ibsUS && qm.ibsUS.ok ? qm.ibsUS.syms : null;
-    const uni = us ? us.map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: /^\^/.test(m.s) ? 'idx' : 'etf' })
+    const uni = us ? us.filter((m) => !TL.trProduct(m.s).none).map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: /^\^/.test(m.s) ? 'idx' : 'etf' })
       : ((qm.passed || []).includes('ibs:idx') ? ['SPX', 'NDX', 'DJI'].map((k) => TL.instrumentByKey(k)) : []);
     if (uni.length) {
       const ny = nyMin(nowMs), s0 = qm.stats && qm.stats[us ? 'breit:ibs_us' : 'ibs:idx'], win = ny >= 15 * 60 + 40 && ny < 15 * 60 + 56;
@@ -3461,7 +3492,7 @@ async function runTrade(env, nowMs) {
         if (!(last.c > sma && ib < 0.2 && atr)) continue;
         const id = k + ':ibs:' + dayKey, stop = last.c - 3 * atr;
         t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf' });
-        await send('b:' + id, { title: 'IBS-Signal · ' + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + (ins.type === 'etf' ? ' Umsetzen über einen passenden UCITS-ETF (US-ETFs gibt es bei Trade Republic nicht).' : '') + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : ''), tag: 'ibs-' + k, url: './' });
+        await send('b:' + id, { title: 'IBS-Signal · ' + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : ''), tag: 'ibs-' + k, url: './' });
       }
     }
     t.ibsPos = t.ibsPos.filter((p) => p.state === 'offen' || nowMs - (p.exitAt || p.at) < 3 * 86400e3);
