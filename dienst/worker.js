@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'daed5d9aed';
+const WORKER_VER = 'd3a7b14ed8';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2506,10 +2506,63 @@ function scanTopDown(c, opt){
   }
   return out;
 }
+// Elliott Welle 3 (Prechter/Frost + Fibonacci + RSI, hybrider Regel-Ansatz):
+// 1) Welle 1 = abgeschlossener Impuls (grosser Zickzack-Schenkel, moeglichst 5-teilig: steigende Hochs und Tiefs im kleinen Zickzack)
+// 2) Welle 2 korrigiert in 50-78,6 % von Welle 1, ohne den Start von Welle 1 zu unterschreiten
+// 3) Ausloeser: Umkehrkerze (Schluss ueber dem Vorkerzen-Hoch) oder Bruch des letzten kleinen Hochs in Welle 2; RSI dreht aus Tiefzone als Zusatz
+// 4) Stop knapp unter dem Start von Welle 1, Ziel 161,8 % von Welle 1 ab dem Tief von Welle 2. Keine eindeutige Zaehlung = kein Trade.
+function causalZZ(c, a, mult){
+  var piv = [], trend = 0, hi = { i: 0, p: c[0].h }, lo = { i: 0, p: c[0].l };
+  for (var i = 1; i < c.length; i++){
+    var th = (a[i] || (c[i].h - c[i].l)) * mult;
+    if (trend >= 0 && c[i].h > hi.p) hi = { i: i, p: c[i].h };
+    if (trend <= 0 && c[i].l < lo.p) lo = { i: i, p: c[i].l };
+    if (trend >= 0 && hi.i < i && hi.p - c[i].l >= th){ piv.push({ i: hi.i, p: hi.p, type: 'H', ci: i }); trend = -1; lo = { i: i, p: c[i].l }; }
+    else if (trend <= 0 && lo.i < i && c[i].h - lo.p >= th){ piv.push({ i: lo.i, p: lo.p, type: 'L', ci: i }); trend = 1; hi = { i: i, p: c[i].h }; }
+  }
+  return piv;
+}
+function scanWave3(c, opt){
+  opt = opt || {}; var instr = opt.instr, out = [], kz = killzones(instr); if (c.length < 80) return out;
+  var P = prep(c, opt), a = atrSeries(c), rs = rsiSeries(c, 14), big = causalZZ(c, a, 2.0), small = causalZZ(c, a, 0.8), used = {};
+  for (var i = 30; i < c.length; i++){
+    if (i < P.from) continue;
+    var b = P.bp[i]; if (b.wd === 0 || b.wd === 6 || !kz.some(function(z){ return b.min >= z[0] && b.min < z[1]; })) continue;
+    // letzte zwei bis Kerze i bestaetigte grosse Pivots: Start (S) und Ende (E) von Welle 1
+    var k = -1; for (var q = big.length - 1; q >= 0; q--) if (big[q].ci <= i){ k = q; break; }
+    if (k < 1) continue;
+    var E = big[k], S = big[k - 1], dir = E.type === 'H' ? 1 : -1, len = (E.p - S.p) * dir; if (!(len > 0) || used[E.i]) continue;
+    var at = a[i]; if (!at || len < 3 * at) continue;
+    // Welle 2: Extrem seit dem Ende von Welle 1 bis jetzt
+    var w2 = E.p, w2i = E.i; for (q = E.i + 1; q <= i; q++){ var v = dir > 0 ? c[q].l : c[q].h; if ((v - w2) * dir < 0){ w2 = v; w2i = q; } }
+    var depth = (E.p - w2) * dir / len; if (depth < 0.5 || depth >= 1) continue;
+    if (depth > 0.786){ used[E.i] = 1; continue; }                       // zu tief: Zaehlung unsicher, auslassen
+    var now = (E.p - c[i].c) * dir / len; if (now < 0.3 || i === w2i) continue;   // schon zu weit gelaufen bzw. Tief noch in dieser Kerze
+    // 5-teiliger Impuls? kleine Pivots zwischen S und E: steigende Hochs und Tiefs (Long)
+    var sp = small.filter(function(x){ return x.i > S.i && x.i < E.i && x.ci <= i; }), hs = sp.filter(function(x){ return x.type === (dir > 0 ? 'H' : 'L'); }), ls = sp.filter(function(x){ return x.type === (dir > 0 ? 'L' : 'H'); });
+    var mono = function(arr){ for (var z = 1; z < arr.length; z++) if ((arr[z].p - arr[z - 1].p) * dir <= 0) return false; return true; };
+    var five = hs.length >= 2 && ls.length >= 2 && mono(hs) && mono(ls);
+    // Ausloeser
+    var candle = (c[i].c - c[i - 1][dir > 0 ? 'h' : 'l']) * dir > 0 && (c[i].c - c[i].o) * dir > 0;
+    var minor = small.filter(function(x){ return x.i > E.i && x.i < i && x.ci <= i && x.type === (dir > 0 ? 'H' : 'L'); }).pop();
+    var line = minor && (c[i].c - minor.p) * dir > 0 && (c[i - 1].c - minor.p) * dir <= 0;
+    if (!candle && !line) continue;
+    var rmin = null; for (q = E.i; q <= i; q++) if (rs[q] != null) rmin = rmin == null ? rs[q] : (dir > 0 ? Math.min(rmin, rs[q]) : Math.max(rmin, rs[q]));
+    var rsiOk = rs[i] != null && rs[i - 1] != null && (rs[i] - rs[i - 1]) * dir > 0 && rmin != null && (dir > 0 ? rmin < 40 : rmin > 60);
+    var entry = c[i].c, stop = S.p - dir * 0.1 * at, target = w2 + dir * 1.618 * len, risk = (entry - stop) * dir; if (!(risk > 0)) continue;
+    var rr = (target - entry) * dir / risk; if (rr < 1.5) continue;
+    used[E.i] = 1;
+    var sg = mk(P, instr, c, i, 'wave3', 'Elliott Welle 3 (' + (five ? '5-teilige Welle 1, ' : '') + 'Welle 2 bei ' + String(Math.round(depth * 1000) / 10).replace('.', ',') + ' %' + (rsiOk ? ', RSI dreht' : '') + ')', dir, 'market', entry, stop, target,
+      { liqTarget: false, level: E.p, w3: { s: S.p, e: E.p, w2: w2, depth: depth, five: five, rsiOk: rsiOk, trig: line ? 'Linie' : 'Kerze', t1: w2 + dir * len, t2: target } });
+    if (sg) out.push(sg);
+  }
+  return out;
+}
 var SETUPS = {
   sweep: { name: 'Liquidity Sweep', fn: function(c, o){ return scanSetups(c, o); } },
   pullback: { name: 'Trend-Pullback', fn: function(c, o){ return scanPullbacks(c, o); } },
   topdown: { name: 'Top-down (Tag → OTE → Struktur)', fn: scanTopDown },
+  wave3: { name: 'Elliott Welle 3', fn: scanWave3 },
   orb: { name: 'Opening Range Breakout', fn: scanORB },
   lbo: { name: 'London-Breakout', fn: scanLBO },
   donch: { name: 'Donchian-Ausbruch', fn: scanDonchian },
@@ -2690,6 +2743,11 @@ function confluence(sig, c){
 }
 // ---- Qualitaetsstufen: feste Liste, die Auswahl trifft die Rueckrechnung (Jahr 1), geprueft wird auf Jahr 2
 var GRADES = [
+  { id: 'w3_five', name: 'Welle 3: Welle 1 klar 5-teilig', fn: function(s){ return !!(s.w3 && s.w3.five); } },
+  { id: 'w3_rsi', name: 'Welle 3: RSI dreht aus der Tiefzone', fn: function(s){ return !!(s.w3 && s.w3.rsiOk); } },
+  { id: 'w3_golden', name: 'Welle 3: Welle 2 bei 50-61,8 %', fn: function(s){ return !!(s.w3 && s.w3.depth <= 0.618); } },
+  { id: 'w3_five_rsi', name: 'Welle 3: 5-teilig + RSI', fn: function(s){ return !!(s.w3 && s.w3.five && s.w3.rsiOk); } },
+  { id: 'w3_five_trend', name: 'Welle 3: 5-teilig + Tagestrend', fn: function(s){ return !!(s.w3 && s.w3.five && s.withBias); } },
   { id: 'alle', name: 'Alle Signale', fn: function(s, a){ return true; } },
   { id: 'trend', name: 'Mit Tagestrend', fn: function(s){ return s.withBias; } },
   { id: 'trend_liq', name: 'Trend + Ziel an Liquidität', fn: function(s){ return s.withBias && s.liqTarget; } },
