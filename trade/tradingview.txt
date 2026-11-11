@@ -1,3 +1,6 @@
+//@version=5
+indicator("Trade Check · SMC Konfluenz Pro", "TC SMC Pro", overlay = true, max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © Trade Check
 //
@@ -16,9 +19,6 @@
 // sonst 2,5R. TP1 = +1R (Hälfte verkaufen, Stop auf Einstand). Tagestrend = Vortagesschluss über/unter EMA 50 (Tag).
 // Nichts in diesem Indikator schaut in die Zukunft: Tages-, 4H- und VIX-Werte stammen aus abgeschlossenen Kerzen.
 // Empfohlener Chart: 1 Stunde (dort wurden die Stufen getestet). Kein Anlagerat; jede Statistik stammt aus der Rückrechnung.
-
-//@version=5
-indicator("Trade Check · SMC Konfluenz Pro", "TC SMC Pro", overlay = true, max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ───────────────────────── Eingaben ─────────────────────────
 G1 = "★ Signale (Crème)"
