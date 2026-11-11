@@ -1,12 +1,9 @@
-# Rueckrechnung fuer Trade Check mit echten Kursen der letzten 60 Tage (jeden Sonntag und bei Aenderungen am Scanner)
+# Rueckrechnung fuer Trade Check mit echten Kursen der letzten 60 Tage (jeden Sonntag, sonst von Hand)
 name: Rueckrechnung
 on:
   workflow_dispatch:
   schedule:
     - cron: '23 18 * * 0'
-  push:
-    branches: [main]
-    paths: ['trade/index.html', 'dienst/backtest.mjs', 'dienst/backtest2.mjs', 'dienst/backtest3.mjs', 'dienst/backtest4.mjs']
 permissions:
   contents: write
 concurrency: backtest

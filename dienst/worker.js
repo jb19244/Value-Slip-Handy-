@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '0c31f9d22d';
+const WORKER_VER = 'd2500e05ac';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3807,7 +3807,7 @@ export default {
   },
   async scheduled(event, env, ctx) {
     const at = event && event.scheduledTime ? event.scheduledTime : Date.now();
-    ctx.waitUntil(runCron(env, at));
+    // Value Slip (Sportwetten) ist abgeschaltet, nur noch Trade Check
     ctx.waitUntil(runTrade(env, at).catch(() => null));
   }
 };
