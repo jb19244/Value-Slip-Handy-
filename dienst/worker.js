@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'd3a7b14ed8';
+const WORKER_VER = '38eb8b8bd2';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2563,6 +2563,7 @@ var SETUPS = {
   pullback: { name: 'Trend-Pullback', fn: function(c, o){ return scanPullbacks(c, o); } },
   topdown: { name: 'Top-down (Tag → OTE → Struktur)', fn: scanTopDown },
   wave3: { name: 'Elliott Welle 3', fn: scanWave3 },
+  wave3s: { name: 'Elliott Welle 3 (bis Ziel halten, max. 5 Tage)', fn: function(c, o){ return scanWave3(c, o).map(function(g){ g.type = 'wave3s'; g.days = 5; return g; }); } },
   orb: { name: 'Opening Range Breakout', fn: scanORB },
   lbo: { name: 'London-Breakout', fn: scanLBO },
   donch: { name: 'Donchian-Ausbruch', fn: scanDonchian },
@@ -2801,7 +2802,7 @@ function simulate(sig, c, cost){
   var risk = (entry - sig.stop) * sig.dir;
   if (!(risk > 0)){ r.how = 'ungültig'; return r; }
   r.filled = true; r.fillT = c[fill].t; r.entry = entry;
-  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk, beOn = false, pt = 0;
+  var day = berlinFast(c[fill].t).key, rr = (sig.target - entry) * sig.dir / risk, beOn = false, pt = 0, nd = 0;
   // Teilgewinn (sig.part): bei +1R die Haelfte schliessen, Rest mit Stop auf Einstand bis Ziel oder Tagesende
   var fin = function(v){ return pt ? 0.5 + 0.5 * v : v; };
   for (i = fill; i < n; i++){
@@ -2823,7 +2824,9 @@ function simulate(sig, c, cost){
       var sm = 0; for (var q2 = 0; q2 < mN; q2++) sm += c[i - q2].c; sm /= mN;
       if ((x.c - sm) * sig.dir > 0){ r.r = fin((x.c - entry) * sig.dir / risk); r.how = mN + 'er-Schnitt'; r.exitT = x.t; break; }
     }
-    if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = fin(((i > fill ? x.o : x.c) - entry) * sig.dir / risk); r.how = 'Tagesende'; r.exitT = x.t; break; }
+    // Swing-Variante (sig.days): ueber Nacht halten bis Stop/Ziel, spaetestens nach sig.days Handelstagen
+    if (sig.days){ if (bpx.key !== day){ day = bpx.key; nd = (nd || 0) + 1; } if (nd >= sig.days){ r.r = fin((x.o - entry) * sig.dir / risk); r.how = 'Zeit'; r.exitT = x.t; break; } }
+    else if (bpx.key !== day || bpx.min >= 21 * 60 + 45){ r.r = fin(((i > fill ? x.o : x.c) - entry) * sig.dir / risk); r.how = 'Tagesende'; r.exitT = x.t; break; }
   }
   if (r.r == null){ r.filled = true; r.how = 'läuft'; return r; }
   r.mae = Math.max(r.mae, -1);
