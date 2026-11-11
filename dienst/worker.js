@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '2834470932';
+const WORKER_VER = '94ba236843';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3217,11 +3217,11 @@ async function tradeRoute(request, headers, env, nowMs) {
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
       swing: b.swing !== false, bgreen: b.bgreen !== false, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
-      orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null };
+      orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null) };
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
-    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), swingPos: next.swingPos, ibsPos: next.ibsPos, log: (t.log || []).slice(-10), now: nowMs }, headers);
+    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), swingPos: next.swingPos, ibsPos: next.ibsPos, brief: next.brief || null, log: (t.log || []).slice(-10), now: nowMs }, headers);
   }
   if (path === '/trade/test') {
     if (!validSub(t.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in Trade Check ein.', headers);
@@ -3722,6 +3722,47 @@ async function runTrade(env, nowMs) {
     }
   }
   if (t.track) t.track = t.track.filter((x) => x.state === 'wartet' || x.state === 'offen' || nowMs - (x.exitAt || x.at) < 86400e3);
+  // 11) Morgen-Briefing (07:45) und Abend-Bilanz (22:15) an Werktagen: Lage, Termine, offene Positionen, Ergebnis des Tages
+  if (weekday && t.brief !== false) {
+    const pct = (x) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(1).replace('.', ',') + ' %';
+    const eurR = t.acct > 0 && t.riskP > 0 ? t.acct * t.riskP / 100 : 0;
+    const highs = async (from, to) => { let c = cal; if (!c) { try { c = (await getCalendar(env, nowMs)).data; } catch (e) { c = []; } }
+      return (c || []).filter((e) => e.impact === 'High' && (!t.ccys || !t.ccys.length || t.ccys.includes(e.country))).map((e) => Object.assign({}, e, { t: Date.parse(e.date) })).filter((e) => e.t >= from && e.t < to).slice(0, 5); };
+    const openPos = () => [].concat((t.ibsPos || []).filter((p) => p.state === 'offen').map((p) => p.name + ' (IBS)'), (t.swingPos || []).filter((p) => p.state === 'offen' || p.state === 'wartet').map((p) => p.name + ' (Swing' + (p.state === 'wartet' ? ', Kauf zur Eröffnung' : '') + ')'), (t.track || []).filter((x) => x.state === 'wartet' || x.state === 'offen').map((x) => x.name + ' (' + x.cls + ')'));
+    t.briefs = t.briefs || {};
+    if (clk.min >= 7 * 60 + 45 && clk.min < 8 * 60 && !t.briefs['m:' + dayKey]) {
+      const mk = [['ES=F', 'S&P-Future'], ['NQ=F', 'Nasdaq-Future'], ['GC=F', 'Gold'], ['EURUSD=X', 'EUR/USD']], moves = [];
+      for (const [sym, nm] of mk) { const c = await candlesOf(sym, '1d', '5d'); if (c && c.length > 1) moves.push(nm + ' ' + pct((c[c.length - 1].c / c[c.length - 2].c - 1) * 100)); }
+      const vx = await candlesOf('^VIX', '1d', '5d'), vix = vx && vx.length ? vx[vx.length - 1].c : null;
+      const ev = await highs(nowMs, nowMs + 16 * 3600e3), op = openPos();
+      const y = (t.trackLog || []).filter((x) => x.r != null && berlinDay(x.t) !== dayKey && nowMs - x.t < 4 * 86400e3);
+      const lastDay = y.length ? berlinDay(y[y.length - 1].t) : null, yd = y.filter((x) => berlinDay(x.t) === lastDay), yr = yd.reduce((a, x) => a + x.r, 0);
+      const lines = [];
+      if (moves.length) lines.push('Über Nacht: ' + moves.join(', ') + '.');
+      if (vix != null) lines.push('VIX ' + vix.toFixed(1).replace('.', ',') + (vix >= 25 ? ': nervöser Markt, Positionen kleiner.' : vix >= 18 ? ': lebhaft, gut für die Crème-Setups.' : ': ruhig, eher wenige Signale.'));
+      lines.push(ev.length ? 'Termine: ' + ev.map((e) => hhmm(e.t) + ' ' + e.country + ' ' + e.title).join(', ') + '. 15 Min davor und danach keine neuen Trades.' : 'Keine wichtigen Termine heute.');
+      lines.push(op.length ? 'Offen: ' + op.join(', ') + '.' : 'Keine offenen Positionen.');
+      if (yd.length) lines.push('Letzter Handelstag: ' + yd.length + ' Signal' + (yd.length > 1 ? 'e' : '') + ', ' + (yr >= 0 ? '+' : '−') + Math.abs(yr).toFixed(1).replace('.', ',') + ' R' + (eurR ? ' (' + (yr >= 0 ? '+' : '−') + Math.round(Math.abs(yr) * eurR) + ' €)' : '') + '.');
+      lines.push('Ablauf: Scanner ab 08:00 (London) und 14:30 (New York), IBS-Check 21:45.');
+      t.briefs['m:' + dayKey] = 1; t.brief = { kind: 'm', day: dayKey, at: nowMs, lines }; dirty = true;
+      await send('bm:' + dayKey, { title: 'Morgen-Briefing', body: lines.join(' '), tag: 'brief', url: './' });
+    }
+    if (clk.min >= 22 * 60 + 15 && clk.min < 22 * 60 + 30 && !t.briefs['e:' + dayKey]) {
+      const td = (t.trackLog || []).filter((x) => berlinDay(x.t) === dayKey), done = td.filter((x) => x.r != null), sr = done.reduce((a, x) => a + x.r, 0), win = done.filter((x) => x.r > 0).length;
+      const ib = (t.ibsPos || []).filter((p) => p.day === dayKey), ibx = (t.ibsPos || []).filter((p) => p.state !== 'offen' && p.exitAt && berlinDay(p.exitAt) === dayKey && p.pct != null);
+      const tomorrow = Date.parse(dayKey + 'T22:00:00Z') + 2 * 3600e3, ev = await highs(tomorrow, tomorrow + 24 * 3600e3), op = openPos();
+      const lines = [];
+      lines.push(done.length ? 'Heute: ' + done.length + ' Signal' + (done.length > 1 ? 'e' : '') + ' abgeschlossen, ' + win + ' im Plus, zusammen ' + (sr >= 0 ? '+' : '−') + Math.abs(sr).toFixed(1).replace('.', ',') + ' R' + (eurR ? ' (' + (sr >= 0 ? '+' : '−') + Math.round(Math.abs(sr) * eurR) + ' € bei ' + Math.round(eurR) + ' € Risiko je Trade)' : '') + '.' : 'Heute kein Intraday-Signal abgeschlossen. Kein Signal ist auch ein Ergebnis: die Regeln haben nichts Gutes gesehen.');
+      if (ibx.length) lines.push('Verkauft: ' + ibx.map((p) => p.name + ' ' + pct(p.pct)).join(', ') + '.');
+      if (ib.length) lines.push('Neu gekauft (IBS): ' + ib.map((p) => p.name).join(', ') + '.');
+      lines.push(op.length ? 'Über Nacht offen: ' + op.join(', ') + '.' : 'Nichts über Nacht offen.');
+      lines.push(ev.length ? 'Morgen wichtig: ' + ev.map((e) => hhmm(e.t) + ' ' + e.country + ' ' + e.title).join(', ') + '.' : 'Morgen keine wichtigen Termine.');
+      if (done.length) lines.push('Trag in der App unter Tagebuch ein, welche du wirklich gehandelt hast.');
+      t.briefs['e:' + dayKey] = 1; t.brief = { kind: 'e', day: dayKey, at: nowMs, lines }; dirty = true;
+      await send('be:' + dayKey, { title: 'Abend-Bilanz', body: lines.join(' '), tag: 'brief', url: './' });
+    }
+    for (const k of Object.keys(t.briefs)) if (k.slice(2) < berlinDay(nowMs - 5 * 86400e3)) { delete t.briefs[k]; dirty = true; }
+  }
   // Aufraeumen: alte Sendungen vergessen
   for (const k of Object.keys(t.sent)) if (nowMs - t.sent[k] > 3 * 86400e3) { delete t.sent[k]; dirty = true; }
   if (dirty) await env.VS.put('trade', JSON.stringify(t));
