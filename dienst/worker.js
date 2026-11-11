@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '70e6ebd119';
+const WORKER_VER = '371682dffa';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3096,7 +3096,9 @@ async function moreCfg(env, nowMs) {
       // Breite: Maerkte, auf denen RSI-2 bis 2013 bestand und ab 2014 gezaehlt wurde (ohne Asien: Handelszeit passt nicht)
       const ASIA = ['^N225', '^HSI', '^AXJO', 'EWJ', 'FXI'], br = j.breadth && j.sets && j.sets['breit:rsi2'];
       const rsiSel = br && br.swingOk ? j.breadth.markets.filter((m) => m.rsi2 && m.rsi2.sel && !ASIA.includes(m.s)).map((m) => ({ s: m.s, nm: m.nm, cls: m.cls })) : [];
-      return { passed: j.passed || [], depotPassed: j.depotPassed || [], stats, depot, depotMonth: any ? depot[any].nowMonth : null, rsiSel };
+      const iu = j.sets && j.sets['breit:ibs_us'], nm = {}; ((j.breadth && j.breadth.markets) || []).forEach((m) => { nm[m.s] = m.nm; });
+      const ibsUS = iu && iu.swingOk ? { ok: true, syms: (iu.syms || []).map((s2) => ({ s: s2, nm: nm[s2] || s2 })) } : null;
+      return { passed: j.passed || [], depotPassed: j.depotPassed || [], stats, depot, depotMonth: any ? depot[any].nowMonth : null, rsiSel, ibsUS };
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -3424,12 +3426,21 @@ async function runTrade(env, nowMs) {
   if (t.ibsOn !== false && weekday) {
     const qm = await moreCfg(env, nowMs);
     t.ibsPos = Array.isArray(t.ibsPos) ? t.ibsPos : []; t.ibsSent = t.ibsSent || {};
-    if ((qm.passed || []).includes('ibs:idx')) {
-      const ny = nyMin(nowMs), s0 = qm.stats && qm.stats['ibs:idx'];
-      for (const k of ['SPX', 'NDX', 'DJI', 'DAX']) {
-        const ins = TL.instrumentByKey(k), win = k === 'DAX' ? (clk.min >= 17 * 60 + 15 && clk.min < 17 * 60 + 30) : (ny >= 15 * 60 + 40 && ny < 15 * 60 + 56);
-        const pos = t.ibsPos.find((p) => p.k === k && p.state === 'offen');
+    // Universum: alle US-Indizes und US-Sektoren, wenn die Regionen-Pruefung besteht (Europa faellt seit 2014 durch), sonst die 3 US-Indizes
+    const us = qm.ibsUS && qm.ibsUS.ok ? qm.ibsUS.syms : null;
+    const uni = us ? us.map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: /^\^/.test(m.s) ? 'idx' : 'etf' })
+      : ((qm.passed || []).includes('ibs:idx') ? ['SPX', 'NDX', 'DJI'].map((k) => TL.instrumentByKey(k)) : []);
+    if (uni.length) {
+      const ny = nyMin(nowMs), s0 = qm.stats && qm.stats[us ? 'breit:ibs_us' : 'ibs:idx'], win = ny >= 15 * 60 + 40 && ny < 15 * 60 + 56;
+      let budget = 7;
+      for (const ins of uni) {
+        const k = ins.k, pos = t.ibsPos.find((p) => p.k === k && p.state === 'offen');
         if (!win && !pos) continue;
+        if (!pos && t.ibsSent[k] === dayKey) continue;
+        // Abrufe sparen: offene Positionen ausserhalb der Schlussphase nur stuendlich (Notstop), neue Pruefungen hoechstens 7 je Lauf
+        if (pos && !win && nowMs - (pos.chk || 0) < 55 * 60e3) continue;
+        if (budget-- <= 0) break;
+        if (pos) { pos.chk = nowMs; dirty = true; }
         const d1 = await candlesOf(ins.y, '1d', '2y'); if (!d1 || d1.length < 210) continue;
         const last = d1[d1.length - 1]; if (dKey(last.t) !== dayKey) continue;
         const ib = last.h > last.l ? (last.c - last.l) / (last.h - last.l) : 0.5;
@@ -3449,8 +3460,8 @@ async function runTrade(env, nowMs) {
         const sma = d1.slice(-200).reduce((a, x) => a + x.c, 0) / 200, atr = TL.atrSeries(d1).pop();
         if (!(last.c > sma && ib < 0.2 && atr)) continue;
         const id = k + ':ibs:' + dayKey, stop = last.c - 3 * atr;
-        t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs });
-        await send('b:' + id, { title: 'IBS-Signal · ' + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung seit 2003: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : ''), tag: 'ibs-' + k, url: './' });
+        t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf' });
+        await send('b:' + id, { title: 'IBS-Signal · ' + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + (ins.type === 'etf' ? ' Umsetzen über einen passenden UCITS-ETF (US-ETFs gibt es bei Trade Republic nicht).' : '') + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : ''), tag: 'ibs-' + k, url: './' });
       }
     }
     t.ibsPos = t.ibsPos.filter((p) => p.state === 'offen' || nowMs - (p.exitAt || p.at) < 3 * 86400e3);
