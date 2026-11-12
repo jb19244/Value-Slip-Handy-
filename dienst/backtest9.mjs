@@ -241,6 +241,36 @@ const FOMC = ('2000-02-02 2000-03-21 2000-05-16 2000-06-28 2000-08-22 2000-10-03
   out.sets['crypto:don20'] = evalSet('Bitcoin und Ether: Ausbruch über das 20-Tage-Hoch, raus unter dem 10-Tage-Tief', T, { noEx: true });
   out.sets['crypto:don55'] = evalSet('Bitcoin und Ether: Ausbruch über das 55-Tage-Hoch, raus unter dem 20-Tage-Tief', T55, { noEx: true });
 }
+// ---- 10) Chance-Risiko 2R und 3R: dieselben Einstiege, aber fester Stop (k ATR) und festes Ziel (2 oder 3 mal der Stop-Abstand).
+// Konservativ: Stop vor Ziel, wenn beides in derselben Tageskerze liegt; Kursluecken zum Eroeffnungskurs; nach maxDays zum Schluss raus.
+{
+  const simRR = (d1, i, dir, stopAtr, rr, maxDays, a, cost) => {
+    const e = d1[i].c, risk = stopAtr * a[i], st = e - dir * risk, tg = e + dir * rr * risk;
+    for (let k = i + 1; k < d1.length && k <= i + maxDays; k++) { const x = d1[k];
+      if (dir > 0 ? x.l <= st : x.h >= st) { const px = dir > 0 ? Math.min(st, x.o) : Math.max(st, x.o); return { pct: (px / e - 1) * 100 * dir - cost, r: (px - e) * dir / risk - cost / 100 * e / risk, how: 'stop' }; }
+      if (dir > 0 ? x.h >= tg : x.l <= tg) { const px = dir > 0 ? Math.max(tg, x.o) : Math.min(tg, x.o); return { pct: (px / e - 1) * 100 * dir - cost, r: (px - e) * dir / risk - cost / 100 * e / risk, how: 'ziel' }; }
+      if (k === i + maxDays) return { pct: (x.c / e - 1) * 100 * dir - cost, r: (x.c - e) * dir / risk - cost / 100 * e / risk, how: 'zeit' }; }
+    return null; };
+  const KINDS = { ibs: 'IBS unter 0,2', deep: 'IBS unter 0,1', rsi2: 'RSI-2 unter 10', d3: 'Drei Verlusttage', both: 'IBS + RSI-2', tt: 'Turnaround Tuesday' };
+  out.rr = {};
+  for (const kind of Object.keys(KINDS)) for (const sa of [1, 1.5, 2]) for (const rr of [2, 3]) for (const md of [10, 20]) {
+    const T = [];
+    for (const s of (kind === 'tt' ? US_IDX : US_SYMS)) { const d1 = D[s]; if (!d1 || d1.length < 1500) continue; const a = L.atrSeries(d1), rs = L.rsiSeries(d1, 2), cost = s[0] === '^' ? COST : COST_ETF;
+      for (let i = 200; i < d1.length - 1; i++) { if (!a[i]) continue; const up = d1[i].c > L.smaAt(d1, i, 200), ib = L.ibs(d1[i]);
+        const hit = kind === 'ibs' ? up && ib < 0.2 : kind === 'deep' ? up && ib < 0.1 : kind === 'rsi2' ? up && rs[i] < 10 : kind === 'both' ? up && ib < 0.2 && rs[i] < 10
+          : kind === 'd3' ? up && d1[i].c < d1[i - 1].c && d1[i - 1].c < d1[i - 2].c && d1[i - 2].c < d1[i - 3].c : wd(d1[i].t) === 1 && d1[i].c < d1[i - 1].c && ib < 0.3;
+        if (!hit) continue; const r = simRR(d1, i, 1, sa, rr, md, a, cost); if (r) T.push({ t: d1[i].t, s, cost, pct: r.pct, r: r.r, how: r.how }); } }
+    const key = kind + ':s' + sa + ':rr' + rr + ':d' + md, x = evalSet(KINDS[kind] + ', Stop ' + sa + ' ATR, Ziel ' + rr + 'R, max. ' + md + ' Tage', T, { noEx: true });
+    const R = T.map((t) => t.r), mR = R.length ? R.reduce((p, q) => p + q, 0) / R.length : null;
+    x.meanR = mR != null ? +mR.toFixed(3) : null; x.pZiel = T.length ? +(T.filter((t) => t.how === 'ziel').length / T.length).toFixed(3) : null;
+    // Haelften und Haertetest in R
+    const ts = T.map((t) => t.t).sort((p, q) => p - q), cut = ts[Math.floor(ts.length * 0.75)] || 0, split = ts[Math.floor(ts.length * 0.375)] || 0, mr = (arr) => arr.length ? +(arr.reduce((p, q) => p + q.r, 0) / arr.length).toFixed(3) : null;
+    x.rTrain = mr(T.filter((t) => t.t < split)); x.rTest = mr(T.filter((t) => t.t >= split && t.t < cut)); x.rHold = mr(T.filter((t) => t.t >= cut));
+    x.passedRR = x.passed && x.meanR > 0 && [x.rTrain, x.rTest, x.rHold].every((v) => v != null && v > 0);
+    delete x.years; out.rr[key] = x;
+    console.log((x.passedRR ? 'RROK ' : 'RR-- ') + key.padEnd(20), 'n', x.all.n, 'win', x.all.win, 'mean%', x.all.mean, 'meanR', x.meanR, 'Ziel', x.pZiel, '| R tr/te/ho', x.rTrain, x.rTest, x.rHold, '| dayLo', x.day.lo, 'Jahre', x.yearsUp + '/' + x.yearsN);
+  }
+}
 out.passed = Object.keys(out.sets).filter((k) => out.sets[k].passed);
 writeFileSync(new URL('./backtest-cal.json', import.meta.url), JSON.stringify(out));
 for (const k of Object.keys(out.sets)) { const x = out.sets[k]; console.log((x.passed ? 'OK  ' : '--  ') + k.padEnd(24), x.meanR != null ? 'meanR ' + x.meanR : '', 'n', String(x.all.n).padStart(5), 'win', x.all.win, 'mean', x.all.mean, '| tr', x.train.mean, 'te', x.test.mean, 'ho', x.hold.mean, '| dayLo', x.day.lo, '| ex', x.ex ? x.ex.all.mean : '-', '| Jahre', x.yearsUp + '/' + x.yearsN); }
