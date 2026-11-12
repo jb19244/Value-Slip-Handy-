@@ -187,6 +187,7 @@ table.st td:first-child{overflow-wrap:anywhere;padding-right:8px}
 .chart text{font-family:var(--font-b);font-size:9px;fill:var(--muted)}
 .zones{display:grid;grid-template-columns:1fr;gap:4px;margin-top:8px}.zone{display:flex;align-items:center;gap:4px;font-size:12px;font-variant-numeric:tabular-nums}.zone .zn{font-weight:700;min-width:64px}.zone button{flex:1}.zone button{background:var(--surface2);border:0;color:var(--fg);border-radius:6px;padding:5px 6px;font:inherit;font-size:12px}.zone button[aria-pressed=true]{background:var(--link);color:#000}.zone button.zo{flex:0 0 auto;color:var(--link)}.ovl{position:fixed;inset:0;z-index:50;background:var(--bg,#000);display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top) + 8px) 10px calc(env(safe-area-inset-bottom) + 8px)}.pro-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}.pro-top b{font-size:17px}.pro-px{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted)}.pro-x{background:var(--surface,#111);border:0;color:var(--fg);width:36px;height:36px;border-radius:18px;font-size:16px}.pro-cv{flex:1;min-height:200px;position:relative;margin-top:8px}.pro-cv canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}.pro-info{font-size:12px;color:var(--muted);padding:8px 2px;min-height:32px;font-variant-numeric:tabular-nums}.pro-act{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.pro-ly{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.pro-ly button{background:var(--surface,#111);color:var(--muted);border:1px solid #2A2D33;border-radius:14px;padding:6px 10px;font-size:12px}.pro-ly button[aria-pressed=true]{color:#000;background:var(--link,#7FB2FF);border-color:transparent}.rd{list-style:none;margin:8px 0 6px;padding:0;display:flex;flex-direction:column;gap:9px}.rd li{display:grid;grid-template-columns:minmax(0,1.1fr) 1fr 38px;gap:10px;align-items:center;font-size:14px}.rd-n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rd-b{position:relative;height:8px;border-radius:4px;background:var(--surface2);overflow:hidden}.rd-b i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--muted);opacity:.55}.rd-b i.near{background:var(--warn);opacity:.9}.rd-b i.on{background:var(--good);opacity:1}.rd-b em{position:absolute;left:20%;top:0;bottom:0;width:2px;background:var(--fg);opacity:.7}.rd-v{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}.rd-sum{font-size:14px;margin:6px 0 2px;line-height:1.4}.rd-vix{display:flex;justify-content:space-between;font-size:13px;padding-top:10px;margin-top:8px;border-top:1px solid var(--line)}
 .ib{list-style:none;margin:6px 0 0;padding:0}.ib li+li{border-top:1px solid var(--line)}.ib button{display:grid;grid-template-columns:30px 1fr auto;gap:10px;align-items:center;width:100%;background:none;border:0;color:var(--fg);text-align:left;padding:10px 0;font:inherit}.ib-i{font-size:18px;text-align:center}.ib-t{min-width:0;display:flex;flex-direction:column;gap:1px}.ib-t b{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ib-t span{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ib-at{font-size:12px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.spk{margin:0 14px 10px;padding:10px 12px;border-radius:14px;background:var(--surface2);border-left:3px solid var(--muted)}.spk.good{border-left-color:var(--good)}.spk.warn{border-left-color:var(--warn)}.spk.bad{border-left-color:var(--bad)}.spk>b{display:block;font-size:15px}.spk>span{font-size:12.5px;color:var(--muted);line-height:1.4}
 .m-pw{display:grid;grid-template-columns:64px 1fr;gap:12px;align-items:center;background:var(--surface2);border-radius:14px;padding:10px 12px;margin-top:12px}.m-pw b{display:block;font-size:15px}.m-pw span{font-size:12.5px;color:var(--muted);line-height:1.35}.m-ring{width:60px;height:60px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--good) calc(var(--p)*1%),rgba(255,255,255,.1) 0)}.m-ring b{width:46px;height:46px;border-radius:50%;background:var(--surface2);display:grid;place-items:center;font-size:14px;font-variant-numeric:tabular-nums}
 .m-head{display:grid;grid-template-columns:40px 1fr;gap:10px;align-items:center}.m-head h2{margin:0;font-size:19px}.m-i{font-size:28px}.m-dir{font-weight:700;font-size:15px;margin:12px 0 0}.m-lv{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:10px 0 4px}.m-lv span{background:var(--surface2);border-radius:12px;padding:9px 12px;display:flex;flex-direction:column;font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}.m-lv i{font-style:normal;font-size:12px;font-weight:500;color:var(--muted)}
 .m-body{margin:12px 0}.m-body p{margin:0 0 8px;font-size:15px;line-height:1.45}.m-act{display:flex;flex-direction:column;gap:8px;align-items:center}.m-act .btn{width:100%}
@@ -1595,7 +1596,7 @@ var SMC_TAGS = ['Order Block', 'Fair Value Gap', 'Liquidity Sweep', 'BOS', 'CHoC
 var EW_TAGS = ['Welle 3', 'Welle 5', 'Welle C', 'ABC-Korrektur', 'Fib-Ziel'];
 function defaults(){
   return { cfg: { account: 5000, risk: 1, fee: 1, maxTrades: 2, maxLossR: 2, url: '', token: '', push: { on: false, lead: 15, kz: true, scan: true, scanAll: false, quality: 'creme', qv2: true, qv3: true, qv4: true, qv5: true } },
-    form: { k: 'EURUSD', dir: 1, entry: '', stop: '', target: '', setups: [], ratio: '', ko: '' },
+    form: { k: 'EURUSD', dir: 1, entry: '', stop: '', target: '', setups: [], ratio: '', ko: '', bid: '', ask: '' },
     watch: ['EURUSD', 'XAUUSD', 'DAX', 'NDX'], names: {}, trades: [], alerts: [], tab: 'heute', fib: { a: '', b: '', c: '' }, ko: {}, tf: '15m', pro: null, real: {}, imp: [], train: [], onb: 0 };
 }
 function load(){
@@ -1737,6 +1738,8 @@ function viewKo(f, i){
   var sug = koSuggest(f, i), dec = i.dec;
   return '<div class="kobox"><div class="row"><span class="label">Knock-out (Trade Republic)</span><span class="muted tiny">' + (f.dir > 0 ? 'Call / Long' : 'Put / Short') + '</span></div>' +
     '<div class="fields f2"><label class="field"><span>Bezugsverhältnis</span><input inputmode="decimal" data-f="ratio" value="' + esc(f.ratio) + '" placeholder="' + koHint(i) + '"></label><label class="field"><span>KO-Schwelle</span><input inputmode="decimal" data-f="ko" value="' + esc(f.ko) + '" placeholder="' + (sug ? fmtIn(sug, dec) : '') + '"></label></div>' +
+    '<div class="fields f2" style="margin-top:8px"><label class="field"><span>Schein: Verkaufskurs (€)</span><input inputmode="decimal" data-f="bid" value="' + esc(f.bid || '') + '" placeholder="z. B. 4,18"></label><label class="field"><span>Schein: Kaufkurs (€)</span><input inputmode="decimal" data-f="ask" value="' + esc(f.ask || '') + '" placeholder="z. B. 4,21"></label></div>' +
+    '<p class="hint" style="margin-top:6px">Spread-Check: Trag beide Kurse deines Scheins ein, dann rechne ich aus, was dich der Spread bei diesem Trade kostet.</p>' +
     (sug ? '<div class="row" style="margin-top:8px"><span class="muted small">Schein mit Schwelle ' + (f.dir > 0 ? 'unter ' : 'über ') + fmt(sug, dec) + ' suchen: genug Abstand hinter dem Stop.</span><button class="link small" data-act="kosug" data-p="' + sug + '">übernehmen</button></div>' : '<p class="hint">Mit Stop schlage ich dir eine passende KO-Schwelle vor.</p>') + '</div>';
 }
 function koHint(i){ return i.type === 'fx' ? '100' : (i.k === 'XAGUSD' ? '1' : (i.type === 'cmd' || i.type === 'stock' ? '0,1' : '0,01')); }
@@ -1863,6 +1866,17 @@ function probOf(r){
   if (!best) return null;
   best.need = 1 / (1 + r.rr); best.creme = (b1.creme || []).indexOf(best.id) >= 0; best.own = !g0; return best;
 }
+function viewSpread(r){
+  var sp = r.sp; if (!sp) return ''; var i = instr(r.k);
+  if (sp.err) return '<div class="spk bad" id="spread"><b>Spread-Check</b><span>' + esc(sp.err) + '</span></div>';
+  var p = probOf(r), extra = Math.max(0, sp.r - sp.assumedR), lvl = sp.r <= 0.05 ? 'good' : (sp.r <= 0.1 ? 'warn' : 'bad'), after = p ? p.mean - extra : null;
+  return '<div class="spk ' + lvl + '" id="spread"><b>Spread kostet ' + fmt(sp.r, 2) + ' R' + (sp.eur != null ? ' · ca. ' + fmt(sp.eur, 2) + ' €' : '') + '</b><span>' +
+    'Spanne ' + fmt(sp.cert, 2) + ' € je Schein (' + fmt(sp.pct * 100, 2) + ' %), das sind ' + fmt(sp.pts, i.dec) + ' Punkte im Basiswert und ' + fmt(sp.r * 100, 0) + ' % deines Stop-Abstands. ' +
+    (lvl === 'good' ? 'Unkritisch.' : lvl === 'warn' ? 'Spürbar: Weiterer Stop oder ein Schein mit engerer Spanne wäre besser.' : 'Zu teuer für diesen Stop-Abstand: Der Spread frisst einen großen Teil des möglichen Vorteils.') +
+    ' Die Rückrechnung rechnet bei ' + esc(i.name) + ' mit ' + fmt(sp.assumed, i.dec) + ' Punkten' + (extra > 0 ? ', dein Schein kostet ' + fmt(extra, 2) + ' R mehr.' : ', dein Schein liegt darunter.') +
+    (after != null ? ' Erwartung der Vergleichsgruppe nach deinem Spread: <b class="' + (after > 0 ? 'good' : 'bad') + '" style="display:inline;font-size:inherit">Ø ' + sgn(after, 2) + ' R</b>.' : '') +
+    (sp.ratioAssumed ? ' Bezugsverhältnis geschätzt, trag es oben ein, damit die Umrechnung stimmt.' : '') + '</span></div>';
+}
 function viewProb(r){
   var p = probOf(r); if (!p) return '';
   var pc = Math.round(p.win * 100), col = p.mean > 0.05 && pc >= 55 ? 'var(--good)' : (p.mean > 0 ? 'var(--warn)' : 'var(--bad)');
@@ -1878,7 +1892,7 @@ function viewResult(r){
   var order = { contra: 0, warn: 1, pro: 2, neutral: 3 };
   var items = r.items.slice().sort(function(a, b){ return (b.block - a.block) || (order[a.verdict] - order[b.verdict]); }).map(function(it){ return '<li class="item"><i class="' + it.verdict + '">' + ICON[it.verdict] + '</i><b>' + esc(it.title) + '</b><span>' + esc(it.text) + '</span></li>'; }).join('');
   var h = '<section class="card" style="padding:0;overflow:hidden"><div class="verdict ' + r.ampel + '"><div class="lamp"><svg viewBox="0 0 24 24">' + lampIcon + '</svg></div><div><div class="big">' + word + '</div><p>' + esc(sub) + ' CRV ' + fmt(r.rr, 1) + ' : 1 · Score ' + fmt(r.score, 1) + '</p></div></div>' +
-    viewProb(r) + '<div style="padding:0 14px 6px"><ul class="items">' + items + '</ul>' + (r.offset ? '<p class="hint">Rohstoffe: Die Daten kommen vom Future, dein Kurs vom Kassamarkt. Den Abstand von ' + fmt(r.offset, i.dec) + ' rechne ich heraus.</p>' : '') + '</div></section>';
+    viewProb(r) + viewSpread(r) + '<div style="padding:0 14px 6px"><ul class="items">' + items + '</ul>' + (r.offset ? '<p class="hint">Rohstoffe: Die Daten kommen vom Future, dein Kurs vom Kassamarkt. Den Abstand von ' + fmt(r.offset, i.dec) + ' rechne ich heraus.</p>' : '') + '</div></section>';
   h += viewConf(r);
   h += viewDossier(r);
   h += viewSize(r);
@@ -1964,6 +1978,11 @@ function runCheck(){
       res.conv = eurPer(i.quote, V.rates);
       res.ps = positionSize({ account: +S.cfg.account, riskPct: (+S.cfg.risk) / 100, entry: e, stop: s, conv: res.conv, ratio: ratio, type: i.type });
       res.koP = pnum(f.ko); res.atr = d.m15 ? atr(d.m15, 14) : null;
+      // Spread-Check: Spanne des Scheins in Punkte des Basiswerts umrechnen und am Stop-Abstand messen
+      var bid = pnum(f.bid), ask = pnum(f.ask);
+      if (bid > 0 && ask > bid && ratio > 0 && res.conv > 0){ var pts = (ask - bid) / (ratio * res.conv), rk = Math.abs(e - s), assumed = costOf(i, e);
+        res.sp = { bid: bid, ask: ask, cert: ask - bid, pct: (ask - bid) / ask, pts: pts, r: pts / rk, assumed: assumed, assumedR: assumed / rk, eur: res.ps && res.ps.certs != null ? res.ps.certs * (ask - bid) : null, ratioAssumed: !pnum(f.ratio) }; }
+      else if (bid > 0 && ask > 0 && ask <= bid) res.sp = { err: 'Der Kaufkurs muss über dem Verkaufskurs liegen.' };
       if (res.koP > 0 && (s - res.koP) * f.dir <= 0){ res.blocked = true; res.ampel = 'rot'; res.items.unshift({ key: 'ko', title: 'Knock-out-Schwelle', verdict: 'contra', weight: 2, text: 'Die Schwelle ' + fmt(res.koP, i.dec) + ' liegt vor deinem Stop.', block: true }); }
       var ov = overlap(exposure(i, f.dir), S.trades.filter(function(x){ return x.status === 'open'; }));
       if (ov.length){ var seen = {}; ov = ov.filter(function(o){ return seen[o.name + o.what] ? false : (seen[o.name + o.what] = 1); });
@@ -3126,6 +3145,8 @@ function viewMehr(){
       '<label class="switch"><span>ORB „Stocks in Play“ (US-Eröffnung)</span><input type="checkbox" data-push="orb"' + (p.orb !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Swing RSI-2 (abends, Haltedauer Tage)</span><input type="checkbox" data-push="swing"' + (p.swing !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>IBS-Mean-Reversion (US-Märkte, kurz vor Schluss)</span><input type="checkbox" data-push="ibs"' + (p.ibs !== false ? ' checked' : '') + '></label>' +
+      '<label class="switch"><span>Nur Märkte mit engem Spread (Index-Knock-outs, keine ETF-Signale)</span><input type="checkbox" data-push="tight"' + (p.tight ? ' checked' : '') + '></label>' +
+      '<label class="switch"><span>Trade Finder ab 16 Uhr (unbelegt, bis 5 am Tag)</span><input type="checkbox" data-push="finder"' + (p.finder !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Depot-Strategien (monatlich)</span><input type="checkbox" data-push="depot"' + (p.depot !== false ? ' checked' : '') + '></label>' +
       '<p class="hint">Diese Strategien melden sich nur, solange sie die Rückrechnung bestehen (siehe Tagebuch → Strategien aus der Forschung).</p>' +
       '<label class="switch"><span>Hauptzeiten (08:00 und 14:30)</span><input type="checkbox" data-push="kz"' + (p.kz ? ' checked' : '') + '></label>' +
@@ -3149,7 +3170,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, finder: S.cfg.push.finder !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);

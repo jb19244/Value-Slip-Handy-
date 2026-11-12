@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'dc38b6fcfe';
+const WORKER_VER = '39be46f8e8';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3219,7 +3219,7 @@ async function tradeRoute(request, headers, env, nowMs) {
       scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix', 'creme'].includes(b.quality) ? b.quality : 'creme',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
-      swing: b.swing !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
+      swing: b.swing !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, tight: !!b.tight, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null) };
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
@@ -3638,7 +3638,7 @@ async function runTrade(env, nowMs) {
     if (sw.length || sel.length) {
       const idxOnly = !sw.includes('rsi2d:long');
       // Breite (32 Maerkte, ab 2014 geprueft) ersetzt die Einzelaktien, deren Rueckrechnung durch die Gewinner-Auswahl zu gut war
-      const uni = sel.length ? sel.filter((m) => !TL.trProduct(m.s).none).map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: m.cls })
+      const uni = sel.length ? sel.filter((m) => !TL.trProduct(m.s).none && (!t.tight || !TL.trProduct(m.s).etf)).map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: m.cls })
         : ['SPX', 'NDX', 'DJI', 'DAX', 'XAUUSD'].map((k) => TL.instrumentByKey(k)).concat(idxOnly ? [] : TL.PLAY_STOCKS.slice(0, 30).map(TL.stockInstrument)).filter(Boolean);
       // a) Neue Signale nach dem US-Handelsschluss (22:10-23:30): Tageskerze ist fertig
       if (clk.min >= 22 * 60 + 10 && clk.min < 23 * 60 + 30) {
@@ -3701,7 +3701,7 @@ async function runTrade(env, nowMs) {
     const ny = nyMin(nowMs), slot = Math.floor(ny / 60);
     if (ny >= 10 * 60 && ny < 15 * 60 + 20 && ny % 60 < 20) {
       const qm = await moreCfg(env, nowMs), us = qm.ibsUS && qm.ibsUS.ok ? qm.ibsUS.syms : null;
-      const uni = (us ? us.filter((m) => !TL.trProduct(m.s).none).map((m) => ({ s: m.s, nm: m.nm })) : [{ s: '^GSPC', nm: 'S&P 500' }, { s: '^NDX', nm: 'Nasdaq 100' }, { s: '^DJI', nm: 'Dow Jones' }]).concat(us ? laenderUni(await calCfg(env, nowMs)).map((i) => ({ s: i.y, nm: i.name })) : []);
+      const uni = (us ? us.filter((m) => !TL.trProduct(m.s).none).map((m) => ({ s: m.s, nm: m.nm })) : [{ s: '^GSPC', nm: 'S&P 500' }, { s: '^NDX', nm: 'Nasdaq 100' }, { s: '^DJI', nm: 'Dow Jones' }]).concat(us ? laenderUni(await calCfg(env, nowMs)).map((i) => ({ s: i.y, nm: i.name, land: true })) : []).filter((m) => !t.tight || (!m.land && !TL.trProduct(m.s).etf));
       if (!t.radarRun || t.radarRun.day !== dayKey || t.radarRun.slot !== slot) t.radarRun = { day: dayKey, slot, items: [], done: {} };
       const R = t.radarRun; let budget = 10;
       for (const m of uni) { if (budget <= 0) break; if (R.done[m.s]) continue; R.done[m.s] = 1; budget--; dirty = true;
@@ -3725,7 +3725,9 @@ async function runTrade(env, nowMs) {
     const us = qm.ibsUS && qm.ibsUS.ok ? qm.ibsUS.syms : null;
     const qc = await calCfg(env, nowMs);
     const uni = (us ? us.filter((m) => !TL.trProduct(m.s).none).map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: /^\^/.test(m.s) ? 'idx' : 'etf' })
-      : ((qm.passed || []).includes('ibs:idx') ? ['SPX', 'NDX', 'DJI'].map((k) => TL.instrumentByKey(k)) : [])).concat(us ? laenderUni(qc) : []);
+      : ((qm.passed || []).includes('ibs:idx') ? ['SPX', 'NDX', 'DJI'].map((k) => TL.instrumentByKey(k)) : [])).concat(us ? laenderUni(qc) : [])
+      // Nur enger Spread: keine ETF-Signale (Sektoren, Laender), nur Maerkte mit Index-Knock-out
+      .filter((ins) => !t.tight || (!ins.land && !TL.trProduct(ins.y).etf));
     if (uni.length) {
       const ny = nyMin(nowMs), s0 = qm.stats && qm.stats[us ? 'breit:ibs_us' : 'ibs:idx'], win = ny >= 15 * 60 + 40 && ny < 15 * 60 + 56;
       const cs = qc.stats || {}, ttOn = (qc.passed || []).includes('tt:hold_us') && clk.wd === 'Mon', TT = ['^GSPC', '^NDX', '^DJI', '^RUT'];
