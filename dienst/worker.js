@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'f5ca656aeb';
+const WORKER_VER = '90c2aa35cc';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3088,7 +3088,8 @@ var TR_PRODUCT = {
   XLV: { etf: 'SPDR S&P U.S. Health Care Select Sector UCITS ETF' }, XLY: { etf: 'SPDR S&P U.S. Consumer Discretionary Select Sector UCITS ETF' }, XLP: { etf: 'SPDR S&P U.S. Consumer Staples Select Sector UCITS ETF' },
   XLI: { etf: 'SPDR S&P U.S. Industrials Select Sector UCITS ETF' }, XLB: { etf: 'SPDR S&P U.S. Materials Select Sector UCITS ETF' }, XLU: { etf: 'SPDR S&P U.S. Utilities Select Sector UCITS ETF' },
   SMH: { etf: 'VanEck Semiconductor UCITS ETF' }, XBI: { etf: 'iShares Nasdaq US Biotechnology UCITS ETF (ähnlicher Index)' }, EEM: { etf: 'iShares MSCI EM UCITS ETF' }, EWZ: { etf: 'iShares MSCI Brazil UCITS ETF' },
-  TLT: { etf: 'iShares $ Treasury Bond 20+yr UCITS ETF' }, KRE: { none: true }, ITB: { none: true }, EWJ: { etf: 'iShares Core MSCI Japan IMI UCITS ETF' }, FXI: { etf: 'iShares China Large Cap UCITS ETF' }
+  TLT: { etf: 'iShares $ Treasury Bond 20+yr UCITS ETF' }, KRE: { none: true }, ITB: { none: true }, EWJ: { etf: 'iShares Core MSCI Japan IMI UCITS ETF' }, FXI: { etf: 'iShares China Large Cap UCITS ETF' },
+  EFA: { none: true }, EWG: { ko: 'DAX' }, EWY: { etf: 'iShares MSCI Korea UCITS ETF' }, EWT: { etf: 'iShares MSCI Taiwan UCITS ETF' }, INDA: { etf: 'iShares MSCI India UCITS ETF' }, EWW: { etf: 'Xtrackers MSCI Mexico UCITS ETF' }
 };
 function trProduct(y){ return TR_PRODUCT[y] || { ko: null }; }
   return { trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
@@ -3218,12 +3219,12 @@ async function tradeRoute(request, headers, env, nowMs) {
       scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix', 'creme'].includes(b.quality) ? b.quality : 'creme',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
-      swing: b.swing !== false, bgreen: b.bgreen !== false, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
+      swing: b.swing !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null) };
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
-    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), swingPos: next.swingPos, ibsPos: next.ibsPos, brief: next.brief || null, log: (t.log || []).slice(-40), now: nowMs }, headers);
+    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), swingPos: next.swingPos, ibsPos: next.ibsPos, brief: next.brief || null, radar: next.radar || null, log: (t.log || []).slice(-40), now: nowMs }, headers);
   }
   if (path === '/trade/test') {
     if (!validSub(t.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in Trade Check ein.', headers);
@@ -3311,11 +3312,15 @@ async function calCfg(env, nowMs) {
       if (!r.ok) return {};
       const j = await r.json(), stats = {};
       Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win }; });
-      return { passed: j.passed || [], stats };
+      const groups = {}; ['ibs:laender'].forEach((k) => { if (j.sets && j.sets[k] && j.sets[k].syms) groups[k] = j.sets[k].syms; });
+      return { passed: j.passed || [], stats, groups };
     });
     return c.data || {};
   } catch (e) { return {}; }
 }
+// Laender-ETFs (US-gehandelt), auf denen IBS als Gruppe bestanden hat
+const LAENDER = { EEM: 'Schwellenländer', EWZ: 'Brasilien', EWJ: 'Japan', FXI: 'China', EFA: 'Industrieländer ohne USA', EWG: 'Deutschland (US-ETF)', EWY: 'Südkorea', EWT: 'Taiwan', INDA: 'Indien', EWW: 'Mexiko' };
+const laenderUni = (qc) => (qc.passed || []).includes('ibs:laender') ? ((qc.groups || {})['ibs:laender'] || []).filter((s) => LAENDER[s] && !TL.trProduct(s).none).map((s) => ({ k: 'B:' + s, name: LAENDER[s], y: s, dec: 2, type: 'etf', land: true })) : [];
 // Handelstage der New Yorker Boerse: Wochentage ohne die festen Feiertage (Regeln der NYSE, Karfreitag ueber das Osterdatum)
 function nyseHoliday(key) {
   const y = +key.slice(0, 4), iso = (m, d) => y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0'), wdOf = (m, d) => new Date(Date.UTC(y, m - 1, d)).getUTCDay();
@@ -3668,6 +3673,41 @@ async function runTrade(env, nowMs) {
       t.swingPos = t.swingPos.filter((x) => x.state === 'wartet' || x.state === 'offen' || nowMs - (x.exitAt || x.at) < 3 * 86400e3);
     }
   }
+  // 5b) Trade Finder per Push (ab 16 Uhr): die besten aktuellen Setups des Scanners, die KEINE gepruefte Stufe treffen.
+  // Klar als unbelegt markiert, zum Selbstpruefen. Hoechstens 3 am Tag, nur mit Tagestrend, Ampel nicht rot, CRV ab 1,5.
+  if (t.finder !== false && t.scan !== false && weekday && clk.min >= 16 * 60 && clk.min < 21 * 60 + 30) {
+    t.finderSent = t.finderSent || {}; for (const k of Object.keys(t.finderSent)) if (t.finderSent[k] !== dayKey) delete t.finderSent[k];
+    const sentToday = Object.keys(t.finderSent).length, tracked = new Set((t.track || []).map((x) => x.id));
+    const rank = (g) => (g.ampel === 'gruen' ? 3 : g.ampel === 'gelb' ? 1.5 : 0) + (g.conf ? g.conf.score : 0) * 0.6 + Math.min(3, g.rr || 0) * 0.5 + (g.liqTarget ? 1 : 0) + (g.score || 0) * 0.2;
+    const cand = (t.signals || []).filter((g) => berlinDay(g.t) === dayKey && g.expires > nowMs + 20 * 60e3 && nowMs - g.t < 3 * 3600e3 && !tracked.has(g.id) && !t.finderSent[g.id] && !g.newsSoon && g.withBias && g.ampel !== 'rot' && g.rr >= 1.5)
+      .sort((a, b) => rank(b) - rank(a)).slice(0, Math.max(0, 3 - sentToday));
+    for (const g of cand) {
+      const ins = TL.instrumentByKey(g.k); if (!ins) continue; t.finderSent[g.id] = dayKey; dirty = true;
+      const tp1 = g.entry + g.dir * Math.abs(g.entry - g.stop), nm = g.type === 'pullback' ? 'Trend-Pullback' : (g.type === 'sweep' || !g.type ? 'Sweep ' + (g.sweep || '') : TL.setupName(g.type));
+      await send('f:' + g.id, { d: { k: g.k, dir: g.dir, entry: g.entry, stop: g.stop, tp1, target: g.target, mode: g.mode, kind: 'finder' }, title: 'Trade Finder · ' + ins.name,
+        body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + nm.trim() + ', mit Tagestrend. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : 'Limit ') + fmtp(g.entry, g.k) + ', Stop ' + fmtp(g.stop, g.k) + ', TP1 ' + fmtp(tp1, g.k) + ', Ziel ' + fmtp(g.target, g.k) + ' (CRV ' + String(g.rr).replace('.', ',') + '). Ampel ' + (g.ampel === 'gruen' ? 'grün' : (g.ampel || 'offen')) + (g.conf ? ', Konfluenz ' + g.conf.score + '/' + g.conf.max : '') + '. Gültig bis ' + hhmm(g.expires) + '. Kein geprüftes Signal: Dieses Setup trifft keine Stufe, die die Rückrechnung bestanden hat. Selbst prüfen, kleiner handeln oder auslassen.', tag: 'finder-' + g.k });
+    }
+  }
+  // 5c) Radar: Wie nah sind die US-Maerkte am IBS-Signal? Stuendlich waehrend der US-Sitzung, mit Vorwarnung eine Dreiviertelstunde vor Schluss
+  if (t.ibsOn !== false && weekday) {
+    const ny = nyMin(nowMs), slot = Math.floor(ny / 60);
+    if (ny >= 10 * 60 && ny < 15 * 60 + 20 && ny % 60 < 20) {
+      const qm = await moreCfg(env, nowMs), us = qm.ibsUS && qm.ibsUS.ok ? qm.ibsUS.syms : null;
+      const uni = (us ? us.filter((m) => !TL.trProduct(m.s).none).map((m) => ({ s: m.s, nm: m.nm })) : [{ s: '^GSPC', nm: 'S&P 500' }, { s: '^NDX', nm: 'Nasdaq 100' }, { s: '^DJI', nm: 'Dow Jones' }]).concat(us ? laenderUni(await calCfg(env, nowMs)).map((i) => ({ s: i.y, nm: i.name })) : []);
+      if (!t.radarRun || t.radarRun.day !== dayKey || t.radarRun.slot !== slot) t.radarRun = { day: dayKey, slot, items: [], done: {} };
+      const R = t.radarRun; let budget = 10;
+      for (const m of uni) { if (budget <= 0) break; if (R.done[m.s]) continue; R.done[m.s] = 1; budget--; dirty = true;
+        const d1 = await candlesOf(m.s, '1d', '1y'); if (!d1 || d1.length < 205) continue; const last = d1[d1.length - 1]; if (dKey(last.t) !== dayKey || !(last.h > last.l)) continue;
+        let sm = 0; for (let q = d1.length - 200; q < d1.length; q++) sm += d1[q].c; const rs = TL.rsiSeries(d1, 2).pop();
+        R.items.push({ s: m.s, nm: m.nm, ibs: Math.round((last.c - last.l) / (last.h - last.l) * 100) / 100, up: last.c > sm / 200, rsi: rs != null ? Math.round(rs) : null }); }
+      if (uni.every((m) => R.done[m.s]) && !R.saved) { R.saved = 1; dirty = true;
+        const vx = await candlesOf('^VIX', '1d', '5d'), vix = vx && vx.length ? Math.round(vx[vx.length - 1].c * 10) / 10 : null;
+        t.radar = { at: nowMs, day: dayKey, vix, items: R.items.slice().sort((a, b) => a.ibs - b.ibs) };
+        const hot = t.radar.items.filter((x) => x.up && x.ibs < 0.25);
+        if (slot === 15 && hot.length) await send('rd:' + dayKey, { title: 'Vorwarnung · ' + hot.length + (hot.length === 1 ? ' Markt' : ' Märkte') + ' am Tagestief', body: 'Um 21:45 Uhr kommt voraussichtlich ein IBS-Signal: ' + hot.slice(0, 6).map((x) => x.nm + ' (IBS ' + x.ibs.toFixed(2).replace('.', ',') + (x.rsi != null && x.rsi < 10 ? ', ⭐ RSI-2 ' + x.rsi : '') + ')').join(', ') + '. Gilt nur, wenn der Kurs bis zum Schluss so tief bleibt. Du hast noch rund 45 Minuten, um Produkt und Größe vorzubereiten.', tag: 'radar' });
+      }
+    }
+  }
   // 9) IBS-Mean-Reversion (Indizes): Schluss im unteren Fuenftel der Tagesspanne im Aufwaertstrend -> kurz vor Schluss kaufen,
   // verkaufen sobald ein Schluss im oberen Fuenftel liegt (IBS ueber 0,8), spaetestens nach 5 Tagen, Notstop 3 ATR
   if (t.ibsOn !== false && weekday) {
@@ -3675,13 +3715,14 @@ async function runTrade(env, nowMs) {
     t.ibsPos = Array.isArray(t.ibsPos) ? t.ibsPos : []; t.ibsSent = t.ibsSent || {};
     // Universum: alle US-Indizes und US-Sektoren, wenn die Regionen-Pruefung besteht (Europa faellt seit 2014 durch), sonst die 3 US-Indizes
     const us = qm.ibsUS && qm.ibsUS.ok ? qm.ibsUS.syms : null;
-    const uni = us ? us.filter((m) => !TL.trProduct(m.s).none).map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: /^\^/.test(m.s) ? 'idx' : 'etf' })
-      : ((qm.passed || []).includes('ibs:idx') ? ['SPX', 'NDX', 'DJI'].map((k) => TL.instrumentByKey(k)) : []);
+    const qc = await calCfg(env, nowMs);
+    const uni = (us ? us.filter((m) => !TL.trProduct(m.s).none).map((m) => TL.INSTRUMENTS.find((i) => i.y === m.s) || { k: 'B:' + m.s, name: m.nm, y: m.s, dec: 2, type: /^\^/.test(m.s) ? 'idx' : 'etf' })
+      : ((qm.passed || []).includes('ibs:idx') ? ['SPX', 'NDX', 'DJI'].map((k) => TL.instrumentByKey(k)) : [])).concat(us ? laenderUni(qc) : []);
     if (uni.length) {
       const ny = nyMin(nowMs), s0 = qm.stats && qm.stats[us ? 'breit:ibs_us' : 'ibs:idx'], win = ny >= 15 * 60 + 40 && ny < 15 * 60 + 56;
-      const qc = win ? await calCfg(env, nowMs) : {}, cs = qc.stats || {}, ttOn = (qc.passed || []).includes('tt:hold_us') && clk.wd === 'Mon', TT = ['^GSPC', '^NDX', '^DJI', '^RUT'];
+      const cs = qc.stats || {}, ttOn = (qc.passed || []).includes('tt:hold_us') && clk.wd === 'Mon', TT = ['^GSPC', '^NDX', '^DJI', '^RUT'];
       const stTxt = (x) => x && x.n ? x.n + ' Trades, ' + Math.round(x.win * 100) + ' % Gewinner, Ø +' + x.mean.toFixed(2).replace('.', ',') + ' % nach Kosten' : '';
-      let budget = 7;
+      let budget = 10;
       for (const ins of uni) {
         const k = ins.k, pos = t.ibsPos.find((p) => p.k === k && p.state === 'offen');
         if (!win && !pos) continue;
@@ -3718,10 +3759,10 @@ async function runTrade(env, nowMs) {
           t.ibsPos.push({ id: idT, kind: 'tt', k, name: ins.name, entry: last.c, stop: stT, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf' });
           await send('b:' + idT, { d: { k, dir: 1, entry: last.c, stop: stT, kind: 'tt' }, title: 'Turnaround Tuesday · ' + ins.name, body: ins.name + ' Long (Turnaround Tuesday): schwacher Montag, Schluss im unteren Drittel der Tagesspanne (IBS ' + ib.toFixed(2).replace('.', ',') + '). Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stT, k) + '. Verkauft wird, sobald ein Tag über dem Hoch des Vortags schließt, spätestens nach 4 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (stTxt(cs['tt:hold_us']) ? ' Rückrechnung: ' + stTxt(cs['tt:hold_us']) + '.' : ''), tag: 'ibs-' + k, url: './' });
           continue; }
-        const rs2 = TL.rsiSeries(d1, 2).pop(), dbl = rs2 != null && rs2 < 10;
+        const rs2 = TL.rsiSeries(d1, 2).pop(), dbl = rs2 != null && rs2 < 10, deep = ib < 0.1, strong = deep || dbl;
         const id = k + ':ibs:' + dayKey, stop = last.c - 3 * atr;
         t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', dbl });
-        await send('b:' + id, { d: { k, dir: 1, entry: last.c, stop, kind: 'ibs' }, title: (dbl ? '⭐ Doppelsignal · ' : 'IBS-Signal · ') + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + (dbl ? ' ⭐ Zusätzlich RSI-2 unter 10: die stärkere Variante' + (stTxt(cs['mr:both']) ? ' (' + stTxt(cs['mr:both']) + ')' : '') + '. Wenn das Risikobudget knapp ist, diese zuerst.' : '') + (isTT ? ' Dazu schwacher Montag (Turnaround Tuesday).' : ''), tag: 'ibs-' + k, url: './' });
+        await send('b:' + id, { d: { k, dir: 1, entry: last.c, stop, kind: 'ibs', q: strong ? 'stark' : 'leicht' }, title: (dbl ? '⭐ Doppelsignal · ' : (deep ? 'IBS-Signal (tief) · ' : 'IBS-Signal (leicht) · ')) + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + (dbl ? ' ⭐ Zusätzlich RSI-2 unter 10: die stärkere Variante' + (stTxt(cs['mr:both']) ? ' (' + stTxt(cs['mr:both']) + ')' : '') + '. Wenn das Risikobudget knapp ist, diese zuerst.' : '') + (isTT ? ' Dazu schwacher Montag (Turnaround Tuesday).' : '') + (!strong && cs['ibs:t10_20'] ? ' Leichte Variante (IBS 0,1 bis 0,2): im Schnitt nur Ø +' + cs['ibs:t10_20'].mean.toFixed(2).replace('.', ',') + ' %, kaum mehr als einfach investiert zu sein. Halbe Größe oder auslassen.' : '') + (deep && !dbl && cs['ibs:t00_10'] ? ' Tiefe Variante (IBS unter 0,1): ' + stTxt(cs['ibs:t00_10']) + '.' : '') + (ins.land ? ' Länder-ETF: ' + (stTxt(cs['ibs:laender']) || 'als Gruppe geprüft') + '. Nur kaufen, wenn die Spanne zwischen Kauf- und Verkaufskurs unter 0,15 % liegt, sonst frisst sie den Vorteil.' : ''), tag: 'ibs-' + k, url: './' });
       }
     }
     t.ibsPos = t.ibsPos.filter((p) => p.state === 'offen' || nowMs - (p.exitAt || p.at) < 3 * 86400e3);
@@ -3816,6 +3857,8 @@ async function runTrade(env, nowMs) {
       lines.push(done.length ? 'Heute: ' + done.length + ' Signal' + (done.length > 1 ? 'e' : '') + ' abgeschlossen, ' + win + ' im Plus, zusammen ' + (sr >= 0 ? '+' : '−') + Math.abs(sr).toFixed(1).replace('.', ',') + ' R' + (eurR ? ' (' + (sr >= 0 ? '+' : '−') + Math.round(Math.abs(sr) * eurR) + ' € bei ' + Math.round(eurR) + ' € Risiko je Trade)' : '') + '.' : 'Heute kein Intraday-Signal abgeschlossen. Kein Signal ist auch ein Ergebnis: die Regeln haben nichts Gutes gesehen.');
       if (ibx.length) lines.push('Verkauft: ' + ibx.map((p) => p.name + ' ' + pct(p.pct)).join(', ') + '.');
       if (ib.length) lines.push('Neu gekauft (IBS): ' + ib.map((p) => p.name).join(', ') + '.');
+      if (!done.length && !ib.length) { const rd = t.radar && t.radar.day === dayKey ? t.radar : null, low = rd && rd.items.filter((x) => x.up)[0];
+        lines.push('Warum nichts kam: ' + (rd && rd.vix != null ? 'VIX ' + String(rd.vix).replace('.', ',') + (rd.vix < 20 ? ' (die Intraday-Stufe braucht 20)' : '') + '. ' : '') + (low ? 'Kein US-Markt schloss im unteren Fünftel, am nächsten war ' + low.nm + ' mit IBS ' + low.ibs.toFixed(2).replace('.', ',') + ' um ' + hhmm(rd.at) + ' Uhr.' : 'Kein Markt hat die Regeln erfüllt.') + ' Die Regeln kaufen Schwäche: In ruhig steigenden Märkten ist Stille normal.'); }
       lines.push(op.length ? 'Über Nacht offen: ' + op.join(', ') + '.' : 'Nichts über Nacht offen.');
       lines.push(ev.length ? 'Morgen wichtig: ' + ev.map((e) => hhmm(e.t) + ' ' + e.country + ' ' + e.title).join(', ') + '.' : 'Morgen keine wichtigen Termine.');
       if (done.length) lines.push('Trag in der App unter Tagebuch ein, welche du wirklich gehandelt hast.');
