@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 indicator("Trade Check · SMC Konfluenz Pro", "TC SMC Pro", overlay = true, max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
@@ -62,7 +62,7 @@ TZ = "Europe/Berlin"
 bMin  = hour(time, TZ) * 60 + minute(time, TZ)
 bDow  = dayofweek(time, TZ)                  // 1 = So … 7 = Sa
 bDay  = year(time, TZ) * 10000 + month(time, TZ) * 100 + dayofmonth(time, TZ)
-newDay = bDay != bDay[1]
+newDay = not na(bDay[1]) and bDay != bDay[1]
 weekday = bDow != dayofweek.saturday and bDow != dayofweek.sunday
 inKZ  = weekday and ((bMin >= 480 and bMin < 660) or (bMin >= 870 and bMin < 1020))
 atr   = ta.atr(14)
@@ -70,7 +70,11 @@ barSec = timeframe.in_seconds()
 win   = math.max(4, math.round(3 * 3600 / math.max(barSec, 60)))
 
 // ───────────────────────── Höhere Zeitebenen (ohne Neuzeichnen) ─────────────────────────
-dBias = request.security(syminfo.tickerid, "D", (close > ta.ema(close, 50) ? 1 : -1)[1], lookahead = barmerge.lookahead_on)
+f_bias() =>
+    float e50 = ta.ema(close, 50)
+    int b = close > e50 ? 1 : -1
+    b[1]
+dBias = request.security(syminfo.tickerid, "D", f_bias(), lookahead = barmerge.lookahead_on)
 vix   = request.security(vixSym, "D", close[1], lookahead = barmerge.lookahead_on)
 vixHi = not na(vix) and vix >= vixLevel
 [pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
@@ -89,8 +93,8 @@ f_struct() =>
         d := 1
     else if not na(ll) and close < ll
         d := -1
-    d
-h4dir = request.security(syminfo.tickerid, "240", f_struct()[1], lookahead = barmerge.lookahead_on)
+    d[1]
+h4dir = request.security(syminfo.tickerid, "240", f_struct(), lookahead = barmerge.lookahead_on)
 
 // Tagesbein für Top-down (letzte 20 abgeschlossene Tage)
 [dHi20, dLo20, dHiB, dLoB, dC1, dS20, dS50] = request.security(syminfo.tickerid, "D", [ta.highest(high, 20)[1], ta.lowest(low, 20)[1], ta.highestbars(high, 20)[1], ta.lowestbars(low, 20)[1], close[1], ta.sma(close, 20)[1], ta.sma(close, 50)[1]], lookahead = barmerge.lookahead_on)
@@ -216,9 +220,12 @@ f_addLevel(bool cond, int d, float lv, string nm) =>
     if cond and not na(lv)
         pierced = d > 0 ? low < lv : high > lv
         back = d > 0 ? close > lv : close < lv
-        prevP = d > 0 ? (close[1] < lv and low[1] < lv) : (close[1] > lv and high[1] > lv)
+        float c1p = close[1]
+        float l1p = low[1]
+        float h1p = high[1]
+        prevP = d > 0 ? (c1p < lv and l1p < lv) : (c1p > lv and h1p > lv)
         if (pierced and back) or (prevP and back)
-            ext = d > 0 ? math.min(low, low[1]) : math.max(high, high[1])
+            ext = d > 0 ? math.min(low, l1p) : math.max(high, h1p)
             ref = d > 0 ? refHi5 : refLo5
             array.push(pend, Pend.new(bar_index, d, lv, ext, ref, 0, dayHiBefore, dayLoBefore, nm, bDay))
             true
@@ -245,20 +252,25 @@ if true
                 float gLo = na
                 float gHi = na
                 minG = atr * 0.3
-                j0 = math.max(s.i + 2, s.broke - 3)
-                for j = j0 to bar_index
-                    o = bar_index - j
-                    float cl = na
-                    float ch = na
-                    if s.dir > 0 and low[o] > high[o + 2]
-                        cl := high[o + 2]
-                        ch := low[o]
-                    if s.dir < 0 and high[o] < low[o + 2]
-                        cl := high[o]
-                        ch := low[o + 2]
-                    if not na(cl) and ch - cl >= minG and (na(gLo) or ch - cl > gHi - gLo)
-                        gLo := cl
-                        gHi := ch
+                // Rueckgriff in Kerzen: von der juengsten (0) bis zur aeltesten erlaubten Kerze. Nie negativ, auch wenn Sweep und Bruch auf derselben Kerze liegen.
+                int oMax = bar_index - math.max(s.i + 2, s.broke - 3)
+                if oMax >= 0
+                    for o = 0 to oMax
+                        float cl = na
+                        float ch = na
+                        float h2 = high[o + 2]
+                        float l2 = low[o + 2]
+                        float h0 = high[o]
+                        float l0 = low[o]
+                        if s.dir > 0 and l0 > h2
+                            cl := h2
+                            ch := l0
+                        if s.dir < 0 and h0 < l2
+                            cl := h0
+                            ch := l2
+                        if not na(cl) and ch - cl >= minG and (na(gLo) or ch - cl > gHi - gLo)
+                            gLo := cl
+                            gHi := ch
                 if not na(gLo)
                     entry = (gLo + gHi) / 2
                     stop = s.ext - s.dir * atr * 0.1
@@ -342,11 +354,13 @@ plot(showLevels ? pwl : na, "Vorwochentief", color = color.new(cGood, 70), style
 var array<box> fvgs = array.new<box>()
 var array<int> fvgDir = array.new<int>()
 if showFVG
-    if low > high[2] and low - high[2] >= atr * 0.3
-        array.push(fvgs, box.new(bar_index - 2, low, bar_index + 5, high[2], border_color = na, bgcolor = color.new(cGood, 85), extend = extend.right))
+    float hi2 = high[2]
+    float lo2 = low[2]
+    if not na(hi2) and low > hi2 and low - hi2 >= atr * 0.3
+        array.push(fvgs, box.new(bar_index - 2, low, bar_index + 5, hi2, border_color = na, bgcolor = color.new(cGood, 85), extend = extend.right))
         array.push(fvgDir, 1)
-    if high < low[2] and low[2] - high >= atr * 0.3
-        array.push(fvgs, box.new(bar_index - 2, low[2], bar_index + 5, high, border_color = na, bgcolor = color.new(cBad, 85), extend = extend.right))
+    if not na(lo2) and high < lo2 and lo2 - high >= atr * 0.3
+        array.push(fvgs, box.new(bar_index - 2, lo2, bar_index + 5, high, border_color = na, bgcolor = color.new(cBad, 85), extend = extend.right))
         array.push(fvgDir, -1)
     if array.size(fvgs) > 0
         for k = array.size(fvgs) - 1 to 0
@@ -375,27 +389,32 @@ if not na(ph)
 if not na(pl)
     slo := pl
     slI := bar_index - pivLen
-if not na(sh) and close > sh and close[1] <= sh
+float cPrev = close[1]
+if not na(sh) and close > sh and cPrev <= sh
     isCh = trend < 0
     if showBOS
         line.new(shI, sh, bar_index, sh, color = isCh ? cGold : cGood, style = line.style_dashed)
         label.new(math.round((shI + bar_index) / 2), sh, isCh ? "CHoCH" : "BOS", style = label.style_none, textcolor = isCh ? cGold : cGood, size = size.tiny)
     if showOB
         for q = 1 to 10
-            if close[q] < open[q]
-                box.new(bar_index - q, math.max(open[q], close[q]), bar_index + 20, low[q], border_color = color.new(cGood, 50), bgcolor = color.new(cGood, 90), text = "OB", text_color = cGood, text_size = size.tiny, text_halign = text.align_right)
+            float cq = close[q]
+            float oq = open[q]
+            if cq < oq
+                box.new(bar_index - q, math.max(oq, cq), bar_index + 20, low[q], border_color = color.new(cGood, 50), bgcolor = color.new(cGood, 90), text = "OB", text_color = cGood, text_size = size.tiny, text_halign = text.align_right)
                 break
     trend := 1
     sh := na
-if not na(slo) and close < slo and close[1] >= slo
+if not na(slo) and close < slo and cPrev >= slo
     isCh = trend > 0
     if showBOS
         line.new(slI, slo, bar_index, slo, color = isCh ? cGold : cBad, style = line.style_dashed)
         label.new(math.round((slI + bar_index) / 2), slo, isCh ? "CHoCH" : "BOS", style = label.style_none, textcolor = isCh ? cGold : cBad, size = size.tiny)
     if showOB
         for q = 1 to 10
-            if close[q] > open[q]
-                box.new(bar_index - q, high[q], bar_index + 20, math.min(open[q], close[q]), border_color = color.new(cBad, 50), bgcolor = color.new(cBad, 90), text = "OB", text_color = cBad, text_size = size.tiny, text_halign = text.align_right)
+            float cq = close[q]
+            float oq = open[q]
+            if cq > oq
+                box.new(bar_index - q, high[q], bar_index + 20, math.min(oq, cq), border_color = color.new(cBad, 50), bgcolor = color.new(cBad, 90), text = "OB", text_color = cBad, text_size = size.tiny, text_halign = text.align_right)
                 break
     trend := -1
     slo := na
