@@ -56,7 +56,7 @@ const sig = (d1, a, i, dir) => ({ i, t: d1[i].t, dir: dir || 1, atr: a[i] });
 
 // ---- 1) Turnaround Tuesday: Montag schwaecher als Freitag -> Kauf zum Montagsschluss
 {
-  const basic = [], trend = [], ibsF = [], hold = [];
+  const basic = [], trend = [], ibsF = [], hold = [], extra = [], holdUS = [];
   for (const s of US_IDX.concat(['^GDAXI'])) {
     const d1 = D[s]; if (!d1 || d1.length < 400) continue; const a = L.atrSeries(d1);
     const mon = []; for (let i = 200; i < d1.length - 1; i++) if (wd(d1[i].t) === 1 && d1[i].c < d1[i - 1].c && a[i]) mon.push(i);
@@ -64,11 +64,17 @@ const sig = (d1, a, i, dir) => ({ i, t: d1[i].t, dir: dir || 1, atr: a[i] });
     run(s, mon.filter((i) => d1[i].c > L.smaAt(d1, i, 200)).map((i) => sig(d1, a, i)), () => ({ maxDays: 1 }), COST, trend);
     run(s, mon.filter((i) => L.ibs(d1[i]) < 0.3).map((i) => sig(d1, a, i)), () => ({ maxDays: 1 }), COST, ibsF);
     run(s, mon.filter((i) => L.ibs(d1[i]) < 0.3).map((i) => sig(d1, a, i)), () => ({ maxDays: 4, exitFn: (k) => d1[k].c > d1[k - 1].h }), COST, hold);
+    // ohne die Tage, an denen ohnehin das IBS-Signal kommt (Aufwaertstrend und IBS unter 0,2): was bringt die Regel zusaetzlich?
+    run(s, mon.filter((i) => L.ibs(d1[i]) < 0.3 && !(d1[i].c > L.smaAt(d1, i, 200) && L.ibs(d1[i]) < 0.2)).map((i) => sig(d1, a, i)), () => ({ maxDays: 4, exitFn: (k) => d1[k].c > d1[k - 1].h }), COST, extra);
+    if (s !== '^GDAXI') run(s, mon.filter((i) => L.ibs(d1[i]) < 0.3).map((i) => sig(d1, a, i)), () => ({ maxDays: 4, exitFn: (k) => d1[k].c > d1[k - 1].h }), COST, holdUS);
   }
   out.sets['tt:basic'] = evalSet('Turnaround Tuesday: schwacher Montag, Verkauf Dienstag (5 Indizes)', basic);
   out.sets['tt:trend'] = evalSet('Turnaround Tuesday nur im Aufwärtstrend', trend);
   out.sets['tt:ibs'] = evalSet('Turnaround Tuesday, Montag schließt im unteren Drittel', ibsF);
   out.sets['tt:hold'] = evalSet('Turnaround Tuesday, halten bis Schluss über Vortageshoch (max. 4 Tage)', hold);
+  out.sets['tt:hold_us'] = evalSet('Turnaround Tuesday (halten), nur die 4 US-Indizes', holdUS);
+  out.sets['tt:hold_extra'] = evalSet('Turnaround Tuesday (halten), nur Tage ohne IBS-Signal', extra);
+  { const g = {}; hold.forEach((t) => { (g[t.s] = g[t.s] || []).push(t); }); out.sets['tt:hold'].bySym = Object.fromEntries(Object.keys(g).map((k) => [k, st(g[k])])); }
 }
 // ---- 2) Pre-FOMC-Drift: Kauf zum Schluss am Tag vor dem Zinsentscheid, Verkauf zum Schluss am Entscheidungstag
 const FOMC = ('2000-02-02 2000-03-21 2000-05-16 2000-06-28 2000-08-22 2000-10-03 2000-11-15 2000-12-19 2001-01-31 2001-03-20 2001-05-15 2001-06-27 2001-08-21 2001-10-02 2001-11-06 2001-12-11 ' +
