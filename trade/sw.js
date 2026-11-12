@@ -1,5 +1,5 @@
 // Service Worker von Trade Check: App offline verfuegbar, Push vom eigenen Dienst. Kursdaten gehen immer ins Netz.
-const CACHE = 'tradecheck-v35';
+const CACHE = 'tradecheck-v36';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './icons/apple-touch-icon.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
@@ -24,18 +24,22 @@ self.addEventListener('fetch', (e) => {
     })));
   }
 });
+// Push: Meldung anzeigen und vollstaendig zwischenspeichern, damit sie beim Antippen sofort in der App aufgeht (auch ohne Netz)
 self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (x) { d = { body: e.data ? e.data.text() : '' }; }
-  const opts = { body: d.body || '', icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: d.url || './' } };
+  const id = d.id || ('p' + Date.now());
+  const opts = { body: d.body || '', icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: d.url || ('./?m=' + encodeURIComponent(id)), id } };
   if (d.tag) opts.tag = d.tag;
-  e.waitUntil(self.registration.showNotification(d.title || 'Trade Check', opts));
+  const keep = caches.open('tc-push').then((c) => c.put(new Request(new URL('./push/' + encodeURIComponent(id), self.registration.scope).href), new Response(JSON.stringify(Object.assign({ at: Date.now() }, d, { id })), { headers: { 'Content-Type': 'application/json' } })));
+  e.waitUntil(Promise.all([keep.catch(() => {}), self.registration.showNotification(d.title || 'Trade Check', opts)]));
 });
+// Antippen: offene App holt sich die Meldung nach vorn, sonst startet die App direkt mit dieser Meldung
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = new URL((e.notification.data && e.notification.data.url) || './', self.registration.scope).href;
+  const data = e.notification.data || {}, url = new URL(data.url || './', self.registration.scope).href;
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cs) => {
-    for (const c of cs) { if ('focus' in c) { c.postMessage({ type: 'push-open' }); return c.focus(); } }
+    for (const c of cs) { if ('focus' in c) { c.postMessage({ type: 'push-open', id: data.id || null }); return c.focus(); } }
     return self.clients.openWindow(url);
   }));
 });

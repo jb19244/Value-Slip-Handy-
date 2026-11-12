@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '65363d1768';
+const WORKER_VER = 'f5ca656aeb';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -2888,7 +2888,7 @@ function simulate(sig, c, cost){
     if (i === fill && mode === 'limit') fav = Math.max(0, ((x.c - entry) * sig.dir) / risk);
     // Stopp-Einstieg in der Fuellkerze: ueblicher Kursweg O-T-H-S bei gruener, O-H-T-S bei roter Kerze.
     // Laeuft die Kerze in Einstiegsrichtung (gruen bei Long), lag das Tief vor dem Einstieg und zaehlt nicht gegen den Trade.
-    if (i === fill && mode === 'stop' && (x.c - x.o) * sig.dir > 0) adv = (Math.min(entry * sig.dir, x.c * sig.dir) * sig.dir - entry) * sig.dir / risk;
+    if (i === fill && mode === 'stop' && !sig.pess && (x.c - x.o) * sig.dir > 0) adv = (Math.min(entry * sig.dir, x.c * sig.dir) * sig.dir - entry) * sig.dir / risk;
     if (adv < r.mae) r.mae = adv;
     // Stop auf Einstand, sobald 1R erreicht war (gilt ab der Kerze danach)
     if (beOn && adv <= 0){ r.r = fin(0); r.how = 'Einstand'; r.exitT = x.t; break; }
@@ -2927,13 +2927,15 @@ function backtest(p){
     if (s.oco && sim.fillT !== first[s.type + s.oco]) return;
     if (p.be){ var s2 = Object.assign({}, s, { be: true }), simBe = simulate(s2, c, cost); sim.rBe = simBe.r != null ? simBe.r : sim.r; }
     { var s3 = Object.assign({}, s, { part: true }), simP = simulate(s3, c, cost); sim.rPart = simP.r != null ? simP.r : sim.r; }
+    // Haertetest: unguenstigste Annahme in der Einstiegskerze (ganzes Tief zaehlt gegen den Trade) und doppelte Kosten
+    if (p.stress){ var s4 = Object.assign({}, s, { part: true, pess: true }), simQ = simulate(s4, c, cost * 2); sim.rStress = simQ.r != null ? simQ.r : (simQ.filled ? sim.rPart : sim.rPart); }
     var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
     var h1 = p.h1 ? (p.h1 === p.m15 ? c.slice(Math.max(0, s.i - 300), s.i + 1) : p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300)) : null;
     var d1 = p.d1 && !p.noCheck ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
     var chk = p.noCheck ? { ampel: null, score: null, items: [] } : scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
     res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: sim.entry || s.entry, stop: s.stop, target: s.target, exit: (sim.entry || s.entry) + s.dir * ((sim.entry || s.entry) - s.stop) * s.dir * sim.r,
-      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, rBe: sim.rBe, rPart: sim.rPart, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
+      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, rBe: sim.rBe, rPart: sim.rPart, rStress: sim.rStress, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
   });
   return res;
 }
@@ -3221,7 +3223,7 @@ async function tradeRoute(request, headers, env, nowMs) {
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
-    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), swingPos: next.swingPos, ibsPos: next.ibsPos, brief: next.brief || null, log: (t.log || []).slice(-10), now: nowMs }, headers);
+    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), swingPos: next.swingPos, ibsPos: next.ibsPos, brief: next.brief || null, log: (t.log || []).slice(-40), now: nowMs }, headers);
   }
   if (path === '/trade/test') {
     if (!validSub(t.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in Trade Check ein.', headers);
@@ -3356,9 +3358,11 @@ async function runTrade(env, nowMs) {
   let dirty = false, gone = false;
   const send = async (key, msg) => {
     if (t.sent[key] || gone) return false;
-    const r = await sendPush(env, t.sub, Object.assign({ title: 'Trade Check', url: './' }, msg), nowMs, 1800);
+    // Jede Meldung hat eine Kennung: Antippen oeffnet genau diese Meldung in der App, mit Einstieg, Stop und Ziel
+    const full = Object.assign({ title: 'Trade Check' }, msg, { id: key, url: './?m=' + encodeURIComponent(key), at: nowMs });
+    const r = await sendPush(env, t.sub, full, nowMs, 1800);
     t.sent[key] = nowMs; dirty = true;
-    t.log.push({ at: nowMs, t: (msg.body || '').slice(0, 600) }); t.log = t.log.slice(-15);
+    t.log.push({ id: key, at: nowMs, title: full.title, t: (msg.body || '').slice(0, 1500), d: msg.d || null }); t.log = t.log.slice(-40);
     if (r.status === 404 || r.status === 410) { t.sub = null; gone = true; }
     else rep.pushed++;
     return true;
@@ -3538,7 +3542,7 @@ async function runTrade(env, nowMs) {
             t.signals.unshift({ id, type: 'orbplay', mode: 'stop', k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.entry + g.dir * g.risk * 10, ko, rr: 0, sweep: 'Eröffnungskerze', withBias: g.b === g.dir, bias: g.b, expires: exp, cls: 'ORB', rvol: g.rvol, top: false });
             t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: 'stop', entry: g.entry, stop: g.stop, target, ko, t: g.t, expires: exp, cls: 'ORB', grade: trendOnly ? 'orbplay:top3_trend' : 'orbplay:top3_rvol2', be: false, state: 'wartet', at: nowMs });
             const f2 = (x) => (+x).toFixed(2).replace('.', ',');
-            await send('o:' + id, { title: 'ORB Stocks in Play · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + String(g.rvol).replace('.', ',') + '-faches Volumen in der ersten 5-Min-Kerze' + (g.b === g.dir ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') + f2(g.entry) + ' · Stop ' + f2(g.stop) + ' (0,1 Tages-ATR). Kein festes Ziel: laufen lassen, ca. 21:45 schließen. ' + (g.past ? 'Achtung: Kurs ist schon drüber (' + f2(g.px) + '). Nicht hinterherkaufen, nur wenn er zurückkommt. ' : '') + 'Strategie mit wenigen großen Gewinnern: die meisten Trades enden mit −1R.' + (st0 && st0.n ? ' Rückrechnung: ' + st0.n + ' Trades, ' + Math.round(st0.win * 100) + ' % Gewinner, Ø ' + (st0.mean >= 0 ? '+' : '') + st0.mean.toFixed(2).replace('.', ',') + ' R.' : ''), tag: 'orb-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+            await send('o:' + id, { d: { k: ins.k, dir: g.dir, entry: g.entry, stop: g.stop, target, kind: 'orb' }, title: 'ORB Stocks in Play · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + String(g.rvol).replace('.', ',') + '-faches Volumen in der ersten 5-Min-Kerze' + (g.b === g.dir ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') + f2(g.entry) + ' · Stop ' + f2(g.stop) + ' (0,1 Tages-ATR). Kein festes Ziel: laufen lassen, ca. 21:45 schließen. ' + (g.past ? 'Achtung: Kurs ist schon drüber (' + f2(g.px) + '). Nicht hinterherkaufen, nur wenn er zurückkommt. ' : '') + 'Strategie mit wenigen großen Gewinnern: die meisten Trades enden mit −1R.' + (st0 && st0.n ? ' Rückrechnung: ' + st0.n + ' Trades, ' + Math.round(st0.win * 100) + ' % Gewinner, Ø ' + (st0.mean >= 0 ? '+' : '') + st0.mean.toFixed(2).replace('.', ',') + ' R.' : ''), tag: 'orb-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
           }
           t.signals = t.signals.slice(0, 30); t.track = t.track.slice(-20);
         }
@@ -3611,7 +3615,7 @@ async function runTrade(env, nowMs) {
           const proof = gs && gs.n ? (t.quality === 'creme' && q.statsP ? ' Mit Teilgewinn bisher: ' : ' Bisher: ') + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Gewinner, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' + (gs.win < 0.6 && mixLbl !== 'B+' ? ' ⚠️ Unter deiner 60-%-Marke.' : '') : '';
           const bgTxt = mixLbl === 'B grün' ? ' B-Setup mit allen Pflicht-Bedingungen: Ampel grün ✓, ' + (g.dir > 0 ? 'Discount' : 'Premium') + ' ✓, Ziel an Liquidität ✓, CRV ' + g.rr.toFixed(1).replace('.', ',') + ' ✓.' + (gs && gs.n ? '' : ' Diese Stufe wird ab der nächsten Rückrechnung gemessen.') : '';
           sig.winRate = gs && gs.n ? Math.round(gs.win * 1000) / 1000 : null;
-          await send('s:' + id, { title: ((t.quality === 'mix' || t.quality === 'creme') ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · TP1 ' + fmtp(sig.tp1, ins.k) + ' (Hälfte schließen, Stop auf Einstand) · TP2 ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + bgTxt + riskTxt(t, 0) + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+          await send('s:' + id, { d: { k: ins.k, dir: g.dir, entry: g.entry, stop: g.stop, tp1: g.entry + g.dir * Math.abs(g.entry - g.stop), target: g.target, mode: g.mode, kind: 'intra' }, title: ((t.quality === 'mix' || t.quality === 'creme') ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · TP1 ' + fmtp(sig.tp1, ins.k) + ' (Hälfte schließen, Stop auf Einstand) · TP2 ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + bgTxt + riskTxt(t, 0) + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
         }
       }
     }
@@ -3637,7 +3641,7 @@ async function runTrade(env, nowMs) {
           if (!g || t.swingPos.some((p) => p.k === ins.k && (p.state === 'wartet' || p.state === 'offen'))) continue;
           const id = ins.k + ':rsi2d:' + dayKey, stopRef = g.close - 3 * g.atr, s0 = sel.length ? (qb.stats && qb.stats['breit:rsi2']) : (qx.stats && qx.stats[sw[0]]);
           t.swingPos.push({ id, k: ins.k, y: ins.y, name: ins.name, eu: EU_Y.includes(ins.y), etf: ins.type === 'etf', dir: 1, sigDay: dayKey, ref: g.close, atr: g.atr, stop: stopRef, state: 'wartet', at: nowMs });
-          await send('w:' + id, { title: 'Swing-Signal · ' + ins.name, body: ins.name + ' Long (Connors RSI-2): Kurs über dem 200-Tage-Schnitt, RSI(2) ' + g.rsi.toFixed(0) + '. Morgen zur Eröffnung kaufen (zuletzt ' + fmtp(g.close, ins.k) + '). Stop 3 ATR: ca. ' + fmtp(stopRef, ins.k) + '. Verkauft wird, sobald der Kurs über dem 5-Tage-Schnitt schließt, spätestens nach 10 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + (s0.unit === '%' ? ' % nach Kosten.' : ' R.') : '') + tradeTxt(t, ins, 3 * g.atr / g.close * 100), tag: 'swing-' + ins.k, url: './' });
+          await send('w:' + id, { d: { k: ins.k, dir: 1, entry: g.close, stop: stopRef, kind: 'swing' }, title: 'Swing-Signal · ' + ins.name, body: ins.name + ' Long (Connors RSI-2): Kurs über dem 200-Tage-Schnitt, RSI(2) ' + g.rsi.toFixed(0) + '. Morgen zur Eröffnung kaufen (zuletzt ' + fmtp(g.close, ins.k) + '). Stop 3 ATR: ca. ' + fmtp(stopRef, ins.k) + '. Verkauft wird, sobald der Kurs über dem 5-Tage-Schnitt schließt, spätestens nach 10 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + (s0.unit === '%' ? ' % nach Kosten.' : ' R.') : '') + tradeTxt(t, ins, 3 * g.atr / g.close * 100), tag: 'swing-' + ins.k, url: './' });
         }
       }
       // b) Offene Swing-Positionen kurz vor Handelsschluss pruefen (DAX 17:15, sonst 21:40)
@@ -3712,12 +3716,12 @@ async function runTrade(env, nowMs) {
         if (!isIbs) { // nur Turnaround Tuesday: schwacher Montag, Verkauf sobald ein Schluss ueber dem Vortageshoch liegt (max. 4 Tage)
           const idT = k + ':tt:' + dayKey, stT = last.c - 3 * atr;
           t.ibsPos.push({ id: idT, kind: 'tt', k, name: ins.name, entry: last.c, stop: stT, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf' });
-          await send('b:' + idT, { title: 'Turnaround Tuesday · ' + ins.name, body: ins.name + ' Long (Turnaround Tuesday): schwacher Montag, Schluss im unteren Drittel der Tagesspanne (IBS ' + ib.toFixed(2).replace('.', ',') + '). Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stT, k) + '. Verkauft wird, sobald ein Tag über dem Hoch des Vortags schließt, spätestens nach 4 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (stTxt(cs['tt:hold_us']) ? ' Rückrechnung: ' + stTxt(cs['tt:hold_us']) + '.' : ''), tag: 'ibs-' + k, url: './' });
+          await send('b:' + idT, { d: { k, dir: 1, entry: last.c, stop: stT, kind: 'tt' }, title: 'Turnaround Tuesday · ' + ins.name, body: ins.name + ' Long (Turnaround Tuesday): schwacher Montag, Schluss im unteren Drittel der Tagesspanne (IBS ' + ib.toFixed(2).replace('.', ',') + '). Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stT, k) + '. Verkauft wird, sobald ein Tag über dem Hoch des Vortags schließt, spätestens nach 4 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (stTxt(cs['tt:hold_us']) ? ' Rückrechnung: ' + stTxt(cs['tt:hold_us']) + '.' : ''), tag: 'ibs-' + k, url: './' });
           continue; }
         const rs2 = TL.rsiSeries(d1, 2).pop(), dbl = rs2 != null && rs2 < 10;
         const id = k + ':ibs:' + dayKey, stop = last.c - 3 * atr;
         t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', dbl });
-        await send('b:' + id, { title: (dbl ? '⭐ Doppelsignal · ' : 'IBS-Signal · ') + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + (dbl ? ' ⭐ Zusätzlich RSI-2 unter 10: die stärkere Variante' + (stTxt(cs['mr:both']) ? ' (' + stTxt(cs['mr:both']) + ')' : '') + '. Wenn das Risikobudget knapp ist, diese zuerst.' : '') + (isTT ? ' Dazu schwacher Montag (Turnaround Tuesday).' : ''), tag: 'ibs-' + k, url: './' });
+        await send('b:' + id, { d: { k, dir: 1, entry: last.c, stop, kind: 'ibs' }, title: (dbl ? '⭐ Doppelsignal · ' : 'IBS-Signal · ') + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + (dbl ? ' ⭐ Zusätzlich RSI-2 unter 10: die stärkere Variante' + (stTxt(cs['mr:both']) ? ' (' + stTxt(cs['mr:both']) + ')' : '') + '. Wenn das Risikobudget knapp ist, diese zuerst.' : '') + (isTT ? ' Dazu schwacher Montag (Turnaround Tuesday).' : ''), tag: 'ibs-' + k, url: './' });
       }
     }
     t.ibsPos = t.ibsPos.filter((p) => p.state === 'offen' || nowMs - (p.exitAt || p.at) < 3 * 86400e3);
