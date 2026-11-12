@@ -1,0 +1,27 @@
+# Kalender- und Muster-Strategien auf Tageskerzen (Yahoo), dazu Haertepruefung der laufenden Strategien
+name: Kalender-Strategien-Rueckrechnung
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['dienst/backtest9.mjs', '.github/workflows/cal.yml']
+permissions:
+  contents: write
+concurrency: cal
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Rechnen
+        run: node dienst/backtest9.mjs
+      - name: Speichern
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dienst/backtest-cal.json
+          git diff --cached --quiet || (git commit -m "Kalender-Strategien-Rueckrechnung aktualisiert [skip ci]" && git pull --rebase -X theirs -q && git push)
