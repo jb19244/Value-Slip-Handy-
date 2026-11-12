@@ -17,7 +17,7 @@ async function chart(sym, iv, rg) {
   return [];
 }
 let all = [], info = {}, hp = [];
-const HP_TYPES = ['sweep', 'pullback', 'orb', 'donch', 'rsi2', 'nr7', 'gap'], HP_R = [0.5, 0.75, 1];
+const HP_TYPES = ['sweep', 'pullback', 'orb', 'donch', 'rsi2', 'nr7', 'gap'], HP_R = [0.5, 0.75, 1, 2, 3];
 const vix = await chart('^VIX', '1d', '5y'), dxy = await chart('DX-Y.NYB', '1d', '5y');
 for (const ins of L.scanUniverse()) {
   const h1 = await chart(ins.y, '60m', '730d'), d1 = await chart(ins.y, '1d', '5y');
@@ -130,6 +130,15 @@ for (const type of HP_TYPES) for (const k of HP_R) for (const gid of HP_G) {
   out.hp.push({ id: type + '@' + k + ':' + gid, type, k, grade: gid, name: L.setupName(type) + ', Ziel ' + String(k).replace('.', ',') + ' R, ' + L.gradeName(gid), all: st(sel), train: st(tr), test: st(te), hold: st(ho), perDay: +(sel.length / (tradingDays / 0.75)).toFixed(2) });
 }
 // Zusatzstufen mit naeherem Ziel: in allen drei Zeitraeumen im Plus, mindestens 58 % Gewinner je Zeitraum, mindestens 100 Trades
+// CRV-Test: festes Ziel 1R, 2R, 3R gegen das normale Ziel (Liquiditaet, CRV 2 bis 6), jeweils ohne und mit Teilgewinn bei +1R
+{ const RG = ['alle', 'trend', 'trend_vixhi', 'trend_conf3', 'trend_ob'], st3 = (arr, key) => { const tr = arr.filter((t) => t.at < split), te = arr.filter((t) => t.at >= split && t.at < cut), ho = arr.filter((t) => t.at >= cut), f = (a) => pick(a.length ? L.rStats(a.map((t) => key === 'p' && t.rPart != null ? t.rPart : t.r)) : null); return { all: f(arr), train: f(tr), test: f(te), hold: f(ho) }; };
+  out.rrTest = [];
+  for (const type of ['sweep', 'pullback']) for (const gid of RG) {
+    const nat = full.filter((t) => (t.type || t.sig.type) === type && L.gradeMatch(type + ':' + gid, t.sig, t.ampel));
+    out.rrTest.push({ type, grade: gid, k: 'normal', fixed: st3(nat, 'f'), part: st3(nat, 'p'), rrMed: nat.length ? nat.map((t) => t.sig.rr).sort((a, b) => a - b)[Math.floor(nat.length / 2)] : null });
+    for (const k of [1, 2, 3]) { const sel = hp.filter((t) => t.type === type && t.k === k && L.gradeMatch(gid, t.sig, null)); out.rrTest.push({ type, grade: gid, k, fixed: st3(sel, 'f'), part: st3(sel, 'p') }); }
+  }
+  console.log('RRTEST', JSON.stringify(out.rrTest.map((x) => [x.type, x.grade, x.k, x.fixed.all.n, x.fixed.all.win, x.fixed.all.mean, x.part.all.win, x.part.all.mean, x.fixed.hold.mean, x.part.hold.mean, x.rrMed]))); }
 out.hpTiers = out.hp.filter((g) => g.all.n >= 100 && [g.train, g.test, g.hold].every((x) => x.n >= 15 && x.mean > 0 && x.win >= 0.58)).sort((a, b) => b.all.mean - a.all.mean).slice(0, 3)
   .map((g) => ({ id: g.id, type: g.type, k: g.k, grade: g.grade, name: g.name, n: g.all.n + g.hold.n, win: +((g.all.win * g.all.n + g.hold.win * g.hold.n) / (g.all.n + g.hold.n)).toFixed(3), mean: +((g.all.mean * g.all.n + g.hold.mean * g.hold.n) / (g.all.n + g.hold.n)).toFixed(3), hold: g.hold, perDay: g.perDay }));
 out.hpPass = out.hp.filter((g) => [g.train, g.test, g.hold].every((x) => x.n >= 15 && x.win >= 0.6 && x.mean > 0)).map((g) => g.id);

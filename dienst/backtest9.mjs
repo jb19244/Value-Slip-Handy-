@@ -192,6 +192,24 @@ const FOMC = ('2000-02-02 2000-03-21 2000-05-16 2000-06-28 2000-08-22 2000-10-03
     out.sets[key] = evalSet('IBS auf ' + GROUPS[key][0], T, { syms: used });
     { const g = {}; T.forEach((t) => { (g[t.s] = g[t.s] || []).push(t); }); out.sets[key].bySym = Object.fromEntries(Object.keys(g).map((k) => [k, st(g[k])])); } }
 }
+// ---- 6c) CRV-Test fuer die Tages-Strategien: gleiche Einstiege (IBS, drei Verlusttage), aber fester Stop und festes Ziel 2R oder 3R statt Regel-Ausstieg.
+//      Konservativ: Stop und Ziel am selben Tag = Stop; Kursluecken werden zum Eroeffnungskurs ausgefuehrt.
+{
+  const fixed = (d1, i, m, R, maxD, cost) => { const e = d1[i].c, a = L.atrSeries(d1)[i]; if (!a) return null; const st = e - m * a, tg = e + R * m * a;
+    for (let k = i + 1; k < d1.length && k <= i + maxD; k++) { const x = d1[k];
+      if (x.l <= st) return { pct: (Math.min(st, x.o) / e - 1) * 100 - cost, r: (Math.min(st, x.o) - e) / (m * a) };
+      if (x.h >= tg) return { pct: (Math.max(tg, x.o) / e - 1) * 100 - cost, r: (Math.max(tg, x.o) - e) / (m * a) };
+      if (k === i + maxD) return { pct: (x.c / e - 1) * 100 - cost, r: (x.c - e) / (m * a) }; }
+    return null; };
+  const ATRS = {}; for (const s of US_SYMS) if (D[s]) ATRS[s] = L.atrSeries(D[s]);
+  for (const [nm, cond] of [['ibs', (d1, i) => L.ibs(d1[i]) < 0.2], ['down3', (d1, i) => d1[i].c < d1[i - 1].c && d1[i - 1].c < d1[i - 2].c && d1[i - 2].c < d1[i - 3].c]]) {
+    for (const [m, R, maxD] of [[1.5, 2, 10], [1.5, 3, 15], [1, 2, 10], [1, 3, 15], [2, 2, 15]]) { const T = [];
+      for (const s of US_SYMS) { const d1 = D[s]; if (!d1 || d1.length < 1500) continue; const cost = s[0] === '^' ? COST : COST_ETF;
+        for (let i = 200; i < d1.length - 1; i++) { if (!(d1[i].c > L.smaAt(d1, i, 200)) || !cond(d1, i)) continue; const r = fixed(d1, i, m, R, maxD, cost); if (r) T.push({ t: d1[i].t, s, cost, pct: r.pct, rr: r.r }); } }
+      const key = 'crv:' + nm + '_' + m + 'atr_' + R + 'r'; out.sets[key] = evalSet((nm === 'ibs' ? 'IBS' : 'Drei Verlusttage') + ' mit festem Ziel ' + R + 'R, Stop ' + String(m).replace('.', ',') + ' ATR', T, { noEx: true });
+      out.sets[key].meanR = T.length ? +(T.reduce((a, x) => a + x.rr, 0) / T.length).toFixed(3) : null; }
+  }
+}
 // ---- 7) VIX-Dehnung: VIX drei Tage mind. 5 % ueber seinem 10-Tage-Schnitt, S&P 500 im Aufwaertstrend
 {
   const T = [], v = D['^VIX'], d1 = D['^GSPC'];
@@ -225,6 +243,6 @@ const FOMC = ('2000-02-02 2000-03-21 2000-05-16 2000-06-28 2000-08-22 2000-10-03
 }
 out.passed = Object.keys(out.sets).filter((k) => out.sets[k].passed);
 writeFileSync(new URL('./backtest-cal.json', import.meta.url), JSON.stringify(out));
-for (const k of Object.keys(out.sets)) { const x = out.sets[k]; console.log((x.passed ? 'OK  ' : '--  ') + k.padEnd(18), 'n', String(x.all.n).padStart(5), 'win', x.all.win, 'mean', x.all.mean, '| tr', x.train.mean, 'te', x.test.mean, 'ho', x.hold.mean, '| dayLo', x.day.lo, '| ex', x.ex ? x.ex.all.mean : '-', '| Jahre', x.yearsUp + '/' + x.yearsN); }
+for (const k of Object.keys(out.sets)) { const x = out.sets[k]; console.log((x.passed ? 'OK  ' : '--  ') + k.padEnd(24), x.meanR != null ? 'meanR ' + x.meanR : '', 'n', String(x.all.n).padStart(5), 'win', x.all.win, 'mean', x.all.mean, '| tr', x.train.mean, 'te', x.test.mean, 'ho', x.hold.mean, '| dayLo', x.day.lo, '| ex', x.ex ? x.ex.all.mean : '-', '| Jahre', x.yearsUp + '/' + x.yearsN); }
 for (const k of ['ibs_us', 'rsi2_us']) { const x = out.audit[k]; console.log('AUDIT', k, 'n', x.all.n, 'win', x.all.win, 'mean', x.all.mean, 'lo', x.all.lo, 'dayLo', x.day.lo, 'Jahre', x.yearsUp + '/' + x.yearsN, 'cost2', x.cost2.mean, 'ex', x.ex.all.mean); }
 console.log('Cluster', JSON.stringify(out.audit.ibsCluster), 'Risiko', JSON.stringify(out.audit.ibsRisk), JSON.stringify(out.audit.rsiRisk));
