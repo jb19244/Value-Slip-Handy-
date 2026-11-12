@@ -174,6 +174,24 @@ const FOMC = ('2000-02-02 2000-03-21 2000-05-16 2000-06-28 2000-08-22 2000-10-03
   const dd = (trades) => { const g = {}; trades.forEach((t) => { const d = L.dayOf(t.t); g[d] = (g[d] || 0) + t.pct; }); let eq = 0, pk = 0, mx = 0, streak = 0, ms = 0; Object.keys(g).sort().forEach((d) => { eq += g[d]; pk = Math.max(pk, eq); mx = Math.max(mx, pk - eq); if (g[d] < 0) { streak++; ms = Math.max(ms, streak); } else streak = 0; }); return { maxDD: +mx.toFixed(1), lossDays: ms, total: +eq.toFixed(1) }; };
   out.audit.ibsRisk = dd(ibsAll); out.audit.rsiRisk = dd(rsiAll);
 }
+// ---- 6b) Mehr Signale: mildere Schwellen (wie stark faellt der Vorteil ab?) und weitere US-gehandelte ETF-Gruppen (Laender, Branchen).
+//      Gruppen sind nach Art festgelegt, nicht nach Ergebnis; eine Gruppe zaehlt nur als Ganzes.
+{
+  const tier = (lo, hi) => { const T = []; for (const s of US_SYMS) { const d1 = D[s]; if (!d1 || d1.length < 1500) continue; const a = L.atrSeries(d1), cost = s[0] === '^' ? COST : COST_ETF, sg = [];
+    for (let i = 200; i < d1.length - 1; i++) { const ib = L.ibs(d1[i]); if (a[i] && d1[i].c > L.smaAt(d1, i, 200) && ib >= lo && ib < hi) sg.push(sig(d1, a, i)); }
+    run(s, sg, () => ({ maxDays: 5, exitFn: L.ibsExit(d1) }), cost, T); } return T; };
+  out.sets['ibs:t00_10'] = evalSet('IBS unter 0,1 (19 US-Märkte)', tier(0, 0.1));
+  out.sets['ibs:t10_20'] = evalSet('IBS 0,1 bis 0,2', tier(0.1, 0.2));
+  out.sets['ibs:t20_30'] = evalSet('IBS 0,2 bis 0,3 (milder, mehr Signale)', tier(0.2, 0.3));
+  out.sets['ibs:t30_40'] = evalSet('IBS 0,3 bis 0,4', tier(0.3, 0.4));
+  const GROUPS = { 'ibs:laender': ['Länder-ETFs (US-gehandelt): Schwellenländer, Brasilien, Japan, China, Europa, Deutschland, Korea, Taiwan, Indien, Mexiko', ['EEM', 'EWZ', 'EWJ', 'FXI', 'EFA', 'EWG', 'EWY', 'EWT', 'INDA', 'EWW']],
+    'ibs:branchen': ['Weitere US-Branchen-ETFs: Öl-Förderer, Einzelhandel, Metalle, Immobilien, Goldminen, Transport, Rüstung, Software, Kommunikation', ['XOP', 'XRT', 'XME', 'IYR', 'GDX', 'IYT', 'ITA', 'IGV', 'XLC', 'XLRE']] };
+  for (const key of Object.keys(GROUPS)) { const T = [], used = [];
+    for (const s of GROUPS[key][1]) { if (!D[s]) { D[s] = await chart(s); await wait(250); } const d1 = D[s]; if (!d1 || d1.length < 1500) continue; used.push(s);
+      run(s, L.ibsSignals(d1), () => ({ maxDays: 5, exitFn: L.ibsExit(d1) }), COST_ETF, T); }
+    out.sets[key] = evalSet('IBS auf ' + GROUPS[key][0], T, { syms: used });
+    { const g = {}; T.forEach((t) => { (g[t.s] = g[t.s] || []).push(t); }); out.sets[key].bySym = Object.fromEntries(Object.keys(g).map((k) => [k, st(g[k])])); } }
+}
 // ---- 7) VIX-Dehnung: VIX drei Tage mind. 5 % ueber seinem 10-Tage-Schnitt, S&P 500 im Aufwaertstrend
 {
   const T = [], v = D['^VIX'], d1 = D['^GSPC'];
