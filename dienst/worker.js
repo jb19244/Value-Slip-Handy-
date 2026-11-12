@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'd2500e05ac';
+const WORKER_VER = '65363d1768';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3300,6 +3300,33 @@ async function moreCfg(env, nowMs) {
     return c.data || {};
   } catch (e) { return {}; }
 }
+// Kalender- und Muster-Strategien (backtest-cal.json): was bestanden hat und die Kennzahlen dazu
+async function calCfg(env, nowMs) {
+  try {
+    const c = await cachedKV(env, 'mkt:qc', 3600e3, nowMs, async () => {
+      if (!env.PAGES_URL) return {};
+      const r = await fetch(env.PAGES_URL + 'dienst/backtest-cal.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA });
+      if (!r.ok) return {};
+      const j = await r.json(), stats = {};
+      Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win }; });
+      return { passed: j.passed || [], stats };
+    });
+    return c.data || {};
+  } catch (e) { return {}; }
+}
+// Handelstage der New Yorker Boerse: Wochentage ohne die festen Feiertage (Regeln der NYSE, Karfreitag ueber das Osterdatum)
+function nyseHoliday(key) {
+  const y = +key.slice(0, 4), iso = (m, d) => y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0'), wdOf = (m, d) => new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const nth = (m, wd, n) => { let d = 1; while (wdOf(m, d) !== wd) d++; return iso(m, d + 7 * (n - 1)); }, lastWd = (m, wd) => { let d = new Date(Date.UTC(y, m, 0)).getUTCDate(); while (wdOf(m, d) !== wd) d--; return iso(m, d); };
+  const obs = (m, d) => { const w = wdOf(m, d); return w === 6 ? (d > 1 ? iso(m, d - 1) : null) : w === 0 ? iso(m, d + 1) : iso(m, d); };
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, dd = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - dd - g + 15) % 30, i2 = Math.floor(c / 4), k2 = c % 4, l = (32 + 2 * e + 2 * i2 - h - k2) % 7, m2 = Math.floor((a + 11 * h + 22 * l) / 451);
+  const em = Math.floor((h + l - 7 * m2 + 114) / 31), ed = ((h + l - 7 * m2 + 114) % 31) + 1, gf = new Date(Date.UTC(y, em - 1, ed) - 2 * 86400e3).toISOString().slice(0, 10);
+  return [obs(1, 1), nth(1, 1, 3), nth(2, 1, 3), gf, lastWd(5, 1), y >= 2022 ? obs(6, 19) : null, obs(7, 4), nth(9, 1, 1), nth(11, 4, 4), obs(12, 25)].includes(key);
+}
+function nyseDaysLeftInMonth(key) {
+  let n = 0; for (let t = Date.parse(key + 'T12:00:00Z') + 86400e3; ; t += 86400e3) { const k = new Date(t).toISOString().slice(0, 10); if (k.slice(0, 7) !== key.slice(0, 7)) break; const w = new Date(t).getUTCDay(); if (w >= 1 && w <= 5 && !nyseHoliday(k)) n++; }
+  return n;
+}
 // Produkt bei Trade Republic und Risiko fuer diesen Trade: Obergrenze fuer alle offenen Positionen zusammen (heat, % vom Konto)
 function openCount(t) {
   return (t.swingPos || []).filter((p) => p.state === 'offen' || p.state === 'wartet').length + (t.ibsPos || []).filter((p) => p.state === 'offen').length
@@ -3648,6 +3675,8 @@ async function runTrade(env, nowMs) {
       : ((qm.passed || []).includes('ibs:idx') ? ['SPX', 'NDX', 'DJI'].map((k) => TL.instrumentByKey(k)) : []);
     if (uni.length) {
       const ny = nyMin(nowMs), s0 = qm.stats && qm.stats[us ? 'breit:ibs_us' : 'ibs:idx'], win = ny >= 15 * 60 + 40 && ny < 15 * 60 + 56;
+      const qc = win ? await calCfg(env, nowMs) : {}, cs = qc.stats || {}, ttOn = (qc.passed || []).includes('tt:hold_us') && clk.wd === 'Mon', TT = ['^GSPC', '^NDX', '^DJI', '^RUT'];
+      const stTxt = (x) => x && x.n ? x.n + ' Trades, ' + Math.round(x.win * 100) + ' % Gewinner, Ø +' + x.mean.toFixed(2).replace('.', ',') + ' % nach Kosten' : '';
       let budget = 7;
       for (const ins of uni) {
         const k = ins.k, pos = t.ibsPos.find((p) => p.k === k && p.state === 'offen');
@@ -3662,10 +3691,14 @@ async function runTrade(env, nowMs) {
         const ib = last.h > last.l ? (last.c - last.l) / (last.h - last.l) : 0.5;
         if (pos) {
           const fin = (state, px, txt) => { const r = (px - pos.entry) / (3 * pos.atr); pos.state = state; pos.exit = px; pos.pct = Math.round((px / pos.entry - 1) * 10000) / 100; pos.r = Math.round(r * 100) / 100; pos.exitAt = nowMs; dirty = true;
-            t.trackLog = (t.trackLog || []).concat([{ id: pos.id, k, name: ins.name, dir: 1, cls: 'IBS', t: pos.at, state, r: pos.r }]).slice(-200); return send('b:' + pos.id + ':done', { body: txt + ' (' + (pos.pct >= 0 ? '+' : '') + String(pos.pct).replace('.', ',') + ' %).', tag: 'ibs-' + k }); };
-          if (last.l <= pos.stop) { await fin('stop', pos.stop, '❌ Notstop: ' + ins.name + ' IBS-Trade bei ' + fmtp(pos.stop, k)); continue; }
+            t.trackLog = (t.trackLog || []).concat([{ id: pos.id, k, name: ins.name, dir: 1, cls: pos.kind === 'tt' ? 'Turnaround Tuesday' : 'IBS', t: pos.at, state, r: pos.r }]).slice(-200); return send('b:' + pos.id + ':done', { body: txt + ' (' + (pos.pct >= 0 ? '+' : '') + String(pos.pct).replace('.', ',') + ' %).', tag: 'ibs-' + k }); };
+          if (last.l <= pos.stop) { await fin('stop', pos.stop, '❌ Notstop: ' + ins.name + (pos.kind === 'tt' ? ' Turnaround-Tuesday-Trade bei ' : ' IBS-Trade bei ') + fmtp(pos.stop, k)); continue; }
           if (win && pos.day !== dayKey) {
             const held = d1.filter((x) => dKey(x.t) > pos.day).length;
+            if (pos.kind === 'tt') { const pv = d1[d1.length - 2];
+              if (last.c > pv.h) await fin(last.c >= pos.entry ? 'ziel' : 'tagesende', last.c, '✅ Jetzt verkaufen: ' + ins.name + ' schließt über dem Vortageshoch (Turnaround Tuesday). Stand ' + fmtp(last.c, k));
+              else if (held >= 4) await fin('tagesende', last.c, 'Turnaround Tuesday ' + ins.name + ': 4 Tage erreicht, jetzt verkaufen. Stand ' + fmtp(last.c, k));
+              continue; }
             if (ib > 0.8) await fin(last.c >= pos.entry ? 'ziel' : 'tagesende', last.c, '✅ Jetzt verkaufen: ' + ins.name + ' schließt im oberen Fünftel der Tagesspanne (IBS ' + ib.toFixed(2).replace('.', ',') + '). Stand ' + fmtp(last.c, k));
             else if (held >= 5) await fin('tagesende', last.c, 'IBS ' + ins.name + ': 5 Tage erreicht, jetzt verkaufen. Stand ' + fmtp(last.c, k));
           }
@@ -3674,10 +3707,17 @@ async function runTrade(env, nowMs) {
         if (t.ibsSent[k] === dayKey) continue;
         t.ibsSent[k] = dayKey; dirty = true; rep.ibs = (rep.ibs || 0) + 1;
         const sma = d1.slice(-200).reduce((a, x) => a + x.c, 0) / 200, atr = TL.atrSeries(d1).pop();
-        if (!(last.c > sma && ib < 0.2 && atr)) continue;
+        const prev = d1[d1.length - 2], isIbs = last.c > sma && ib < 0.2, isTT = ttOn && TT.includes(ins.y) && last.c < prev.c && ib < 0.3;
+        if (!atr || !(isIbs || isTT)) continue;
+        if (!isIbs) { // nur Turnaround Tuesday: schwacher Montag, Verkauf sobald ein Schluss ueber dem Vortageshoch liegt (max. 4 Tage)
+          const idT = k + ':tt:' + dayKey, stT = last.c - 3 * atr;
+          t.ibsPos.push({ id: idT, kind: 'tt', k, name: ins.name, entry: last.c, stop: stT, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf' });
+          await send('b:' + idT, { title: 'Turnaround Tuesday · ' + ins.name, body: ins.name + ' Long (Turnaround Tuesday): schwacher Montag, Schluss im unteren Drittel der Tagesspanne (IBS ' + ib.toFixed(2).replace('.', ',') + '). Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stT, k) + '. Verkauft wird, sobald ein Tag über dem Hoch des Vortags schließt, spätestens nach 4 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (stTxt(cs['tt:hold_us']) ? ' Rückrechnung: ' + stTxt(cs['tt:hold_us']) + '.' : ''), tag: 'ibs-' + k, url: './' });
+          continue; }
+        const rs2 = TL.rsiSeries(d1, 2).pop(), dbl = rs2 != null && rs2 < 10;
         const id = k + ':ibs:' + dayKey, stop = last.c - 3 * atr;
-        t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf' });
-        await send('b:' + id, { title: 'IBS-Signal · ' + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : ''), tag: 'ibs-' + k, url: './' });
+        t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', dbl });
+        await send('b:' + id, { title: (dbl ? '⭐ Doppelsignal · ' : 'IBS-Signal · ') + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + (dbl ? ' ⭐ Zusätzlich RSI-2 unter 10: die stärkere Variante' + (stTxt(cs['mr:both']) ? ' (' + stTxt(cs['mr:both']) + ')' : '') + '. Wenn das Risikobudget knapp ist, diese zuerst.' : '') + (isTT ? ' Dazu schwacher Montag (Turnaround Tuesday).' : ''), tag: 'ibs-' + k, url: './' });
       }
     }
     t.ibsPos = t.ibsPos.filter((p) => p.state === 'offen' || nowMs - (p.exitAt || p.at) < 3 * 86400e3);
@@ -3722,6 +3762,23 @@ async function runTrade(env, nowMs) {
     }
   }
   if (t.track) t.track = t.track.filter((x) => x.state === 'wartet' || x.state === 'offen' || nowMs - (x.exitAt || x.at) < 86400e3);
+  // 10b) US-Staatsanleihen zum Monatsende: Kauf zum Schluss, wenn noch 5 Handelstage im Monat folgen, Verkauf zum Schluss des letzten Handelstags
+  if (t.depotOn !== false && weekday) {
+    const ny = nyMin(nowMs), nyKey = new Date(nowMs - 5 * 3600e3).toISOString().slice(0, 10);
+    if (ny >= 15 * 60 + 40 && ny < 15 * 60 + 56 && !nyseHoliday(nyKey)) {
+      const left = nyseDaysLeftInMonth(nyKey), mk = nyKey.slice(0, 7); t.eom = t.eom || {};
+      if ((left === 5 && t.eom.buy !== mk) || (left === 0 && t.eom.buy === mk && t.eom.sell !== mk)) {
+        const qc = await calCfg(env, nowMs);
+        if ((qc.passed || []).includes('eom:tlt5')) {
+          const d1 = await candlesOf('TLT', '1d', '1mo'), px = d1 && d1.length ? d1[d1.length - 1].c : null, x = qc.stats['eom:tlt5'];
+          if (left === 5) { t.eom.buy = mk; t.eom.px = px; dirty = true;
+            await send('eom:' + mk, { title: 'Monatsende · US-Anleihen', body: 'US-Staatsanleihen 20+ Jahre: heute kurz vor US-Handelsschluss kaufen, am letzten Handelstag des Monats zum Schluss verkaufen (5 Handelstage). Bei Trade Republic: iShares $ Treasury Bond 20+yr UCITS ETF, am besten die in Euro abgesicherte Variante, sonst überlagert der Dollarkurs den Effekt. Kein Hebel nötig.' + (x && x.n ? ' Rückrechnung seit 2002: ' + x.n + ' Monate, ' + Math.round(x.win * 100) + ' % Gewinner, Ø +' + x.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + ' Ich melde mich zum Verkauf.', tag: 'eom', url: './' }); }
+          else { t.eom.sell = mk; dirty = true; const pc = px && t.eom.px ? (px / t.eom.px - 1) * 100 : null;
+            await send('eomx:' + mk, { title: 'Monatsende · US-Anleihen verkaufen', body: 'Letzter Handelstag des Monats: US-Anleihen jetzt zum Schluss verkaufen.' + (pc != null ? ' TLT seit dem Kauf: ' + (pc >= 0 ? '+' : '−') + Math.abs(pc).toFixed(2).replace('.', ',') + ' % (in Dollar).' : ''), tag: 'eom', url: './' }); }
+        }
+      }
+    }
+  }
   // 11) Morgen-Briefing (07:45) und Abend-Bilanz (22:15) an Werktagen: Lage, Termine, offene Positionen, Ergebnis des Tages
   if (weekday && t.brief !== false) {
     const pct = (x) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(1).replace('.', ',') + ' %';

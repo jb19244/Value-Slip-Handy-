@@ -1371,7 +1371,7 @@ function simulate(sig, c, cost){
     if (i === fill && mode === 'limit') fav = Math.max(0, ((x.c - entry) * sig.dir) / risk);
     // Stopp-Einstieg in der Fuellkerze: ueblicher Kursweg O-T-H-S bei gruener, O-H-T-S bei roter Kerze.
     // Laeuft die Kerze in Einstiegsrichtung (gruen bei Long), lag das Tief vor dem Einstieg und zaehlt nicht gegen den Trade.
-    if (i === fill && mode === 'stop' && (x.c - x.o) * sig.dir > 0) adv = (Math.min(entry * sig.dir, x.c * sig.dir) * sig.dir - entry) * sig.dir / risk;
+    if (i === fill && mode === 'stop' && !sig.pess && (x.c - x.o) * sig.dir > 0) adv = (Math.min(entry * sig.dir, x.c * sig.dir) * sig.dir - entry) * sig.dir / risk;
     if (adv < r.mae) r.mae = adv;
     // Stop auf Einstand, sobald 1R erreicht war (gilt ab der Kerze danach)
     if (beOn && adv <= 0){ r.r = fin(0); r.how = 'Einstand'; r.exitT = x.t; break; }
@@ -1410,13 +1410,15 @@ function backtest(p){
     if (s.oco && sim.fillT !== first[s.type + s.oco]) return;
     if (p.be){ var s2 = Object.assign({}, s, { be: true }), simBe = simulate(s2, c, cost); sim.rBe = simBe.r != null ? simBe.r : sim.r; }
     { var s3 = Object.assign({}, s, { part: true }), simP = simulate(s3, c, cost); sim.rPart = simP.r != null ? simP.r : sim.r; }
+    // Haertetest: unguenstigste Annahme in der Einstiegskerze (ganzes Tief zaehlt gegen den Trade) und doppelte Kosten
+    if (p.stress){ var s4 = Object.assign({}, s, { part: true, pess: true }), simQ = simulate(s4, c, cost * 2); sim.rStress = simQ.r != null ? simQ.r : (simQ.filled ? sim.rPart : sim.rPart); }
     var t = s.t, m15 = c.slice(Math.max(0, s.i - 400), s.i + 1);
     var h1 = p.h1 ? (p.h1 === p.m15 ? c.slice(Math.max(0, s.i - 300), s.i + 1) : p.h1.filter(function(x){ return x.t + 3600e3 <= t; }).slice(-300)) : null;
     var d1 = p.d1 && !p.noCheck ? p.d1.filter(function(x){ return berlinFast(x.t + 12 * 3600e3).key < s.day; }) : null;
     var chk = p.noCheck ? { ampel: null, score: null, items: [] } : scoreCheck({ instr: p.instr, dir: s.dir, entry: s.entry, stop: s.stop, target: s.target, now: t, d1: d1, h1: h1, m15: m15, events: null, wmul: p.wmul });
     var checks = {}; (chk.items || []).forEach(function(it){ checks[it.key] = it.verdict; });
     res.push({ status: 'closed', instr: s.k, name: p.instr.name, dir: s.dir, entry: sim.entry || s.entry, stop: s.stop, target: s.target, exit: (sim.entry || s.entry) + s.dir * ((sim.entry || s.entry) - s.stop) * s.dir * sim.r,
-      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, rBe: sim.rBe, rPart: sim.rPart, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
+      at: t, closedAt: sim.exitT, ampel: chk.ampel, score: chk.score, checks: checks, setups: [s.sweep, s.withBias ? 'mit Tagestrend' : 'gegen Tagestrend'], type: s.type, r: sim.r, rBe: sim.rBe, rPart: sim.rPart, rStress: sim.rStress, mae: sim.mae, mfe: sim.mfe, how: sim.how, sig: s });
   });
   return res;
 }

@@ -23,7 +23,7 @@ for (const ins of L.scanUniverse()) {
   const h1 = await chart(ins.y, '60m', '730d'), d1 = await chart(ins.y, '1d', '5y');
   info[ins.k] = { h1: h1.length, d1: d1.length, from: h1.length ? new Date(h1[0].t).toISOString().slice(0, 10) : null };
   if (h1.length < 500) continue;
-  for (const setup of Object.keys(L.SETUPS)) all.push(...L.backtest({ instr: ins, m15: h1, h1, d1, bar: 3600e3, setup, any: true, be: setup === 'sweep' || setup === 'pullback', noCheck: setup !== 'sweep' && setup !== 'pullback', conf: ['sweep', 'pullback', 'nr7r1'].includes(setup) }).map((t) => { Object.assign(t.sig, L.marketContext(t.sig.day, ins, t.sig.dir, vix, dxy)); return Object.assign(t, { type: setup }); }));
+  for (const setup of Object.keys(L.SETUPS)) all.push(...L.backtest({ instr: ins, m15: h1, h1, d1, bar: 3600e3, setup, any: true, stress: true, be: setup === 'sweep' || setup === 'pullback', noCheck: setup !== 'sweep' && setup !== 'pullback', conf: ['sweep', 'pullback', 'nr7r1'].includes(setup) }).map((t) => { Object.assign(t.sig, L.marketContext(t.sig.day, ins, t.sig.dir, vix, dxy)); return Object.assign(t, { type: setup }); }));
   // Hohe Trefferquote: gleiche Signale, Ziel naeher (0,5 / 0,75 / 1 R), Stop unveraendert
   for (const setup of HP_TYPES) for (const k of HP_R) hp.push(...L.backtest({ instr: ins, m15: h1, h1, d1, bar: 3600e3, setup, any: true, noCheck: true, tgtR: k }).map((t) => { Object.assign(t.sig, L.marketContext(t.sig.day, ins, t.sig.dir, vix, dxy)); return Object.assign(t, { type: setup, k }); }));
   await new Promise((r) => setTimeout(r, 400));
@@ -38,6 +38,7 @@ const t0 = ts[0] || 0, t1 = cut || 0, tradingDays = Math.max(1, (t1 - t0) / 8640
 const pick = (a) => a ? { n: a.n, mean: +a.mean.toFixed(3), win: +a.win.toFixed(3), sum: +a.sum.toFixed(1), lo: a.lo != null ? +a.lo.toFixed(3) : null, hi: a.hi != null ? +a.hi.toFixed(3) : null } : { n: 0 };
 const st = (arr) => pick(arr.length ? L.rStats(arr.map((t) => t.r)) : null);
 // mit Teilgewinn: bei +1R die Haelfte schliessen, Rest mit Stop auf Einstand
+const stS = (arr) => pick(arr.length ? L.rStats(arr.map((t) => t.rStress != null ? t.rStress : (t.rPart != null ? t.rPart : t.r))) : null);
 const stP = (arr) => pick(arr.length ? L.rStats(arr.map((t) => t.rPart != null ? t.rPart : t.r)) : null);
 const grades = [];
 for (const type of Object.keys(L.SETUPS)) for (const g of L.GRADES) {
@@ -46,7 +47,7 @@ for (const type of Object.keys(L.SETUPS)) for (const g of L.GRADES) {
   const hs = st(f(hold));
   const hsel = f(hold);
   grades.push({ id, type, name: L.gradeName(id), hold: hs, all: st(sel), train: st(sel.filter((t) => t.at < split)), test: st(sel.filter((t) => t.at >= split)), perDay: +(sel.length / tradingDays).toFixed(2),
-    part: { all: stP(sel), train: stP(sel.filter((t) => t.at < split)), test: stP(sel.filter((t) => t.at >= split)), hold: stP(hsel), both: stP(sel.concat(hsel)) } });
+    part: { all: stP(sel), train: stP(sel.filter((t) => t.at < split)), test: stP(sel.filter((t) => t.at >= split)), hold: stP(hsel), both: stP(sel.concat(hsel)), stress: stS(sel.concat(hsel)), stressHold: stS(hsel) } });
 }
 // A+ = Stufe, die in beiden Haelften klar im Plus liegt UND insgesamt mit 95 % ueber null (beste davon).
 // A  = weitere Stufen, die in beiden Haelften im Plus liegen und im Schnitt mindestens +0,1 R bringen (noch nicht sicher belegt).
@@ -80,6 +81,17 @@ const out = {
   cremeAll: (() => { const m = (arr) => arr.filter((t) => creme.some((id) => L.gradeMatch(id, t.sig, t.ampel))); const a = m(all), h = m(hold); return { all: stP(a), hold: stP(h), train: stP(a.filter((t) => t.at < split)), test: stP(a.filter((t) => t.at >= split)), fixed: st(a.concat(h)), perDay: +((a.length + h.length) / Math.max(1, tradingDays + (Date.now() - cut) / 86400e3 * 5 / 7)).toFixed(2) }; })(),
   goodByInstr: Object.fromEntries(Object.entries(byInstr).map(([k, v]) => [k, st(v)]))
 };
+// Pruefung der Auswahl: Stufen, die NUR nach den ersten beiden Zeitraeumen ausgewaehlt waeren (beide im Plus), und ihr Ergebnis im dritten.
+// Das ist die ehrliche Schaetzung, weil der dritte Zeitraum hier nicht in die Auswahl eingeht. Dazu Crème nach Tagen gebuendelt und im Haertetest.
+{
+  const enough = grades.filter((g) => g.part.train.n >= 10 && g.part.test.n >= 20 && g.part.hold.n >= 10), selTT = enough.filter((g) => g.part.train.mean > 0 && g.part.test.mean > 0);
+  const holdU = hold.filter((t) => selTT.some((g) => L.gradeMatch(g.id, t.sig, t.ampel)));
+  const cr = full.filter((t) => creme.some((id) => L.gradeMatch(id, t.sig, t.ampel))), bp = full.filter((t) => bplus.some((id) => L.gradeMatch(id, t.sig, t.ampel)));
+  const byDay = (arr) => { const g = {}; arr.forEach((t) => { const d = L.berlinFast(t.at).key; (g[d] = g[d] || []).push(t.rPart != null ? t.rPart : t.r); }); const m = Object.values(g).map((a) => a.reduce((x, y) => x + y, 0) / a.length); return pick(m.length ? L.rStats(m) : null); };
+  out.audit = { tested: grades.length, enough: enough.length, sel: selTT.length, selHoldPos: selTT.filter((g) => g.part.hold.mean > 0).length, holdUnion: stP(holdU), holdAllGrades: stP(hold),
+    creme: { n: cr.length, day: byDay(cr), stress: stS(cr), stressHold: stS(cr.filter((t) => t.at >= cut)) }, bplus: { n: bp.length, both: stP(bp), day: byDay(bp), stress: stS(bp) } };
+  console.log('AUDIT', JSON.stringify(out.audit));
+}
 const Phi = (x) => { const t = 1 / (1 + 0.2316419 * Math.abs(x)), d = 0.3989423 * Math.exp(-x * x / 2), p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return x > 0 ? 1 - p : p; };
 grades.forEach((g) => { if (g.all.n >= 10 && g.all.hi != null){ const se = (g.all.hi - g.all.lo) / (2 * 1.96), tv = se > 0 ? g.all.mean / se : 0; g.p = +(1 - Phi(tv)).toFixed(5); g.pAdj = +Math.min(1, g.p * grades.length).toFixed(4); } });
 // Haertetest der gemeldeten Stufen auf dem unberuehrten Zeitraum

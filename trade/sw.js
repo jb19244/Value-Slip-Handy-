@@ -1,5 +1,5 @@
 // Service Worker von Trade Check: App offline verfuegbar, Push vom eigenen Dienst. Kursdaten gehen immer ins Netz.
-const CACHE = 'tradecheck-v33';
+const CACHE = 'tradecheck-v34';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './icons/apple-touch-icon.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
