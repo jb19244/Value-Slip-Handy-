@@ -64,9 +64,11 @@ const fifthG = grades.find((g) => g.id === 'nr7r1:trend_vixhi');
 const extra = fifthG && fifthG.train.mean > 0 && fifthG.test.mean > 0 && fifthG.hold.mean > 0 ? ['nr7r1:trend_vixhi'] : [];
 // Creme de la Creme: mit Teilgewinn (Haelfte bei +1R) insgesamt mind. 60 % Gewinner und in 1. Haelfte, 2. Haelfte UND Haertetest im Plus
 const cremeOk = (g, w) => { const P = g.part; return P && P.both.n >= 40 && P.hold.n >= 10 && P.both.win >= w && P.train.mean > 0 && P.test.mean > 0 && P.hold.mean > 0; };
-const creme = grades.filter((g) => cremeOk(g, 0.6)).sort((a, b) => b.part.both.mean - a.part.both.mean).map((g) => g.id);
+// Haertetest als Pflicht: auch mit unguenstigster Fuellung in der Einstiegskerze und doppelten Kosten klar im Plus (Crème: mind. +0,1 R, B+: mind. +0,05 R) und im dritten Zeitraum nicht im Minus
+const stressOk = (g, m) => g.part.stress && g.part.stress.n && g.part.stress.mean >= m && g.part.stressHold.mean > 0;
+const creme = grades.filter((g) => cremeOk(g, 0.6) && stressOk(g, 0.1)).sort((a, b) => b.part.both.mean - a.part.both.mean).map((g) => g.id);
 // B+: die besten uebrigen Stufen (mind. 50 % Gewinner mit Teilgewinn, in allen drei Zeitraeumen im Plus), nur ab 16 Uhr
-const bplus = grades.filter((g) => !creme.includes(g.id) && cremeOk(g, 0.5)).sort((a, b) => b.part.both.mean - a.part.both.mean).map((g) => g.id);
+const bplus = grades.filter((g) => !creme.includes(g.id) && cremeOk(g, 0.5) && stressOk(g, 0.05)).sort((a, b) => b.part.both.mean - a.part.both.mean).map((g) => g.id);
 const good = grades.filter((g) => good0.includes(g) || w60.includes(g.id) || triple.includes(g.id) || extra.includes(g.id));
 const inA = all.filter((t) => good.some((g) => L.gradeMatch(g.id, t.sig, t.ampel)));
 const inTop = chosen ? all.filter((t) => L.gradeMatch(chosen, t.sig, t.ampel)) : [];
