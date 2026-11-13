@@ -1,41 +1,44 @@
 //@version=6
-indicator("Trade Check · SMC alle Zeitebenen", shorttitle="TC SMC MTF", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, max_bars_back=500)
-// Zeichnet Order Blocks, Fair Value Gaps, Liquiditaet und Struktur (BOS / CHoCH) von bis zu vier Zeitebenen gleichzeitig in den Chart.
+indicator("Trade Check · Zonen (alle Zeitebenen)", shorttitle="TC Zonen", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, max_bars_back=500)
+// TRADE CHECK · ZONEN
+// Order Blocks, Fair Value Gaps, Liquidität und Struktur (BOS / CHoCH) von bis zu vier Zeitebenen in einem Chart.
+// Aufgeräumt: Zonen stehen als schmale Leiste rechts vom Kurs, nur was in Kursnähe liegt wird gezeigt,
+// höhere Zeitebenen sind kräftiger als niedrige. Übereinander liegende Zonen werden dunkler: das ist Konfluenz.
 // Alles wird nur aus abgeschlossenen Kerzen der jeweiligen Zeitebene berechnet (kein Nachzeichnen).
 // Zeitebenen, die kleiner sind als der Chart, werden automatisch ausgelassen.
 
 // ───────── Einstellungen ─────────
-grpT = "Zeitebenen"
+grpT = "Zeitebenen (von klein nach groß)"
 on1 = input.bool(true, "", inline="t1", group=grpT)
 tf1 = input.timeframe("15", "", inline="t1", group=grpT)
-c1 = input.color(#9AA4B2, "", inline="t1", group=grpT)
 on2 = input.bool(true, "", inline="t2", group=grpT)
 tf2 = input.timeframe("60", "", inline="t2", group=grpT)
-c2 = input.color(#7FB2FF, "", inline="t2", group=grpT)
 on3 = input.bool(true, "", inline="t3", group=grpT)
 tf3 = input.timeframe("240", "", inline="t3", group=grpT)
-c3 = input.color(#F5C451, "", inline="t3", group=grpT)
 on4 = input.bool(true, "", inline="t4", group=grpT)
 tf4 = input.timeframe("D", "", inline="t4", group=grpT)
-c4 = input.color(#E879F9, "", inline="t4", group=grpT)
 
 grpS = "Was anzeigen"
 showFvg = input.bool(true, "Fair Value Gaps", group=grpS)
 showOb = input.bool(true, "Order Blocks", group=grpS)
 showLiq = input.bool(true, "Liquidität (Hochs / Tiefs, gleiche Hochs / Tiefs)", group=grpS)
 showStr = input.bool(true, "Struktur (BOS / CHoCH)", group=grpS)
-showTab = input.bool(true, "Übersicht oben rechts", group=grpS)
+showTab = input.bool(true, "Übersicht", group=grpS)
+
+grpL = "Darstellung"
+zoneStyle = input.string("Kompakt rechts vom Kurs", "Zonen zeichnen", options=["Kompakt rechts vom Kurs", "Ab Entstehung"], group=grpL)
+zoneBars = input.int(14, "Breite rechts vom Kurs (Kerzen)", minval=4, maxval=80, group=grpL)
+nearAtr = input.float(12.0, "Nur was in Kursnähe liegt (Abstand in ATR, 0 = alles)", minval=0.0, step=1.0, group=grpL)
+maxZ = input.int(2, "Offene Zonen je Art und Zeitebene", minval=1, maxval=10, group=grpL)
+maxL = input.int(3, "Liquiditäts-Linien je Zeitebene", minval=1, maxval=10, group=grpL)
+maxM = input.int(1, "Struktur-Marken je Zeitebene", minval=1, maxval=10, group=grpL)
+bullCol = input.color(#2FD07A, "Farbe bullisch", group=grpL)
+bearCol = input.color(#FF5A5F, "Farbe bärisch", group=grpL)
+tabPos = input.string("Oben rechts", "Übersicht: Position", options=["Oben rechts", "Unten rechts", "Oben links", "Unten links"], group=grpL)
 
 grpD = "Feinheiten"
 swingLen = input.int(3, "Swing-Länge (Kerzen links und rechts)", minval=1, maxval=20, group=grpD)
 fvgMin = input.float(0.15, "FVG-Mindestgröße (in ATR)", minval=0.0, step=0.05, group=grpD)
-maxZ = input.int(4, "Höchstens so viele offene Zonen je Art und Zeitebene", minval=1, maxval=15, group=grpD)
-maxL = input.int(4, "Höchstens so viele Liquiditäts-Linien je Zeitebene", minval=1, maxval=15, group=grpD)
-maxM = input.int(4, "Höchstens so viele Struktur-Marken je Zeitebene", minval=1, maxval=15, group=grpD)
-bullCol = input.color(#2FD07A, "Farbe bullisch", group=grpD)
-bearCol = input.color(#FF5A5F, "Farbe bärisch", group=grpD)
-fvgTr = input.int(86, "Durchsichtigkeit FVG", minval=50, maxval=98, group=grpD)
-obTr = input.int(78, "Durchsichtigkeit Order Block", minval=50, maxval=98, group=grpD)
 
 // ───────── Typen ─────────
 type Zone
@@ -43,16 +46,30 @@ type Zone
     float top
     float bot
     int dir
+    int t0
+    color bg
+    color bd
+    color tx
 
 type Liq
     line ln
     label lb
     float px
     int dir
+    color col
 
 type Mark
     line ln
     label lb
+
+// ───────── Lage im Chart ─────────
+bool compact = zoneStyle == "Kompakt rechts vom Kurs"
+int barMs = timeframe.in_seconds() * 1000
+int lEdge = time + barMs
+int rEdge = time + barMs * zoneBars
+float chartAtr = ta.atr(14)
+float nearDist = nearAtr > 0 ? chartAtr * nearAtr : 0.0
+color fgCol = chart.fg_color
 
 // ───────── Berechnung auf der jeweiligen Zeitebene (nur abgeschlossene Kerzen) ─────────
 f_data(int len, float minAtr) =>
@@ -141,8 +158,8 @@ f_name(string tf) =>
     int s = timeframe.in_seconds(tf)
     s >= 604800 ? "W" : s >= 86400 ? "D" : s >= 3600 ? str.tostring(math.round(s / 3600.0)) + "h" : str.tostring(math.round(s / 60.0)) + "m"
 
-// ───────── Zeichnen und Pflegen im Chart ─────────
-f_clean(array<Zone> zs) =>
+// ───────── Zonen pflegen: rechts mitführen, weit entfernte ausblenden, durchbrochene löschen ─────────
+f_upd(array<Zone> zs) =>
     if array.size(zs) > 0
         for i = array.size(zs) - 1 to 0
             Zone z = array.get(zs, i)
@@ -150,65 +167,84 @@ f_clean(array<Zone> zs) =>
             if dead
                 box.delete(z.bx)
                 array.remove(zs, i)
+            else
+                float dist = close > z.top ? close - z.top : close < z.bot ? z.bot - close : 0.0
+                bool far = nearDist > 0 and dist > nearDist
+                if compact
+                    box.set_left(z.bx, lEdge)
+                box.set_right(z.bx, rEdge)
+                box.set_bgcolor(z.bx, far ? color(na) : z.bg)
+                box.set_border_color(z.bx, far ? color(na) : z.bd)
+                box.set_text_color(z.bx, far ? color(na) : z.tx)
     0
 
-f_tf(array<Zone> zF, array<Zone> zO, array<Liq> lq, array<Mark> mk, string nm, color tc, bool enabled, bool nb, bool bullFvg, bool bearFvg, float fTop, float fBot, int fTime, bool newPH, float phV, int phT, bool eqh, bool newPL, float plV, int plT, bool eql, bool bosUp, bool bosDn, bool isCh, float bLvl, int bT, bool obBull, bool obBear, float obTop, float obBot, int obT) =>
+f_tf(array<Zone> zF, array<Zone> zO, array<Liq> lq, array<Mark> mk, string nm, int rk, bool enabled, bool nb, bool bullFvg, bool bearFvg, float fTop, float fBot, int fTime, bool newPH, float phV, int phT, bool eqh, bool newPL, float plV, int plT, bool eql, bool bosUp, bool bosDn, bool isCh, float bLvl, int bT, bool obBull, bool obBear, float obTop, float obBot, int obT) =>
     if enabled
+        string hal = rk == 1 ? text.align_left : rk == 2 ? text.align_center : text.align_right
+        color txc = color.new(fgCol, 40)
         if nb
             if showFvg and (bullFvg or bearFvg) and not na(fTop) and not na(fTime)
                 int d = bullFvg ? 1 : -1
                 color fc = d > 0 ? bullCol : bearCol
-                box bxF = box.new(fTime, fTop, time, fBot, xloc=xloc.bar_time, extend=extend.right, bgcolor=color.new(fc, fvgTr), border_color=color.new(tc, 45), border_style=line.style_dotted, text=nm + " FVG", text_color=color.new(tc, 10), text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_center)
-                array.push(zF, Zone.new(bxF, fTop, fBot, d))
+                color bgF = color.new(fc, 93 - rk * 3)
+                color bdF = color.new(fc, 100)
+                box bxF = box.new(compact ? lEdge : fTime, fTop, rEdge, fBot, xloc=xloc.bar_time, bgcolor=bgF, border_color=bdF, border_width=1, text=nm + " FVG", text_color=txc, text_size=size.tiny, text_halign=hal, text_valign=text.align_center)
+                array.push(zF, Zone.new(bxF, fTop, fBot, d, fTime, bgF, bdF, txc))
                 if array.size(zF) > maxZ
                     Zone oldF = array.shift(zF)
                     box.delete(oldF.bx)
             if showOb and (obBull or obBear) and not na(obTop) and not na(obT)
                 int d2 = obBull ? 1 : -1
                 color oc = d2 > 0 ? bullCol : bearCol
-                box bxO = box.new(obT, obTop, time, obBot, xloc=xloc.bar_time, extend=extend.right, bgcolor=color.new(oc, obTr), border_color=color.new(tc, 0), border_style=line.style_solid, text=nm + " OB", text_color=color.new(tc, 0), text_size=size.tiny, text_halign=text.align_left, text_valign=text.align_center)
-                array.push(zO, Zone.new(bxO, obTop, obBot, d2))
+                color bgO = color.new(oc, 90 - rk * 4)
+                color bdO = color.new(oc, 60 - rk * 8)
+                box bxO = box.new(compact ? lEdge : obT, obTop, rEdge, obBot, xloc=xloc.bar_time, bgcolor=bgO, border_color=bdO, border_width=1, text=nm + " OB", text_color=txc, text_size=size.tiny, text_halign=hal, text_valign=text.align_bottom)
+                array.push(zO, Zone.new(bxO, obTop, obBot, d2, obT, bgO, bdO, txc))
                 if array.size(zO) > maxZ
                     Zone oldO = array.shift(zO)
                     box.delete(oldO.bx)
+            color lc = color.new(fgCol, 62 - rk * 8)
+            string lst = rk >= 3 ? line.style_solid : line.style_dashed
             if showLiq and newPH and not na(phV) and not na(phT)
-                line lnH = line.new(phT, phV, time, phV, xloc=xloc.bar_time, extend=extend.right, color=color.new(tc, 25), style=line.style_dashed, width=eqh ? 2 : 1)
-                label lbH = label.new(time, phV, nm + (eqh ? " BSL =" : " BSL"), xloc=xloc.bar_time, style=label.style_none, textcolor=color.new(tc, 0), size=size.tiny)
-                array.push(lq, Liq.new(lnH, lbH, phV, 1))
+                line lnH = line.new(compact ? lEdge : phT, phV, rEdge, phV, xloc=xloc.bar_time, color=lc, style=lst, width=eqh ? 2 : 1)
+                label lbH = label.new(rEdge, phV, nm + (eqh ? " EQH" : " Liq ↑"), xloc=xloc.bar_time, style=label.style_label_left, color=color.new(fgCol, 100), textcolor=lc, size=size.tiny)
+                array.push(lq, Liq.new(lnH, lbH, phV, 1, lc))
             if showLiq and newPL and not na(plV) and not na(plT)
-                line lnL = line.new(plT, plV, time, plV, xloc=xloc.bar_time, extend=extend.right, color=color.new(tc, 25), style=line.style_dashed, width=eql ? 2 : 1)
-                label lbL = label.new(time, plV, nm + (eql ? " SSL =" : " SSL"), xloc=xloc.bar_time, style=label.style_none, textcolor=color.new(tc, 0), size=size.tiny)
-                array.push(lq, Liq.new(lnL, lbL, plV, -1))
+                line lnL = line.new(compact ? lEdge : plT, plV, rEdge, plV, xloc=xloc.bar_time, color=lc, style=lst, width=eql ? 2 : 1)
+                label lbL = label.new(rEdge, plV, nm + (eql ? " EQL" : " Liq ↓"), xloc=xloc.bar_time, style=label.style_label_left, color=color.new(fgCol, 100), textcolor=lc, size=size.tiny)
+                array.push(lq, Liq.new(lnL, lbL, plV, -1, lc))
             while array.size(lq) > maxL
                 Liq oldL = array.shift(lq)
                 line.delete(oldL.ln)
                 label.delete(oldL.lb)
             if showStr and (bosUp or bosDn) and not na(bLvl) and not na(bT)
                 color sc = bosUp ? bullCol : bearCol
-                line lnS = line.new(bT, bLvl, time, bLvl, xloc=xloc.bar_time, color=sc, style=isCh ? line.style_solid : line.style_dashed, width=isCh ? 2 : 1)
+                line lnS = line.new(bT, bLvl, time, bLvl, xloc=xloc.bar_time, color=color.new(sc, 25), style=isCh ? line.style_solid : line.style_dotted, width=1)
                 label lbS = label.new(int(math.avg(bT, time)), bLvl, nm + (isCh ? " CHoCH" : " BOS"), xloc=xloc.bar_time, style=bosUp ? label.style_label_down : label.style_label_up, color=color.new(sc, 100), textcolor=sc, size=size.tiny)
                 array.push(mk, Mark.new(lnS, lbS))
                 if array.size(mk) > maxM
                     Mark oldM = array.shift(mk)
                     line.delete(oldM.ln)
                     label.delete(oldM.lb)
-        // Zonen, durch die der Kurs geschlossen hat, verschwinden
-        f_clean(zF)
-        f_clean(zO)
-        // Liquiditaet: Beschriftung am rechten Rand mitfuehren, abgeholte Level markieren und beenden
+        f_upd(zF)
+        f_upd(zO)
+        // Liquidität: rechts mitführen, weit entfernte ausblenden, abgeholte Level entfernen
         if array.size(lq) > 0
             for i = array.size(lq) - 1 to 0
                 Liq q = array.get(lq, i)
                 bool swept = q.dir > 0 ? high > q.px : low < q.px
                 if swept
-                    line.set_extend(q.ln, extend.none)
-                    line.set_x2(q.ln, time)
-                    line.set_style(q.ln, line.style_dotted)
-                    label.set_x(q.lb, time)
-                    label.set_text(q.lb, nm + " ✕")
+                    line.delete(q.ln)
+                    label.delete(q.lb)
                     array.remove(lq, i)
                 else
-                    label.set_x(q.lb, time)
+                    bool farL = nearDist > 0 and math.abs(close - q.px) > nearDist
+                    if compact
+                        line.set_x1(q.ln, lEdge)
+                    line.set_x2(q.ln, rEdge)
+                    label.set_x(q.lb, rEdge)
+                    line.set_color(q.ln, farL ? color(na) : q.col)
+                    label.set_textcolor(q.lb, farL ? color(na) : q.col)
     0
 
 f_cnt(array<Zone> zs) =>
@@ -221,7 +257,7 @@ f_cnt(array<Zone> zs) =>
                 u += 1
             else
                 d += 1
-    str.tostring(u) + "↑ " + str.tostring(d) + "↓"
+    str.tostring(u) + "↑" + str.tostring(d) + "↓"
 
 // ───────── Daten der vier Zeitebenen ─────────
 [a1, b1, c1t, d1b, e1, f1, g1, h1, i1, j1, k1, l1, m1, n1, o1, p1, q1, r1, s1, t1, u1, v1, w1, x1] = request.security(syminfo.tickerid, tf1, f_data(swingLen, fvgMin), lookahead=barmerge.lookahead_on)
@@ -264,44 +300,46 @@ var array<Zone> zO4 = array.new<Zone>()
 var array<Liq> lq4 = array.new<Liq>()
 var array<Mark> mk4 = array.new<Mark>()
 
-f_tf(zF1, zO1, lq1, mk1, nm1, c1, ok1, nb1, a1, b1, c1t, d1b, e1, f1, g1, h1, i1, j1, k1, l1, m1, n1, o1, p1, q1, r1, s1, t1, u1, v1, w1)
-f_tf(zF2, zO2, lq2, mk2, nm2, c2, ok2, nb2, a2, b2, c2t, d2b, e2, f2, g2, h2, i2, j2, k2, l2, m2, n2, o2, p2, q2, r2, s2, t2, u2, v2, w2)
-f_tf(zF3, zO3, lq3, mk3, nm3, c3, ok3, nb3, a3, b3, c3t, d3b, e3, f3, g3, h3, i3, j3, k3, l3, m3, n3, o3, p3, q3, r3, s3, t3, u3, v3, w3)
-f_tf(zF4, zO4, lq4, mk4, nm4, c4, ok4, nb4, a4, b4, c4t, d4b, e4, f4, g4, h4, i4, j4, k4, l4, m4, n4, o4, p4, q4, r4, s4, t4, u4, v4, w4)
+f_tf(zF1, zO1, lq1, mk1, nm1, 1, ok1, nb1, a1, b1, c1t, d1b, e1, f1, g1, h1, i1, j1, k1, l1, m1, n1, o1, p1, q1, r1, s1, t1, u1, v1, w1)
+f_tf(zF2, zO2, lq2, mk2, nm2, 2, ok2, nb2, a2, b2, c2t, d2b, e2, f2, g2, h2, i2, j2, k2, l2, m2, n2, o2, p2, q2, r2, s2, t2, u2, v2, w2)
+f_tf(zF3, zO3, lq3, mk3, nm3, 3, ok3, nb3, a3, b3, c3t, d3b, e3, f3, g3, h3, i3, j3, k3, l3, m3, n3, o3, p3, q3, r3, s3, t3, u3, v3, w3)
+f_tf(zF4, zO4, lq4, mk4, nm4, 4, ok4, nb4, a4, b4, c4t, d4b, e4, f4, g4, h4, i4, j4, k4, l4, m4, n4, o4, p4, q4, r4, s4, t4, u4, v4, w4)
 
 // ───────── Übersicht ─────────
+color pTxt = #E8EAED
+color pMut = #8A8F98
+color pGold = #F5C451
 f_trendTxt(int t) =>
-    t > 0 ? "↑ bullisch" : t < 0 ? "↓ bärisch" : "–"
+    t > 0 ? "▲ bullisch" : t < 0 ? "▼ bärisch" : "–"
 f_trendCol(int t) =>
-    t > 0 ? bullCol : t < 0 ? bearCol : color.gray
+    t > 0 ? bullCol : t < 0 ? bearCol : pMut
 
-f_row(table tbl, int r, string nm, color tc, bool ok, int tr, array<Zone> zF, array<Zone> zO) =>
-    table.cell(tbl, 0, r, nm, text_color=tc, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, r, ok ? f_trendTxt(tr) : "kleiner als Chart", text_color=ok ? f_trendCol(tr) : color.gray, text_size=size.small)
-    table.cell(tbl, 2, r, ok ? f_cnt(zF) : "", text_color=color.silver, text_size=size.small)
-    table.cell(tbl, 3, r, ok ? f_cnt(zO) : "", text_color=color.silver, text_size=size.small)
+f_row(table tbl, int r, string nm, bool ok, int tr, array<Zone> zF, array<Zone> zO) =>
+    table.cell(tbl, 0, r, nm, text_color=pTxt, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, r, ok ? f_trendTxt(tr) : "kleiner als Chart", text_color=ok ? f_trendCol(tr) : pMut, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 2, r, ok ? f_cnt(zF) + " · " + f_cnt(zO) : "", text_color=pMut, text_size=size.small, text_halign=text.align_right)
 
-var table tb = table.new(position.top_right, 4, 6, bgcolor=color.new(#101114, 10), border_color=color.new(color.gray, 80), border_width=1, frame_color=color.new(color.gray, 70), frame_width=1)
+tpos = tabPos == "Oben rechts" ? position.top_right : tabPos == "Unten rechts" ? position.bottom_right : tabPos == "Oben links" ? position.top_left : position.bottom_left
+var table tb = table.new(tpos, 3, 6, bgcolor=color.new(#0F1012, 6), border_color=color.new(#2A2D33, 100), border_width=1, frame_color=color.new(#2A2D33, 0), frame_width=1)
 if showTab and barstate.islast
-    table.cell(tb, 0, 0, "Zeit", text_color=color.gray, text_size=size.small, text_halign=text.align_left)
-    table.cell(tb, 1, 0, "Struktur", text_color=color.gray, text_size=size.small)
-    table.cell(tb, 2, 0, "FVG", text_color=color.gray, text_size=size.small)
-    table.cell(tb, 3, 0, "OB", text_color=color.gray, text_size=size.small)
+    table.cell(tb, 0, 0, "ZONEN", text_color=pGold, text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 1, 0, "Struktur", text_color=pMut, text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 2, 0, "FVG · OB", text_color=pMut, text_size=size.small, text_halign=text.align_right)
     if on1
-        f_row(tb, 1, nm1, c1, ok1, x1, zF1, zO1)
+        f_row(tb, 1, nm1, ok1, x1, zF1, zO1)
     if on2
-        f_row(tb, 2, nm2, c2, ok2, x2, zF2, zO2)
+        f_row(tb, 2, nm2, ok2, x2, zF2, zO2)
     if on3
-        f_row(tb, 3, nm3, c3, ok3, x3, zF3, zO3)
+        f_row(tb, 3, nm3, ok3, x3, zF3, zO3)
     if on4
-        f_row(tb, 4, nm4, c4, ok4, x4, zF4, zO4)
+        f_row(tb, 4, nm4, ok4, x4, zF4, zO4)
     int up = (ok1 and x1 > 0 ? 1 : 0) + (ok2 and x2 > 0 ? 1 : 0) + (ok3 and x3 > 0 ? 1 : 0) + (ok4 and x4 > 0 ? 1 : 0)
     int dn = (ok1 and x1 < 0 ? 1 : 0) + (ok2 and x2 < 0 ? 1 : 0) + (ok3 and x3 < 0 ? 1 : 0) + (ok4 and x4 < 0 ? 1 : 0)
     int act = (ok1 ? 1 : 0) + (ok2 ? 1 : 0) + (ok3 ? 1 : 0) + (ok4 ? 1 : 0)
-    string bias = act > 0 and up == act ? "Alle bullisch: nur Long" : act > 0 and dn == act ? "Alle bärisch: nur Short" : "Gemischt: " + str.tostring(up) + "↑ / " + str.tostring(dn) + "↓"
-    color bcol = act > 0 and up == act ? bullCol : act > 0 and dn == act ? bearCol : color.orange
+    string bias = act > 0 and up == act ? "Alle bullisch → nur Long" : act > 0 and dn == act ? "Alle bärisch → nur Short" : "Gemischt " + str.tostring(up) + "▲ " + str.tostring(dn) + "▼ → abwarten"
+    color bcol = act > 0 and up == act ? bullCol : act > 0 and dn == act ? bearCol : pGold
     table.cell(tb, 0, 5, bias, text_color=bcol, text_size=size.small, text_halign=text.align_left)
-    table.merge_cells(tb, 0, 5, 3, 5)
+    table.merge_cells(tb, 0, 5, 2, 5)
 
 // ───────── Alarme ─────────
 bool ch1 = ok1 and nb1 and (n1 or o1) and p1
