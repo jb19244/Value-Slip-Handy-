@@ -148,6 +148,7 @@ details.more[open] summary::after{content:"−"}
 .rk-cl{display:flex;flex-wrap:wrap;gap:6px}.rk-cl .chip{padding:4px 9px;font-size:12px}.chip.warn{border-color:var(--warn);color:var(--warn)}
 .wb{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border-radius:14px;background:var(--bad-bg);color:var(--bad);font-size:14px;border-left:3px solid var(--bad)}.wb.warn{background:var(--warn-bg);color:var(--warn);border-left-color:var(--warn)}.wb span{color:var(--fg);opacity:.86;font-size:13px;line-height:1.4}
 .lvl{list-style:none;margin:8px 0 0;padding:0}.lvl li{padding:10px 0;border-top:1px solid var(--line)}.lvl li:first-child{border-top:0}.lv-n{display:grid;grid-template-columns:auto 1fr 1fr;gap:12px;margin-top:6px;font-variant-numeric:tabular-nums;font-size:14px}.lv-n span{display:flex;flex-direction:column;gap:1px}.lv-n small{font-size:11px;color:var(--muted)}.lv-n em{font-style:normal;color:var(--muted);font-size:12px}.sr-rule{padding:10px 0;border-top:1px solid var(--line)}.sr-rule:first-child{border-top:0}
+.code-box{display:flex;align-items:center;gap:10px;margin-top:6px;padding:10px 12px;border-radius:12px;background:var(--surface2)}.code-box code{flex:1;font-size:13px;letter-spacing:.04em;word-break:break-all;font-variant-numeric:tabular-nums}
 .depot{padding:6px 0 4px}
 .depot .bigpx{font-size:40px}
 .lv .acts{display:flex;gap:4px}
@@ -259,7 +260,7 @@ var S = load();
 if (!S.cfg.push.qv4){ S.cfg.push.quality = 'mix'; S.cfg.push.qv2 = S.cfg.push.qv3 = S.cfg.push.qv4 = true; }
 S.cfg.push.quality = 'creme'; S.cfg.push.qv5 = true;
 var V = { signals: [], tev: {}, bt: null, pick: null, dienst: null, check: null, checkErr: '', busy: false, data: {}, rates: null, cal: null, calErr: '', cot: {}, lastSync: 0, pushMsg: '' };
-function save(){ try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {} }
+function save(){ try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {} if (typeof bakSchedule === 'function') bakSchedule(); }
 function $(s, r){ return (r || document).querySelector(s); }
 function $$(s, r){ return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -1040,20 +1041,70 @@ function viewShadow(sh){
     '<div class="label" style="margin-top:12px">Woher das Ergebnis kommt</div><table class="st"><tr><td>Brutto aus den Kursbewegungen</td><td class="' + (sh.gross >= 0 ? 'good' : 'bad') + '">' + sgn(sh.gross, 2) + ' €</td></tr><tr><td>Ordergebühren</td><td class="bad">−' + fmt(sh.fees, 2) + ' €</td></tr><tr><td>Spread</td><td class="bad">−' + fmt(sh.spread, 2) + ' €</td></tr><tr><td>Finanzierung über Nacht</td><td class="bad">−' + fmt(sh.fin, 2) + ' €</td></tr><tr><td><b>Netto</b></td><td class="' + (sh.net >= 0 ? 'good' : 'bad') + '"><b>' + sgn(sh.net, 2) + ' €</b></td></tr></table>' +
     (share != null && share > 30 ? '<p class="hint">Die Kosten fressen ' + fmt(share, 0) + ' % des Bruttogewinns, vor allem die feste Gebühr je Order. Mit größerem Risiko in Euro je Trade sinkt der Anteil, mit mehr Trades bei kleinem Konto steigt er.</p>' : '');
   if (sh.groups.length > 1) h += '<div class="label" style="margin-top:12px">Je Strategie</div><table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Euro</th></tr>' + sh.groups.map(function(q){ return '<tr><td>' + esc(q.name) + '</td><td>' + q.n + '</td><td>' + fmt(q.w / q.n * 100, 0) + ' %</td><td class="' + (q.net >= 0 ? 'good' : 'bad') + '">' + sgn(q.net, 0) + ' €</td></tr>'; }).join('') + '</table>';
+  var sm = shadowMonths(sh); if (sm.length) h += '<div class="label" style="margin-top:12px">Je Monat</div><table class="st" id="shmon"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Kosten</th><th>Netto</th></tr>' + sm.map(function(q){ var p2 = q.m.split('-'); return '<tr><td>' + ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'][+p2[1] - 1] + ' ' + p2[0] + '</td><td>' + q.n + '</td><td>' + fmt(q.w / q.n * 100, 0) + ' %</td><td class="muted">−' + fmt(q.fee, 0) + ' €</td><td class="' + (q.net >= 0 ? 'good' : 'bad') + '">' + sgn(q.net, 0) + ' €</td></tr>'; }).join('') + '</table>';
   h += '<details class="real-list"><summary>Letzte Trades (' + sh.trades.length + ')</summary><ul class="list-plain">' + sh.trades.slice().reverse().slice(0, 40).map(function(o){ return '<li><div class="row"><span>' + esc(o.name) + ' <span class="muted small">' + dm(o.t) + ' · ' + esc(groupName(o.g, o)) + (o.cut ? ' · ' + fmt(o.risk, 2) + ' % Risiko' : '') + '</span></span><span class="num ' + (o.skip ? 'muted' : (o.net >= 0 ? 'good' : 'bad')) + '">' + (o.skip ? esc(o.why) : sgn(o.net, 2) + ' €') + '</span></div></li>'; }).join('') + '</ul></details>';
   return h + setting + how + '</section>';
 }
 // ================= Live gegen Rueckrechnung =================
+// ================= Faelschungssicheres Protokoll: Kette pruefen und gegen die oeffentlich hinterlegten Stände abgleichen =================
+// SHA-256: im Browser ueber crypto.subtle, sonst (unverschluesselte Seite) eigene Rechnung
+function sha256js(str){
+  var K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+  var m = new TextEncoder().encode(str), l = m.length, n = ((l + 9 + 63) >> 6) << 6, b = new Uint8Array(n); b.set(m); b[l] = 0x80;
+  var bits = l * 8; for (var i = 0; i < 8; i++) b[n - 1 - i] = Math.floor(bits / Math.pow(2, 8 * i)) & 255;
+  var H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19], w = new Array(64), r = function(x, k){ return (x >>> k) | (x << (32 - k)); };
+  for (var o = 0; o < n; o += 64){
+    for (i = 0; i < 16; i++) w[i] = (b[o + 4 * i] << 24) | (b[o + 4 * i + 1] << 16) | (b[o + 4 * i + 2] << 8) | b[o + 4 * i + 3];
+    for (i = 16; i < 64; i++){ var s0 = r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >>> 3), s1 = r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >>> 10); w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0; }
+    var a = H[0], bb = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (i = 0; i < 64; i++){ var S1 = r(e, 6) ^ r(e, 11) ^ r(e, 25), ch = (e & f) ^ (~e & g), t1 = (h + S1 + ch + K[i] + w[i]) | 0, S0 = r(a, 2) ^ r(a, 13) ^ r(a, 22), mj = (a & bb) ^ (a & c) ^ (bb & c), t2 = (S0 + mj) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = bb; bb = a; a = (t1 + t2) | 0; }
+    H[0] = (H[0] + a) | 0; H[1] = (H[1] + bb) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0; H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+  }
+  return H.map(function(x){ return ('00000000' + (x >>> 0).toString(16)).slice(-8); }).join('');
+}
+function sha256hexB(s){ if (window.crypto && crypto.subtle) return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)).then(function(b){ return Array.prototype.map.call(new Uint8Array(b), function(x){ return ('0' + x.toString(16)).slice(-2); }).join(''); }); return Promise.resolve(sha256js(s)); }
+function protoCheck(){
+  var p = V.proto; if (!p || !p.n){ V.protoRes = { err: 'Noch keine Meldungen protokolliert.' }; return Promise.resolve(); }
+  V.protoRes = { busy: true }; rerender();
+  var months = [], d = new Date(p.since || Date.now()); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+  while (d.getTime() <= Date.now()){ months.push(d.toISOString().slice(0, 7)); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)); }
+  var all = [], i = 0;
+  var next = function(){ if (i >= months.length) return Promise.resolve(); var m = months[i++]; return post('/trade/proto', { token: token(), month: m }).then(function(j){ all = all.concat(j.list || []); return next(); }); };
+  return next().then(function(){
+    all.sort(function(a, b){ return a.i - b.i; });
+    var prev = '0'.repeat(64), ok = true, bad = null, k = 0, heads = {};
+    var step = function(){ if (k >= all.length) return Promise.resolve(); var x = all[k++];
+      return sha256hexB(prev + JSON.stringify([x.i, x.at, x.id, x.title, x.body])).then(function(h){ if (x.prev !== prev || h !== x.h || x.i !== k){ ok = false; if (!bad) bad = x; } heads[x.h] = x; prev = x.h; return step(); }); };
+    return step().then(function(){ return fetch('../dienst/beweis.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : []; }).catch(function(){ return []; }); }).then(function(pub){
+      var pubOk = (pub || []).filter(function(e){ return heads[e.head]; }), pubBad = (pub || []).filter(function(e){ return e.head && !heads[e.head] && e.n <= all.length; });
+      V.protoRes = { ok: ok && !pubBad.length && prev === p.head, n: all.length, bad: bad, pub: pubOk.length ? pubOk[pubOk.length - 1] : null, pubBad: pubBad.length, from: all.length ? all[0].at : null };
+      rerender(); });
+  }).catch(function(e){ V.protoRes = { err: e.message }; rerender(); });
+}
+function viewProto(){
+  var p = V.proto, r = V.protoRes;
+  var h = '<div class="label" style="margin-top:14px">Fälschungssicheres Protokoll</div><p class="small">' + (p && p.n ? p.n + ' Meldungen seit ' + dm(p.since || p.at) + ' in einer Hash-Kette: Jeder Eintrag enthält den Fingerabdruck des vorigen, der Stand wird täglich öffentlich bei GitHub hinterlegt. Nachträgliches Ändern oder Löschen fällt auf.' : 'Ab der nächsten Meldung wird jede Mitteilung in einer Hash-Kette protokolliert.') + '</p>';
+  if (r && r.busy) h += '<p class="hint"><span class="spin"></span> prüfe …</p>';
+  else if (r && r.err) h += '<p class="hint">' + esc(r.err) + '</p>';
+  else if (r) h += '<div class="spk ' + (r.ok ? 'good' : 'bad') + '" id="protores" style="margin:8px 0"><b>' + (r.ok ? 'Kette lückenlos ✓' : 'Kette gebrochen ✗') + '</b><span>' + r.n + ' Einträge geprüft' + (r.pub ? ', öffentlicher Stand vom ' + esc(r.pub.date) + ' (' + r.pub.n + ' Einträge) ist enthalten' : ', noch kein öffentlicher Stand') + (r.pubBad ? '. ' + r.pubBad + ' öffentliche Stände passen nicht!' : '') + (r.bad ? '. Erster Fehler bei Eintrag ' + r.bad.i : '') + '.</span></div>';
+  return h + (p && p.n ? '<button class="btn sm ghost" data-act="protocheck">Protokoll prüfen</button>' : '');
+}
+// Monatsbilanz aus dem Schatten-Bot
+function shadowMonths(sh){
+  var M = {}; sh.trades.forEach(function(o){ if (o.skip) return; var m = berlinParts(o.x).key.slice(0, 7), q = M[m] = M[m] || { n: 0, w: 0, net: 0, fee: 0 }; q.n++; if (o.net > 0) q.w++; q.net += o.net; q.fee += o.fee + o.spread + o.fin; });
+  return Object.keys(M).sort().reverse().slice(0, 12).map(function(m){ return Object.assign({ m: m }, M[m]); });
+}
 function viewLiveCheck(lc){
   lc = lc || liveCheck(V.trackLog || []); var paused = (V.lc && V.lc.paused) || {};
   var h = '<section class="card" id="live"><div class="row"><h2>Live gegen Rückrechnung</h2><span class="muted small">je Strategie</span></div>';
-  if (!lc.length) return h + '<p class="hint">Sobald Signale abgeschlossen sind, steht hier je Strategie, ob die echten Ergebnisse im erwarteten Bereich der Rückrechnung liegen.</p></section>';
+  if (!lc.length) return h + '<p class="hint">Sobald Signale abgeschlossen sind, steht hier je Strategie, ob die echten Ergebnisse im erwarteten Bereich der Rückrechnung liegen.</p>' + viewProto() + '</section>';
   var u = function(v, unit){ return v == null ? '–' : sgn(v, 2) + (unit === 'R' ? ' R' : ' %'); };
   var pill = function(q){ return paused[q.g] ? '<span class="pill bad">pausiert</span>' : q.status === 'warnung' ? '<span class="pill bad">Warnung</span>' : q.status === 'beobachten' ? '<span class="pill warn">beobachten</span>' : q.status === 'ok' ? '<span class="pill good">im Rahmen</span>' : '<span class="pill">sammelt</span>'; };
   h += '<ul class="lvl">' + lc.map(function(q){
     return '<li><div class="row"><b>' + esc(q.name) + '</b>' + pill(q) + '</div><div class="lv-n"><span><small>Trades</small>' + q.n + '</span><span><small>Treffer live / Soll</small>' + (q.win != null ? fmt(q.win * 100, 0) + ' %' : '–') + (q.expWin != null ? ' <em>/ ' + fmt(q.expWin * 100, 0) + ' %</em>' : '') + '</span><span><small>Ø live / Soll</small>' + u(q.mean, q.unit) + (q.expMean != null ? ' <em>/ ' + u(q.expMean, q.unit) + '</em>' : '') + '</span></div></li>'; }).join('') + '</ul>';
   return h + more('Live / Soll: links das echte Ergebnis, rechts die Erwartung aus der Rückrechnung. Ab 10 Trades wird gerechnet, ab 15 kann eine Strategie pausiert werden.',
-    'Jeder Trade trägt die Erwartung seiner Variante vom Zeitpunkt des Signals. Geprüft wird, ob Trefferquote und Durchschnitt so weit darunter liegen, dass normales Pech es kaum erklärt (mehr als 2,5 Standardabweichungen). Dann pausiert die Strategie: Ihre Signale kommen weiter, aber mit „Pausiert“, und der Schatten-Bot verfolgt sie. Liegt sie wieder im Rahmen, hebt der Dienst die Pause auf und meldet sich. „Beobachten“ heißt: schwächer als erwartet, aber noch im Bereich normaler Schwankung.') + '</section>';
+    'Jeder Trade trägt die Erwartung seiner Variante vom Zeitpunkt des Signals. Geprüft wird, ob Trefferquote und Durchschnitt so weit darunter liegen, dass normales Pech es kaum erklärt (mehr als 2,5 Standardabweichungen). Dann pausiert die Strategie: Ihre Signale kommen weiter, aber mit „Pausiert“, und der Schatten-Bot verfolgt sie. Liegt sie wieder im Rahmen, hebt der Dienst die Pause auf und meldet sich. „Beobachten“ heißt: schwächer als erwartet, aber noch im Bereich normaler Schwankung.') + viewProto() + '</section>';
 }
 // Depotwert: Kontogroesse + Ergebnis der Tagebuch-Trades (in Euro) + offene Positionen live
 function depotValue(){
@@ -1448,7 +1499,8 @@ function parseTradeCsv(txt){
   return { rows: rows, cols: { datum: lines[0] && csvSplit(lines[0], d)[iD], name: iN >= 0 ? csvSplit(lines[0], d)[iN] : null, ergebnis: csvSplit(lines[0], d)[iP >= 0 ? iP : iR] } };
 }
 document.addEventListener('toggle', function(ev){ var d = ev.target; if (d && d.dataset && d.dataset.fold){ S.fold = S.fold || {}; if (d.open) S.fold[d.dataset.fold] = 1; else delete S.fold[d.dataset.fold]; save(); } }, true);
-document.addEventListener('change', function(ev){ var fi = ev.target; if (fi && fi.id === 'realfile' && fi.files && fi.files[0]){ realImport(fi.files[0]); fi.value = ''; } });
+document.addEventListener('change', function(ev){ var fi = ev.target; if (fi && fi.id === 'realfile' && fi.files && fi.files[0]){ realImport(fi.files[0]); fi.value = ''; }
+  if (fi && fi.id === 'bakfile' && fi.files && fi.files[0]){ var f0 = fi.files[0]; fi.value = ''; f0.text().then(function(tx){ restoreFrom(tx, false); toast('Daten eingelesen'); rerender(); }).catch(function(e){ toast(e.message || 'Datei nicht lesbar'); }); } });
 function realImport(file){
   var rd = new FileReader();
   rd.onload = function(){ var p = parseTradeCsv(rd.result); if (!p.rows.length) return toast(p.err || 'Keine Zeilen erkannt.');
@@ -1995,6 +2047,50 @@ function csv(){
 }
 
 // ===================== Mehr =====================
+// ================= Datensicherung: automatisch im Push-Dienst, dazu Datei und Wiederherstellungs-Code =================
+// Gesichert wird alles, was nur auf diesem Geraet liegt (Tagebuch, Echtes Geld, Einstellungen, Training). Hoechstens alle 10 Minuten, nur bei Aenderung.
+function bakData(){ var c = JSON.parse(JSON.stringify(S)); delete c.bakInfo; return JSON.stringify(c); }
+function bakHash(s){ var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+function backupNow(force){
+  if (!S.cfg.push.on || !base()) return Promise.resolve(null);
+  var d = bakData(), h = bakHash(d), bi = S.bakInfo || {};
+  if (!force && h === bi.h) return Promise.resolve(null);
+  if (d.length > 570000){ V.bakErr = 'Zu groß für die automatische Sicherung, bitte als Datei exportieren.'; return Promise.resolve(null); }
+  return post('/trade/backup', { token: token(), data: d }).then(function(j){ S.bakInfo = { h: h, at: j.at }; V.bakErr = ''; try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {} if (S.tab === 'mehr') rerender(); return j; })
+    .catch(function(e){ V.bakErr = e.message; return null; });
+}
+function bakSchedule(){
+  if (!S.cfg.push.on) return; clearTimeout(V.bakT);
+  var last = (S.bakInfo && S.bakInfo.at) || 0, wait = Math.max(15e3, 10 * 60e3 - (Date.now() - last));
+  V.bakT = setTimeout(function(){ backupNow(false); }, wait);
+}
+function restoreFrom(data, newDevice){
+  var o = typeof data === 'string' ? JSON.parse(data) : data;
+  if (!o || typeof o !== 'object' || !o.cfg || !Array.isArray(o.trades)) throw new Error('Das ist keine Trade-Check-Sicherung.');
+  var d = defaults(), tok = S.cfg.token;
+  Object.keys(d).forEach(function(k){ if (o[k] != null) d[k] = o[k]; });
+  d.cfg = Object.assign(defaults().cfg, o.cfg); d.cfg.push = Object.assign(defaults().cfg.push, (o.cfg || {}).push || {}); d.form = Object.assign(defaults().form, o.form || {});
+  if (!d.cfg.token) d.cfg.token = tok;
+  // Auf einem neuen Geraet muss das Push-Abo neu angelegt werden, sonst gingen Meldungen an das alte Geraet
+  if (newDevice) d.cfg.push.on = false;
+  d.tab = S.tab || d.tab;
+  ['fold', 'korbDone', 'real', 'imp', 'train'].forEach(function(k){ if (o[k] != null) d[k] = o[k]; });
+  S = d; save(); return S;
+}
+function exportFile(){
+  var d = bakData(), a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([d], { type: 'application/json' })); a.download = 'trade-check-sicherung-' + berlinParts(Date.now()).key + '.json';
+  document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+function viewBackup(){
+  var bi = S.bakInfo || {}, on = S.cfg.push.on && base(), code = S.cfg.token || '';
+  return '<section class="card" id="backup"><div class="row"><h2>Datensicherung</h2>' + (on && bi.at ? '<span class="pill good">aktiv</span>' : '<span class="pill">' + (on ? 'gleich' : 'nur Datei') + '</span>') + '</div>' +
+    '<p class="hint" style="margin-top:4px">' + (on ? (bi.at ? 'Zuletzt gesichert: ' + dm(bi.at) + ' ' + hm(bi.at) + ' Uhr. ' : 'Die erste Sicherung läuft gleich. ') + 'Tagebuch, Echtes Geld und Einstellungen werden automatisch im Push-Dienst gesichert, höchstens alle 10 Minuten. Der Stand vom Vortag bleibt zusätzlich erhalten.' : 'Ohne Benachrichtigungen gibt es keine automatische Sicherung. Exportier deine Daten regelmäßig als Datei.') + (V.bakErr ? ' <b class="bad">' + esc(V.bakErr) + '</b>' : '') + '</p>' +
+    (on ? '<div class="label" style="margin-top:12px">Wiederherstellungs-Code</div><p class="hint">Damit holst du deine Daten auf ein neues Handy. Schreib ihn dir auf, wer ihn hat, kommt an deine Daten.</p><div class="code-box"><code id="bakcode">' + (V.showCode ? esc(code.replace(/(.{4})/g, '$1 ').trim()) : '•••• •••• •••• •••• ••••') + '</code><button class="btn sm ghost" data-act="bakcode">' + (V.showCode ? 'Verbergen' : 'Anzeigen') + '</button></div>' : '') +
+    '<div class="btns" style="margin-top:12px;flex-wrap:wrap">' + (on ? '<button class="btn sm" data-act="baknow">Jetzt sichern</button><button class="btn sm ghost" data-act="bakrestore">Sicherung zurückholen</button>' : '') + '<button class="btn sm ghost" data-act="bakexport">Als Datei exportieren</button><button class="btn sm ghost" data-act="bakimport">Datei einlesen</button></div>' +
+    '<details class="more"><summary>Neues Handy: mit Code wiederherstellen</summary><div class="fields f2" style="margin-top:8px"><label class="field txt"><span>Wiederherstellungs-Code</span><input id="bakcodein" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="40 Zeichen"></label></div><div class="btns"><button class="btn block" data-act="bakfromcode">Daten holen</button></div></details>' +
+    '<input type="file" id="bakfile" accept=".json,application/json" hidden></section>';
+}
 function viewMehr(){
   var c = S.cfg, p = c.push;
   var risks = [0.5, 1, 1.5, 2];
@@ -2029,6 +2125,7 @@ function viewMehr(){
       '<div class="btns"><button class="btn ghost block" data-act="ptest">Test senden</button><button class="btn ghost block" data-act="poff">Ausschalten</button></div>'
       : '<div class="btns"><button class="btn block" data-act="pon"' + (canPush ? '' : ' disabled') + '>Benachrichtigungen einschalten</button></div>') +
     (V.pushMsg ? '<p class="' + (/^Fehler|nicht/.test(V.pushMsg) ? 'err' : 'hint') + '">' + esc(V.pushMsg) + '</p>' : '') + '</section>';
+  h += viewBackup();
   h += '<section class="card"><h2>Datendienst</h2><p class="hint" style="margin-top:4px">' + (base() ? 'Verbunden: ' + esc(base().replace('https://', '')) : 'Wird automatisch aus deiner Value-Slip-Einrichtung übernommen …') + '</p>' +
     '<details class="more"><summary>Adresse selbst eintragen</summary><label class="field txt" style="margin-top:8px"><span>Adresse des Dienstes</span><input data-cfg="url" value="' + esc(c.url) + '" placeholder="https://value-slip.….workers.dev" autocapitalize="off" autocorrect="off"></label></details></section>';
   h += '<section class="card"><h2>Über Trade Check</h2><p class="hint" style="margin-top:4px">Trade Check bestätigt dein Setup mit Daten: Kurse von Yahoo Finance (bei manchen Börsen leicht verzögert), Termine von Forex Factory, Positionierung der Großspekulanten aus dem COT-Bericht der CFTC (wöchentlich). Die Entscheidung bleibt bei dir.</p>' +
@@ -2054,7 +2151,7 @@ function syncTrade(extra){
     var hits = {}, deads = {}; (j.alerts || []).forEach(function(a){ if (a.hit) hits[a.id] = a; if (a.dead) deads[a.id] = a.dead; });
     var changed = false;
     S.alerts.forEach(function(a){ if (hits[a.id] && !a.hit){ a.hit = hits[a.id].hit; a.hitPx = hits[a.id].hitPx; changed = true; } if (deads[a.id] && !a.dead){ a.dead = deads[a.id]; changed = true; } });
-    V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || []; V.ibsPos = j.ibsPos || []; V.brief = j.brief || null; V.log = j.log || []; V.radar = j.radar || null; V.autoPos = j.autoPos || []; V.news = j.news || []; V.newsStat = j.newsStat || null; V.lc = j.lc || null; V.wd = j.wd || null; V.syncErr = ''; appBadge();
+    V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || []; V.ibsPos = j.ibsPos || []; V.brief = j.brief || null; V.log = j.log || []; V.radar = j.radar || null; V.autoPos = j.autoPos || []; V.news = j.news || []; V.newsStat = j.newsStat || null; V.lc = j.lc || null; V.wd = j.wd || null; V.proto = j.proto || null; if (j.bak && j.bak.at && (!S.bakInfo || !S.bakInfo.at)) { S.bakInfo = { at: j.bak.at }; } V.syncErr = ''; appBadge();
     if (V.wantSig){ var w = V.wantSig; V.wantSig = null; useSignal(w); return j; }
     if (changed || S.tab === 'markt' || S.tab === 'buch' || S.tab === 'check'){ if (changed) save(); rerender(); }
     return j;
@@ -2137,6 +2234,15 @@ function onAct(e){
     var prod = ($('#realprod [aria-pressed=true]') || { dataset: { p: 'ko' } }).dataset.p, m = { traded: true, prod: prod, buy: vv('realbuy'), sell: vv('realsell'), qty: vv('realqty'), ratio: prod === 'ko' ? vv('realratio') : null, ko: prod === 'ko' ? vv('realko') : null, fee: +S.cfg.fee || 0 };
     if (m.buy > 0 && m.sell > 0 && m.qty > 0) m.eur = Math.round(((m.sell - m.buy) * m.qty - 2 * m.fee) * 100) / 100; else { m.buy = m.sell = m.qty = null; m.eur = ve === '' ? null : numDE(ve); }
     S.real[el.dataset.id] = m; save(); closeSheet(); toast(m.eur != null ? 'Gespeichert: ' + sgn(m.eur, 2) + ' €' : 'Gespeichert'); return rerender(); }
+  if (a === 'protocheck'){ protoCheck(); return; }
+  if (a === 'bakcode'){ V.showCode = !V.showCode; return rerender(); }
+  if (a === 'baknow'){ backupNow(true).then(function(j){ toast(j ? 'Gesichert' : (V.bakErr || 'Nicht gesichert')); rerender(); }); return; }
+  if (a === 'bakexport'){ exportFile(); return; }
+  if (a === 'bakimport'){ var bf = $('#bakfile'); if (bf) bf.click(); return; }
+  if (a === 'bakrestore'){ post('/trade/restore', { token: token() }).then(function(j){ restoreFrom(j.data, false); toast('Stand vom ' + dm(j.at) + ' ' + hm(j.at) + ' zurückgeholt'); rerender(); }).catch(function(e){ toast(e.message); }); return; }
+  if (a === 'bakfromcode'){ var cv = String(($('#bakcodein') || {}).value || '').replace(/\s+/g, '').toLowerCase(); if (!/^[a-f0-9]{40}$/.test(cv)){ toast('Der Code hat 40 Zeichen (0-9, a-f).'); return; }
+    var oldTok = S.cfg.token; S.cfg.token = cv; post('/trade/restore', { token: cv }).then(function(j){ restoreFrom(j.data, true); S.cfg.token = cv; save(); toast('Daten geholt. Schalte jetzt die Benachrichtigungen ein.'); S.tab = 'mehr'; rerender(); })
+      .catch(function(e){ S.cfg.token = oldTok; save(); toast(e.message); }); return; }
   if (a === 'korbdone'){ var kb0 = V.bk && V.bk.korb; S.korbDone = S.korbDone || {}; if (kb0) S.korbDone[kb0.month] = 1; save(); toast('Korb erledigt'); return rerender(); }
   if (a === 'realno'){ S.real[el.dataset.id] = { traded: false }; save(); return rerender(); }
   if (a === 'realimp'){ var fi = $('#realfile'); if (fi) fi.click(); return; }
@@ -2215,7 +2321,7 @@ render();
 if (!S.onb && !S.trades.length && !S.cfg.push.on && !window.__noOnb) onbShow(0);
 pushStart();
 setInterval(renderSess, 30000);
-document.addEventListener('visibilitychange', function(){ if (!document.hidden){ if (S.cfg.push.on && Date.now() - V.lastSync > 60e3) syncTrade(); if (S.tab === 'markt' || S.tab === 'buch') after(); } });
+document.addEventListener('visibilitychange', function(){ if (document.hidden && S.cfg.push.on && Date.now() - ((S.bakInfo && S.bakInfo.at) || 0) > 60e3) backupNow(false); if (!document.hidden){ if (S.cfg.push.on && Date.now() - V.lastSync > 60e3) syncTrade(); if (S.tab === 'markt' || S.tab === 'buch') after(); } });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(function(){});
 </script>
 </body>

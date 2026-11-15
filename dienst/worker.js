@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '13b3ea6dbe';
+const WORKER_VER = '9de0bb668d';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3414,6 +3414,16 @@ async function mkt(request, headers, env, nowMs) {
   return json(404, 'Not found', headers);
 }
 // Eigener Besitzer-Schluessel fuer Trade Check (eigene App auf dem Home-Bildschirm, eigener Speicher)
+// Faelschungssicheres Protokoll: jede gesendete Meldung haengt an einer Hash-Kette (jeder Eintrag enthaelt den Hash des vorigen).
+// Der Kopf der Kette wird taeglich oeffentlich bei GitHub abgelegt; spaeteres Aendern faellt dann auf.
+async function protoAdd(env, t, nowMs, e) {
+  const k = 'proto:' + new Date(nowMs).toISOString().slice(0, 7), list = (await env.VS.get(k, 'json')) || [];
+  const prev = (t.proto && t.proto.head) || '0'.repeat(64), i = ((t.proto && t.proto.n) || 0) + 1;
+  const rec = { i, at: nowMs, id: String(e.id || ''), title: String(e.title || ''), body: String(e.body || ''), prev };
+  rec.h = await sha256hex(prev + JSON.stringify([rec.i, rec.at, rec.id, rec.title, rec.body]));
+  list.push(rec); await env.VS.put(k, JSON.stringify(list));
+  t.proto = { n: i, head: rec.h, at: nowMs, since: (t.proto && t.proto.since) || nowMs };
+}
 async function checkTradeOwner(env, token) {
   if (typeof token !== 'string' || !/^[a-f0-9]{32,64}$/.test(token)) return false;
   const h = await sha256hex(token), own = await env.VS.get('towner');
@@ -3440,6 +3450,10 @@ async function tradeRoute(request, headers, env, nowMs) {
   if (!env.VS) return json(500, 'KV-Speicher fehlt', headers);
   const path = new URL(request.url).pathname;
   if (path === '/trade/key' && request.method === 'GET') return jsonData({ key: (await vapidKeys(env)).pub }, headers);
+  if (path === '/trade/proof' && request.method === 'GET') {
+    const h = (await env.VS.get('trade', 'json')) || {}, p = h.proto || {};
+    return jsonData({ n: p.n || 0, head: p.head || null, at: p.at || null, since: p.since || null }, headers);
+  }
   if (path === '/trade/health' && request.method === 'GET') {
     const h = (await env.VS.get('trade', 'json')) || {}, age = h.hb ? Math.round((nowMs - h.hb) / 60e3) : null, wd = h.wd || {};
     return jsonData({ ok: age != null && age < 45 && !wd.dataSent, age, push: !!(h.on && validSub(h.sub)), data: !wd.dataSince, dataSince: wd.dataSince || null, news: wd.tv || null, gh: (wd.gh || []).map((g) => g.name + ': ' + g.c), ver: WORKER_VER }, headers);
@@ -3472,7 +3486,25 @@ async function tradeRoute(request, headers, env, nowMs) {
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
     return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-400), swingPos: next.swingPos, ibsPos: next.ibsPos, autoPos: next.autoPos || [], brief: next.brief || null, radar: next.radar || null, log: (t.log || []).slice(-40),
-      news: (next.newsLog || []).slice(-20), newsStat: next.newsStat || null, lc: next.lc || null, wd: { hb: next.hb || null, dataSince: next.wd && next.wd.dataSince || null, gh: next.wd && next.wd.gh || [], ghAt: next.wd && next.wd.ghAt || null }, now: nowMs }, headers);
+      bak: await env.VS.get('bak:meta', 'json'), proto: next.proto || null, news: (next.newsLog || []).slice(-20), newsStat: next.newsStat || null, lc: next.lc || null, wd: { hb: next.hb || null, dataSince: next.wd && next.wd.dataSince || null, gh: next.wd && next.wd.gh || [], ghAt: next.wd && next.wd.ghAt || null }, now: nowMs }, headers);
+  }
+  if (path === '/trade/backup') {
+    if (typeof b.data !== 'string' || b.data.length < 2 || b.data.length > 580000) return json(400, 'Sicherung leer oder zu groß', headers);
+    const day = berlinDay(nowMs), meta = (await env.VS.get('bak:meta', 'json')) || {};
+    if (meta.day && meta.day !== day) { const old = await env.VS.get('bak'); if (old) await env.VS.put('bak:prev', old); }
+    await env.VS.put('bak', JSON.stringify({ at: nowMs, day, data: b.data }));
+    await env.VS.put('bak:meta', JSON.stringify({ at: nowMs, day, size: b.data.length, prevAt: meta.day && meta.day !== day ? meta.at : (meta.prevAt || null) }));
+    return jsonData({ ok: true, at: nowMs }, headers);
+  }
+  if (path === '/trade/restore') {
+    const x = await env.VS.get(b.prev ? 'bak:prev' : 'bak', 'json');
+    if (!x || !x.data) return json(404, 'Keine Sicherung vorhanden', headers);
+    const meta = (await env.VS.get('bak:meta', 'json')) || {};
+    return jsonData({ at: x.at, data: x.data, prevAt: meta.prevAt || null }, headers);
+  }
+  if (path === '/trade/proto') {
+    const m = /^\d{4}-\d{2}$/.test(b.month || '') ? b.month : new Date(nowMs).toISOString().slice(0, 7);
+    return jsonData({ month: m, list: (await env.VS.get('proto:' + m, 'json')) || [], proto: t.proto || null }, headers);
   }
   if (path === '/trade/test') {
     if (!validSub(t.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in Trade Check ein.', headers);
@@ -3656,6 +3688,7 @@ async function runTrade(env, nowMs) {
     const r = await sendPush(env, t.sub, full, nowMs, 1800);
     t.sent[key] = nowMs; dirty = true;
     t.log.push({ id: key, at: nowMs, title: full.title, t: (msg.body || '').slice(0, 1500), d: msg.d || null }); t.log = t.log.slice(-40);
+    try { await protoAdd(env, t, nowMs, { id: key, title: full.title, body: msg.body || '' }); } catch (e) { /* Protokoll darf das Senden nie aufhalten */ }
     if (r.status === 404 || r.status === 410) { t.sub = null; gone = true; }
     else rep.pushed++;
     return true;
