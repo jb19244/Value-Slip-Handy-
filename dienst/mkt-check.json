@@ -1,292 +1,292 @@
 {
-  "at": "2026-11-12T18:59:59.202Z",
+  "at": "2026-11-15T10:56:09.080Z",
   "url": "https://value-slip.75rk4v4jg4.workers.dev",
   "checks": [
     {
       "what": "EURUSD=X 15m",
       "status": 200,
-      "ms": 311,
-      "n": 461,
-      "last": 1.1053,
+      "ms": 323,
+      "n": 480,
+      "last": 1.1028,
       "err": ""
     },
     {
       "what": "EURUSD=X 60m",
       "status": 200,
-      "ms": 150,
-      "n": 553,
-      "last": 1.1053,
+      "ms": 88,
+      "n": 552,
+      "last": 1.1028,
       "err": ""
     },
     {
       "what": "EURUSD=X 1d",
       "status": 200,
-      "ms": 166,
+      "ms": 99,
       "n": 523,
-      "last": 1.1053,
+      "last": 1.1028,
       "err": ""
     },
     {
       "what": "GBPUSD=X 15m",
       "status": 200,
-      "ms": 261,
-      "n": 461,
-      "last": 1.323,
+      "ms": 91,
+      "n": 480,
+      "last": 1.3212,
       "err": ""
     },
     {
       "what": "GBPUSD=X 60m",
       "status": 200,
-      "ms": 150,
-      "n": 553,
-      "last": 1.323,
+      "ms": 79,
+      "n": 552,
+      "last": 1.3212,
       "err": ""
     },
     {
       "what": "GBPUSD=X 1d",
       "status": 200,
-      "ms": 249,
-      "n": 523,
-      "last": 1.323,
+      "ms": 99,
+      "n": 524,
+      "last": 1.3212,
       "err": ""
     },
     {
       "what": "JPY=X 15m",
       "status": 200,
-      "ms": 236,
-      "n": 462,
-      "last": 159.838,
+      "ms": 94,
+      "n": 480,
+      "last": 159.686,
       "err": ""
     },
     {
       "what": "JPY=X 60m",
       "status": 200,
-      "ms": 134,
-      "n": 554,
-      "last": 159.838,
+      "ms": 82,
+      "n": 552,
+      "last": 159.686,
       "err": ""
     },
     {
       "what": "JPY=X 1d",
       "status": 200,
-      "ms": 156,
+      "ms": 79,
       "n": 523,
-      "last": 159.839,
+      "last": 159.686,
       "err": ""
     },
     {
       "what": "GC=F 15m",
       "status": 200,
-      "ms": 141,
-      "n": 369,
-      "last": 3885.3,
+      "ms": 96,
+      "n": 357,
+      "last": 3886.3,
       "err": ""
     },
     {
       "what": "GC=F 60m",
       "status": 200,
-      "ms": 135,
-      "n": 650,
-      "last": 3885.3,
+      "ms": 61,
+      "n": 614,
+      "last": 3886.3,
       "err": ""
     },
     {
       "what": "GC=F 1d",
       "status": 200,
-      "ms": 2104,
-      "n": 506,
-      "last": 3884.9,
+      "ms": 71,
+      "n": 504,
+      "last": 3886.3,
       "err": ""
     },
     {
       "what": "SI=F 15m",
       "status": 200,
-      "ms": 228,
-      "n": 369,
-      "last": 50.095,
+      "ms": 116,
+      "n": 357,
+      "last": 49.121,
       "err": ""
     },
     {
       "what": "SI=F 60m",
       "status": 200,
-      "ms": 149,
-      "n": 650,
-      "last": 50.095,
+      "ms": 73,
+      "n": 614,
+      "last": 49.121,
       "err": ""
     },
     {
       "what": "SI=F 1d",
       "status": 200,
-      "ms": 151,
-      "n": 506,
-      "last": 50.095,
+      "ms": 71,
+      "n": 504,
+      "last": 49.121,
       "err": ""
     },
     {
       "what": "CL=F 15m",
       "status": 200,
-      "ms": 138,
-      "n": 369,
-      "last": 88.34,
+      "ms": 76,
+      "n": 357,
+      "last": 88.56,
       "err": ""
     },
     {
       "what": "CL=F 60m",
       "status": 200,
-      "ms": 168,
-      "n": 650,
-      "last": 88.37,
+      "ms": 89,
+      "n": 614,
+      "last": 88.56,
       "err": ""
     },
     {
       "what": "CL=F 1d",
       "status": 200,
-      "ms": 154,
-      "n": 506,
-      "last": 88.37,
+      "ms": 84,
+      "n": 504,
+      "last": 88.56,
       "err": ""
     },
     {
       "what": "^GDAXI 15m",
       "status": 200,
-      "ms": 158,
+      "ms": 83,
       "n": 171,
-      "last": 26771.88,
+      "last": 26749.95,
       "err": ""
     },
     {
       "what": "^GDAXI 60m",
       "status": 200,
-      "ms": 126,
+      "ms": 71,
       "n": 208,
-      "last": 26771.88,
+      "last": 26749.95,
       "err": ""
     },
     {
       "what": "^GDAXI 1d",
       "status": 200,
-      "ms": 157,
+      "ms": 103,
       "n": 507,
-      "last": 26771.88,
+      "last": 26749.95,
       "err": ""
     },
     {
       "what": "^NDX 15m",
       "status": 200,
-      "ms": 145,
-      "n": 124,
-      "last": 28328.316,
+      "ms": 120,
+      "n": 131,
+      "last": 27943.736,
       "err": ""
     },
     {
       "what": "^NDX 60m",
       "status": 200,
-      "ms": 184,
-      "n": 163,
-      "last": 28328.316,
+      "ms": 74,
+      "n": 162,
+      "last": 27943.736,
       "err": ""
     },
     {
       "what": "^NDX 1d",
       "status": 200,
-      "ms": 121,
-      "n": 502,
-      "last": 28328.316,
+      "ms": 88,
+      "n": 501,
+      "last": 27943.736,
       "err": ""
     },
     {
       "what": "^GSPC 15m",
       "status": 200,
-      "ms": 164,
-      "n": 124,
-      "last": 7611.97,
+      "ms": 69,
+      "n": 131,
+      "last": 7561.67,
       "err": ""
     },
     {
       "what": "^GSPC 60m",
       "status": 200,
-      "ms": 201,
-      "n": 163,
-      "last": 7611.97,
+      "ms": 69,
+      "n": 162,
+      "last": 7561.67,
       "err": ""
     },
     {
       "what": "^GSPC 1d",
       "status": 200,
-      "ms": 191,
-      "n": 502,
-      "last": 7611.97,
+      "ms": 93,
+      "n": 501,
+      "last": 7561.67,
       "err": ""
     },
     {
       "what": "SAP.DE 15m",
       "status": 200,
-      "ms": 158,
+      "ms": 76,
       "n": 171,
-      "last": 212.55,
+      "last": 213.45,
       "err": ""
     },
     {
       "what": "SAP.DE 60m",
       "status": 200,
-      "ms": 132,
+      "ms": 71,
       "n": 208,
-      "last": 212.55,
+      "last": 213.45,
       "err": ""
     },
     {
       "what": "SAP.DE 1d",
       "status": 200,
-      "ms": 248,
+      "ms": 102,
       "n": 507,
-      "last": 212.55,
+      "last": 213.45,
       "err": ""
     },
     {
       "what": "NVDA 15m",
       "status": 200,
-      "ms": 129,
-      "n": 124,
-      "last": 164.721,
+      "ms": 73,
+      "n": 131,
+      "last": 162.85,
       "err": ""
     },
     {
       "what": "NVDA 60m",
       "status": 200,
-      "ms": 129,
-      "n": 163,
-      "last": 164.725,
+      "ms": 74,
+      "n": 162,
+      "last": 162.85,
       "err": ""
     },
     {
       "what": "NVDA 1d",
       "status": 200,
-      "ms": 182,
-      "n": 502,
-      "last": 164.725,
+      "ms": 89,
+      "n": 501,
+      "last": 162.85,
       "err": ""
     },
     {
       "what": "Kalender",
       "status": 200,
-      "n": 103,
+      "n": 119,
       "err": "",
       "sample": [
         {
-          "title": "RBA Assist Gov Hunter Speaks",
-          "country": "AUD",
-          "date": "2026-11-08T17:30:00-05:00",
+          "title": "BusinessNZ Services Index",
+          "country": "NZD",
+          "date": "2026-11-15T16:30:00-05:00",
           "impact": "Low",
           "forecast": "",
-          "previous": ""
+          "previous": "50.9"
         },
         {
-          "title": "CPI y/y",
-          "country": "CNY",
-          "date": "2026-11-08T20:30:00-05:00",
+          "title": "Prelim GDP Price Index y/y",
+          "country": "JPY",
+          "date": "2026-11-15T18:50:00-05:00",
           "impact": "Low",
-          "forecast": "0.8%",
-          "previous": "0.9%"
+          "forecast": "2.6%",
+          "previous": "2.6%"
         }
       ]
     },
