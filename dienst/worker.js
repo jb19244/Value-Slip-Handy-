@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'ae79a8466a';
+const WORKER_VER = '13b3ea6dbe';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3710,9 +3710,6 @@ async function runTrade(env, nowMs) {
     const ccys = t.ccys && t.ccys.length ? t.ccys : ['USD', 'EUR'];
     t.newsLog = Array.isArray(t.newsLog) ? t.newsLog : []; t.newsDone = t.newsDone || {};
     let ffc = cal; if (!ffc) { try { ffc = (await getCalendar(env, nowMs)).data; } catch (e) { ffc = []; } }
-    // Erreichbarkeit der Ist-Werte alle 6 Stunden pruefen (steht im Waechter)
-    t.wd = t.wd || {};
-    if (nowMs - (t.wd.tvAt || 0) > 6 * 3600e3) { t.wd.tvAt = nowMs; dirty = true; try { const r0 = await tvCalendar(env, nowMs, ccys); t.wd.tv = Array.isArray(r0.data) ? 'ok' : 'leer'; } catch (e) { t.wd.tv = String(e && e.message || 'Fehler').slice(0, 40); } }
     const recent = (ffc || []).some((e) => e.impact === 'High' && ccys.includes(e.country) && nowMs - Date.parse(e.date) >= 0 && nowMs - Date.parse(e.date) < 40 * 60e3);
     const pend = t.newsLog.filter((x) => !x.ev && nowMs - x.at >= 30 * 60e3 && nowMs - x.at < 4 * 3600e3);
     if (recent) {
@@ -4397,6 +4394,8 @@ async function runTrade(env, nowMs) {
       }
     } catch (e) { /* GitHub nicht erreichbar: beim naechsten Mal */ }
   }
+  // Erreichbarkeit der Ist-Werte fuer Termin-Ergebnisse alle 6 Stunden pruefen
+  if (t.newsRes !== false && nowMs - (t.wd.tvAt || 0) > 6 * 3600e3) { t.wd.tvAt = nowMs; dirty = true; try { const r0 = await tvCalendar(env, nowMs, t.ccys && t.ccys.length ? t.ccys : ['USD', 'EUR']); t.wd.tv = Array.isArray(r0.data) ? 'ok' : 'leer'; } catch (e) { t.wd.tv = String(e && e.message || 'Fehler').slice(0, 40); } }
   t.hb = nowMs; if (nowMs - (t.hbSaved || 0) > 25 * 60e3) { t.hbSaved = nowMs; dirty = true; }
   // Aufraeumen: alte Sendungen vergessen
   for (const k of Object.keys(t.sent)) if (nowMs - t.sent[k] > 3 * 86400e3) { delete t.sent[k]; dirty = true; }
