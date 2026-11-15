@@ -7,7 +7,9 @@
 // t-Wert >= 3 (viele Kandidaten), Haertetest (doppelte Kosten und 5 Minuten spaeter) im Plus, mind. 60 % der Jahre im Plus,
 // Nachbar-Einstellungen ebenfalls im Plus. Probelauf auf Zufallskursen gleicher Schwankung: dort darf nichts bestehen.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-const DIR = process.env.DUKA_DIR || '/tmp/duka', FROM = 2013, NOWY = new Date().getUTCFullYear(), FOCUS = !!process.env.FOCUS;
+import { pathToFileURL } from 'node:url';
+const DIR = process.env.DUKA_DIR || '/tmp/duka', FROM = 2013, NOWY = new Date().getUTCFullYear(), FOCUS = !!process.env.FOCUS, PM = !!process.env.PM;
+// PM: Nachmittag (ab 16:30 Berlin frei): Spannen bis 16:30, Order ab 16:40, Ausstieg zum DAX-/US-Schluss
 // FOCUS: vorher festgelegte Gegenprobe der besten DAX-Familie mit 10, 20 und 30 Minuten Verspaetung (Daten plus Reaktion)
 const INS = [
   { k: 'DAX', d: 'deuidxeur', tz: 'Europe/Berlin', name: 'DAX', cost: 1.2, sess: 'dax' },
@@ -71,6 +73,16 @@ function cands(ins) {
     for (const delay of [10, 20, 30]) { for (const len of [15, 30]) for (const tg of [1.5, 2, null]) F.push({ fam: 'orb', id: ['orb', len, 'trend', 'range', tg, 1045, 'v' + delay].join('_'), name: 'Eröffnungsspanne ' + len + ' Min, mit Trend, ' + (tg ? 'Ziel ' + tg + ' R' : 'ohne Ziel') + ', raus DAX-Schluss, Order ' + delay + ' Min nach Spannen-Ende', len, f: 'trend', st: 'range', tg, ex: 1045, open: 540, delay });
       for (const tg of [1.5, 2, null]) F.push({ fam: 'asia', id: ['asia', 'trend', 'range', tg, 1045, 'v' + delay].join('_'), name: 'Asien-Spanne bis 9:00, mit Trend, ' + (tg ? 'Ziel ' + tg + ' R' : 'ohne Ziel') + ', raus DAX-Schluss, Order ' + delay + ' Min nach 9:00', f: 'trend', st: 'range', tg, ex: 1045, delay }); }
     return F; }
+  if (PM) { const P = [], S2 = ins.sess;
+    // Spannen-Ausbruch nach 16:30 Berlin: US-Indizes Spanne 9:30-10:30 oder 9:30-11:00 NY; DAX Spanne 15:30-16:30 Berlin; Gold/Devisen Spanne 14:30-16:30 Berlin
+    const spans = S2 === 'us' ? [[570, 60], [570, 90]] : S2 === 'dax' ? [[930, 60]] : [[870, 120]];
+    const exits = S2 === 'us' ? [[955, 'US-Schluss']] : S2 === 'dax' ? [[1045, 'DAX-Schluss']] : [[1310, '21:50']];
+    for (const [o, len] of spans) for (const f of ['trend', 'gap', 'bar']) for (const st of ['range', 'half']) for (const tg of [1, 1.5, 2, 3, null]) for (const [ex, exn] of exits)
+      P.push({ fam: 'orb', id: ['pm', o, len, f, st, tg, ex].join('_'), name: 'Nachmittag: Spanne ' + len + ' Min ab ' + Math.floor(o / 60) + ':' + String(o % 60).padStart(2, '0') + (S2 === 'us' ? ' NY' : '') + ', ' + ({ trend: 'mit Trend', gap: 'mit Gap', bar: 'mit Spanne' })[f] + ', Stop ' + (st === 'range' ? 'andere Seite' : 'Mitte') + ', ' + (tg ? 'Ziel ' + tg + ' R' : 'ohne Ziel') + ', raus ' + exn, len, f, st, tg, ex, open: o, delay: 10 });
+    if (S2 !== 'ldn') { const a = S2 === 'us' ? 570 : 540, b = S2 === 'us' ? 630 : 990, e = S2 === 'us' ? 640 : 1000, x = S2 === 'us' ? 955 : 1045;
+      P.push({ fam: 'pmmom', id: 'pmmom_' + S2, name: 'Nachmittag: mit der Tagesrichtung bis ' + (S2 === 'us' ? '10:30 NY' : '16:30') + ', raus zum Schluss', a, b, e, x });
+      P.push({ fam: 'pmmom', id: 'pmrev_' + S2, name: 'Nachmittag: gegen die Tagesrichtung bis ' + (S2 === 'us' ? '10:30 NY' : '16:30') + ', raus zum Schluss', a, b, e, x, rev: true }); }
+    return P; }
   const C = [], S = ins.sess, open = S === 'us' ? 570 : 540, delay = 10;
   const exits = S === 'us' ? [[720, '12:00 NY'], [955, 'US-Schluss']] : S === 'dax' ? [[990, '16:30'], [1045, 'DAX-Schluss']] : [[990, '16:30'], [1310, '21:50']];
   for (const len of [15, 30, 60]) for (const f of ['trend', 'gap', 'bar']) for (const st of ['range', 'half']) for (const tg of [1, 1.5, 2, 3, null]) for (const [ex, exn] of exits)
@@ -112,6 +124,8 @@ function apply(c, d, ins, D, di, stress) {
     if (pos) { const l = d.b.filter((z) => z.m < 960).pop(); if (l) { tot += ((l.c - entry) * pos - cost) / entry * 100; n++; } }
     return n ? { pct: tot, r: null, how: 'Band' } : null;
   }
+  if (c.fam === 'pmmom') { const a = firstAt(d, c.a), bb = d.b.filter((z) => z.m < c.b).pop(), e = firstAt(d, c.e + dl), x = d.b.filter((z) => z.m < c.x).pop(); if (!a || !bb || !e || !x || bb.m < c.b - 15) return null;
+    let dir = Math.sign(bb.c - a.o); if (c.rev) dir = -dir; if (!dir) return null; return { pct: ((x.c - e.o) * dir - cost) / e.o * 100, r: null, how: 'Zeit' }; }
   if (c.fam === 'mom') { const a = c.v === 'first' ? d.prev.close : (firstAt(d, 570) || {}).o, bm = c.v === 'first' ? d.b.find((z) => z.m >= 595 && z.m < 600) : d.b.find((z) => z.m >= 895 && z.m < 900);
     const e = d.b.find((z) => z.m >= 930 + dl && z.m < 935 + dl), x = d.b.filter((z) => z.m < 960).pop(); if (!a || !bm || !e || !x) return null; const dir = Math.sign(bm.c - a); if (!dir) return null;
     return { pct: ((x.c - e.o) * dir - cost) / e.o * 100, r: null, how: 'Zeit' }; }
@@ -124,18 +138,20 @@ function evaluate(c, ins, D) {
   D.forEach((d, i) => { const a = apply(c, d, ins, D, i, false); if (a && !a.skip && (a.r != null || a.pct != null)) tr.push({ day: d.day, v: a.r != null ? a.r : a.pct }); const s = apply(c, d, ins, D, i, true); if (s && !s.skip && (s.r != null || s.pct != null)) trS.push(s.r != null ? s.r : s.pct); });
   const v = tr.map((x) => x.v), per = (a, z) => stats(tr.filter((x) => x.day >= a && x.day < z).map((x) => x.v));
   const years = {}; tr.forEach((x) => { const y = x.day.slice(0, 4); years[y] = (years[y] || 0) + x.v; }); const yk = Object.keys(years);
-  const o = { all: stats(v), p1: per('2013', '2018'), p2: per('2018', '2022'), p3: per('2022', '2100'), stress: stats(trS), yearsUp: yk.filter((y) => years[y] > 0).length, yearsN: yk.length, unit: c.fam === 'noise' || c.fam === 'mom' ? '%' : 'R', perYear: +(tr.length / Math.max(1, yk.length)).toFixed(1) };
+  const o = { all: stats(v), p1: per('2013', '2018'), p2: per('2018', '2022'), p3: per('2022', '2100'), stress: stats(trS), yearsUp: yk.filter((y) => years[y] > 0).length, yearsN: yk.length, unit: c.fam === 'noise' || c.fam === 'mom' || c.fam === 'pmmom' ? '%' : 'R', perYear: +(tr.length / Math.max(1, yk.length)).toFixed(1) };
   o.core = o.all.n >= 200 && o.all.t >= 3 && [o.p1, o.p2, o.p3].every((p) => p.n >= 30 && p.mean > 0) && o.stress.mean > 0 && o.yearsUp >= 0.6 * o.yearsN;
   return o;
 }
 // Nachbarn: eine Einstellung eine Stufe weiter
-function neighbors(c, C) { const keys = ['len', 'f', 'st', 'tg', 'ex', 'g', 'mode', 'mult', 'step']; return C.filter((x) => x.fam === c.fam && x.id !== c.id && keys.filter((k) => x[k] !== c[k]).length === 1 && ['len', 'tg', 'g', 'mult', 'step', 'ex'].some((k) => x[k] !== c[k])); }
+function neighbors(c, C) { const keys = ['len', 'f', 'st', 'tg', 'ex', 'g', 'mode', 'mult', 'step', 'open']; return C.filter((x) => x.fam === c.fam && x.id !== c.id && keys.filter((k) => x[k] !== c[k]).length === 1 && ['len', 'tg', 'g', 'mult', 'step', 'ex'].some((k) => x[k] !== c[k])); }
 // ---------- Zufallskurse gleicher Schwankung (Probelauf): Renditen der echten Kerzen je Tag zufaellig vertauscht
 function placeboRows(rows) { let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }; const out = []; let px = rows[0][4];
   const rets = rows.map((r, i) => i ? [r[1] / rows[i - 1][4], r[2] / r[1], r[3] / r[1], r[4] / r[1]] : [1, r[2] / r[1], r[3] / r[1], r[4] / r[1]]);
   for (let i = rows.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [rets[i], rets[j]] = [rets[j], rets[i]]; }
   rows.forEach((r, i) => { const q = rets[i], o = px * q[0]; out.push([r[0], o, o * q[1], o * q[2], o * q[3]]); px = o * q[3]; }); return out; }
-// ---------- Lauf
+export { INS, load, prep, sim, apply, stats, evaluate, cands, range, firstAt, dirOf };
+// ---------- Lauf (nur wenn direkt gestartet)
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 const out = { at: new Date().toISOString(), data: {}, tested: 0, passed: [], top: [], best: [], placebo: { tested: 0, core: 0, passed: 0 } };
 for (const ins of INS) {
   const rows = await load(ins); if (rows.length < 50000) { console.log('zu wenig Daten', ins.k, rows.length); continue; }
@@ -144,18 +160,19 @@ for (const ins of INS) {
   const C = cands(ins), R = new Map(); out.tested += C.length;
   for (const c of C) R.set(c.id, evaluate(c, ins, D));
   for (const c of C) { const o = R.get(c.id); if (o.all.n >= 100) out.best.push({ k: ins.k, id: c.id, fam: c.fam, name: c.name, unit: o.unit, all: o.all, p: [o.p1, o.p2, o.p3].map((p) => p.mean), stress: o.stress.mean, years: o.yearsUp + '/' + o.yearsN, perYear: o.perYear, core: o.core }); }
-  for (const c of C) { const o = R.get(c.id); if (!o.core) continue; const nb = neighbors(c, C).map((x) => R.get(x.id)); const robust = nb.length >= 2 && nb.every((x) => x.all.n >= 100 && x.all.mean > 0);
+  for (const c of C) { const o = R.get(c.id); if (!o.core) continue; const nb = neighbors(c, C).map((x) => R.get(x.id)); const robust = c.fam === 'pmmom' || (nb.length >= 2 && nb.every((x) => x.all.n >= 100 && x.all.mean > 0));
     const e = { k: ins.k, ins: ins.name, id: c.id, fam: c.fam, name: c.name, rule: c, unit: o.unit, all: o.all, p: [o.p1, o.p2, o.p3].map((p) => p.mean), stress: o.stress.mean, years: o.yearsUp + '/' + o.yearsN, perYear: o.perYear, robust };
     if (robust) out.passed.push(e); out.top.push(e); }
   // Probelauf: dieselben Regeln auf vertauschten Kursen
   if (FOCUS) { C.forEach((c) => { const o = R.get(c.id); console.log('FOKUS', c.name.padEnd(90), 'n', o.all.n, 'win', o.all.win, 'Ø', o.all.mean, 'R t', o.all.t, '|', [o.p1, o.p2, o.p3].map((p) => p.mean).join(' / '), '| Haerte', o.stress.mean, '| Jahre', o.yearsUp + '/' + o.yearsN); }); continue; }
-  const DP = prep(placeboRows(rows), ins); for (const c of C) { const o = evaluate(c, ins, DP); out.placebo.tested++; if (o.core) { out.placebo.core++; const nb = neighbors(c, C).map((x) => evaluate(x, ins, DP)); if (nb.length >= 2 && nb.every((x) => x.all.n >= 100 && x.all.mean > 0)) out.placebo.passed++; } }
+  const DP = prep(placeboRows(rows), ins); for (const c of C) { const o = evaluate(c, ins, DP); out.placebo.tested++; if (o.core) { out.placebo.core++; const nb = neighbors(c, C).map((x) => evaluate(x, ins, DP)); if (c.fam === 'pmmom' || (nb.length >= 2 && nb.every((x) => x.all.n >= 100 && x.all.mean > 0))) out.placebo.passed++; } }
   console.log(ins.k, 'Kandidaten', C.length, 'streng', out.top.filter((x) => x.k === ins.k).length, 'bestanden', out.passed.filter((x) => x.k === ins.k).length, '| Placebo bisher streng', out.placebo.core, 'bestanden', out.placebo.passed);
 }
 out.best.sort((a, b) => b.all.t - a.all.t); const fams = {}; out.best.forEach((e) => { const f = e.fam + ':' + e.k; if (!fams[f] || fams[f].all.t < e.all.t) fams[f] = e; }); out.bestByFam = Object.values(fams).sort((a, b) => b.all.t - a.all.t); out.best = out.best.slice(0, 60);
 out.passed.sort((a, b) => b.all.t - a.all.t); out.top.sort((a, b) => b.all.t - a.all.t); out.top = out.top.slice(0, 40);
-writeFileSync(new URL(FOCUS ? './backtest-daytrade-focus.json' : './backtest-daytrade.json', import.meta.url), JSON.stringify(out));
+writeFileSync(new URL(FOCUS ? './backtest-daytrade-focus.json' : PM ? './backtest-daytrade-pm.json' : './backtest-daytrade.json', import.meta.url), JSON.stringify(out));
 console.log('GESAMT getestet', out.tested, 'bestanden', out.passed.length, '| Placebo', JSON.stringify(out.placebo));
 out.best.slice(0, 25).forEach((e) => console.log('BEST', e.k.padEnd(7), e.name.slice(0, 90).padEnd(90), 'n', e.all.n, 'win', e.all.win, 'Ø', e.all.mean, e.unit, 't', e.all.t, '|', e.p.join(' / '), '| Haerte', e.stress, '| Jahre', e.years));
 out.bestByFam.forEach((e) => console.log('FAM ', (e.fam + ':' + e.k).padEnd(14), e.name.slice(0, 80).padEnd(80), 'n', e.all.n, 'Ø', e.all.mean, e.unit, 't', e.all.t, '|', e.p.join(' / '), '| Haerte', e.stress, '| Jahre', e.years));
 out.passed.slice(0, 30).forEach((e) => console.log('OK ', e.k.padEnd(7), e.name.padEnd(95).slice(0, 95), 'n', e.all.n, 'win', e.all.win, 'Ø', e.all.mean, e.unit, 't', e.all.t, 'Zeitraeume', e.p.join(' / '), 'Haerte', e.stress, 'Jahre', e.years, 'pro Jahr', e.perYear));
+}
