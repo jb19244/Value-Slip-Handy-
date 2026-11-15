@@ -1759,6 +1759,74 @@ var COND_NAMES = { trend: function(c){ return 'über dem ' + (c[1] || 200) + '-T
 var EXIT_NAMES = { sma: function(e){ return 'Schluss über dem ' + (e[1] || 5) + '-Tage-Schnitt'; }, ibs: function(e){ return 'IBS über ' + String(e[1] || 0.8).replace('.', ','); }, ph: function(){ return 'Schluss über dem Vortageshoch'; }, rsi2: function(e){ return 'RSI-2 über ' + (e[1] || 70); }, up: function(){ return 'erster Tag im Plus'; }, days: function(){ return 'nur Zeit'; } };
 function ruleText(rule){ return 'Kauf zum Schluss bei ' + rule.c.filter(function(c){ return c[0] !== 'trend'; }).map(function(c){ return COND_NAMES[c[0]] ? COND_NAMES[c[0]](c) : c[0]; }).join(' und ') + (rule.c.some(function(c){ return c[0] === 'trend'; }) ? ' im Aufwärtstrend' : '') + '. Verkauf bei ' + EXIT_NAMES[(rule.x || ['sma'])[0]](rule.x || ['sma', 5]) + ', spätestens nach ' + (rule.max || 10) + ' Tagen. Notstop 3 ATR.'; }
 function ruleId(rule){ return rule.c.map(function(c){ return c.join('_'); }).join('+') + '>' + (rule.x || ['sma', 5]).join('_') + '@' + (rule.max || 10); }
+// ================= Termin-Ergebnisse: Ist gegen Prognose und die typische Marktreaktion =================
+// Quelle der Ist-Werte: Wirtschaftskalender von TradingView (actual, forecast, previous, importance, currency, unit, scale).
+// Einschaetzung nach der ueblichen Lehrbuch-Reaktion: Zahl besser als erwartet -> Waehrung staerker; Inflation und Zinsen hoeher -> Aktien und Gold
+// eher schwaecher; Wachstum besser -> Aktien eher staerker. Ob das stimmt, prueft der Dienst 30 Minuten spaeter (Trefferbilanz).
+var NEWS_DE = [[/Core Inflation Rate MoM|Core CPI MM/i, 'Kerninflation (Monat)'], [/Core Inflation Rate YoY|Core CPI YY/i, 'Kerninflation (Jahr)'], [/^Inflation Rate MoM|CPI MM/i, 'Inflation (Monat)'], [/^Inflation Rate YoY|CPI YY/i, 'Inflation (Jahr)'],
+  [/Core PCE Price Index MoM/i, 'PCE-Kerninflation (Monat)'], [/Core PCE Price Index YoY/i, 'PCE-Kerninflation (Jahr)'], [/PPI MoM/i, 'Erzeugerpreise (Monat)'], [/PPI YoY/i, 'Erzeugerpreise (Jahr)'],
+  [/Non Farm Payrolls/i, 'US-Arbeitsmarkt (NFP)'], [/Unemployment Rate/i, 'Arbeitslosenquote'], [/Initial Jobless Claims/i, 'Erstanträge Arbeitslosenhilfe'], [/ADP Employment Change/i, 'ADP-Beschäftigung'],
+  [/Average Hourly Earnings MoM/i, 'Stundenlöhne (Monat)'], [/GDP Growth Rate QoQ Adv|GDP Growth Rate QoQ Flash/i, 'BIP (Quartal, erste Schätzung)'], [/GDP Growth Rate QoQ/i, 'BIP (Quartal)'], [/GDP Growth Rate YoY/i, 'BIP (Jahr)'],
+  [/Retail Sales MoM/i, 'Einzelhandel (Monat)'], [/Retail Sales YoY/i, 'Einzelhandel (Jahr)'], [/ISM Manufacturing PMI/i, 'ISM Industrie'], [/ISM Services PMI|ISM Non-Manufacturing/i, 'ISM Dienstleister'],
+  [/Manufacturing PMI/i, 'Einkaufsmanager Industrie'], [/Services PMI/i, 'Einkaufsmanager Dienstleister'], [/Composite PMI/i, 'Einkaufsmanager gesamt'], [/Fed Interest Rate Decision/i, 'Fed-Zinsentscheid'],
+  [/ECB Interest Rate Decision|Main Refinancing Rate/i, 'EZB-Zinsentscheid'], [/Deposit Facility Rate/i, 'EZB-Einlagenzins'], [/BoE Interest Rate Decision/i, 'BoE-Zinsentscheid'], [/BoJ Interest Rate Decision/i, 'BoJ-Zinsentscheid'],
+  [/Interest Rate Decision/i, 'Zinsentscheid'], [/ZEW Economic Sentiment/i, 'ZEW-Konjunkturerwartung'], [/Ifo Business Climate/i, 'Ifo-Geschäftsklima'], [/Michigan Consumer Sentiment/i, 'Uni Michigan Verbrauchervertrauen'],
+  [/CB Consumer Confidence/i, 'Verbrauchervertrauen (Conference Board)'], [/Durable Goods Orders MoM/i, 'Auftragseingang langlebige Güter'], [/Industrial Production MoM/i, 'Industrieproduktion (Monat)'], [/JOLTs Job Openings/i, 'Offene Stellen (JOLTS)'],
+  [/Building Permits/i, 'Baugenehmigungen'], [/Housing Starts/i, 'Baubeginne'], [/Existing Home Sales/i, 'Hausverkäufe (bestehend)'], [/New Home Sales/i, 'Hausverkäufe (neu)'], [/Balance of Trade/i, 'Handelsbilanz'], [/Employment Change/i, 'Beschäftigung']];
+function newsName(title){ for (var i = 0; i < NEWS_DE.length; i++) if (NEWS_DE[i][0].test(title || '')) return NEWS_DE[i][1]; return title || ''; }
+// Art der Zahl: Inflation, Zinsentscheid, Arbeitsmarkt (umgekehrt: Arbeitslosigkeit), Wachstum
+function newsKind(ev){
+  var t = String(ev.title || '') + ' ' + String(ev.indicator || ''), c = ev.category || '';
+  if (/Interest Rate Decision|Refinancing Rate|Deposit Facility|Cash Rate|Rate Decision/i.test(t)) return 'zins';
+  if (c === 'prce' || /Inflation|CPI|PPI|PCE|Price Index|Hourly Earnings|Wage/i.test(t)) return 'infl';
+  if (/Unemployment|Jobless|Claims|Claimant/i.test(t)) return 'alq';
+  if (c === 'lbr' || /Payrolls|Employment|Job Openings/i.test(t)) return 'job';
+  return 'wachs';
+}
+// Ueberraschung: Ist gegen Prognose (ohne Prognose gegen den Vorwert). Groesse: Prozentzahlen in Punkten, sonst relativ.
+function newsSurprise(ev){
+  var a = +ev.actual, f = ev.forecast != null && ev.forecast !== '' && isFinite(+ev.forecast) ? +ev.forecast : null, p = ev.previous != null && ev.previous !== '' && isFinite(+ev.previous) ? +ev.previous : null;
+  if (!isFinite(a)) return null;
+  var base = f != null ? f : p, vs = f != null ? 'Prognose' : 'Vorwert'; if (base == null) return { diff: null, sign: 0, size: 0, vs: vs };
+  var d = a - base, pct = ev.unit === '%', k = newsKind(ev);
+  var rel = pct ? Math.abs(d) : (Math.abs(base) > 1e-9 ? Math.abs(d) / Math.abs(base) * 100 : Math.abs(d) > 0 ? 100 : 0);
+  // Schwellen: Inflation/Zinsen reagieren schon auf 0,1 Punkte, Wachstum und Arbeitsmarkt eher auf groessere Abweichungen
+  var s1 = pct ? (k === 'infl' || k === 'zins' ? 0.05 : 0.1) : 2, s2 = pct ? (k === 'infl' || k === 'zins' ? 0.15 : 0.3) : 8;
+  var size = rel < 1e-9 ? 0 : rel < s1 ? 1 : rel < s2 ? 2 : 3;
+  return { diff: d, sign: d > 1e-12 ? 1 : d < -1e-12 ? -1 : 0, size: size, vs: vs, base: base };
+}
+// Maerkte, auf die diese Zahl wirkt, mit der ueblichen Richtung. good = +1: gut fuer die Waehrung (staerker / falkenhaft)
+function newsCalls(ev, sign){
+  var k = newsKind(ev), good = sign * (k === 'alq' ? -1 : 1), cur = ev.currency || '', hawk = k === 'infl' || k === 'zins', out = [];
+  if (!good) return out;
+  var add = function(nm, y, dir, weak){ out.push({ nm: nm, y: y, dir: dir, weak: !!weak }); };
+  if (cur === 'USD'){ add('EUR/USD', 'EURUSD=X', -good); add('Gold', 'GC=F', -good, !hawk); add('Nasdaq-Future', 'NQ=F', hawk ? -good : good, !hawk); }
+  else if (cur === 'EUR'){ add('EUR/USD', 'EURUSD=X', good); add('DAX', '^GDAXI', hawk ? -good : good, true); }
+  else if (cur === 'GBP') add('GBP/USD', 'GBPUSD=X', good);
+  else if (cur === 'JPY') add('USD/JPY', 'JPY=X', -good);
+  else if (cur === 'CAD') add('USD/CAD', 'CAD=X', -good);
+  else if (cur === 'CHF') add('USD/CHF', 'CHF=X', -good);
+  else if (cur === 'AUD') add('AUD/USD', 'AUDUSD=X', good);
+  else if (cur === 'NZD') add('NZD/USD', 'NZDUSD=X', good);
+  else if (cur === 'CNY'){ if (!hawk) { add('AUD/USD', 'AUDUSD=X', good, true); add('Kupfer', 'HG=F', good, true); } }
+  return out;
+}
+function newsNum(v, ev){ if (v == null || v === '' || !isFinite(+v)) return '–'; var x = +v, d = Math.abs(x) >= 100 ? 0 : Math.abs(x) >= 10 ? 1 : (ev.unit === '%' ? 1 : 2); if (ev.unit === '%' && Math.abs(x) < 10 && Math.round(x * 10) !== x * 10) d = 2;
+  return (x < 0 ? '−' : '') + Math.abs(x).toFixed(d).replace('.', ',') + (ev.unit === '%' ? ' %' : (ev.scale ? ' ' + ({ K: 'Tsd.', M: 'Mio.', B: 'Mrd.', T: 'Bio.' }[ev.scale] || ev.scale) : '')); }
+// Text der Einschaetzung
+function newsText(ev, su){
+  var k = newsKind(ev), cur = ev.currency || '', nm = newsName(ev.title);
+  if (!su || su.diff == null) return { head: nm + ': ' + newsNum(ev.actual, ev), why: 'Keine Prognose zum Vergleich.', calls: [] };
+  var dirTxt = su.sign === 0 ? 'genau wie erwartet' : (su.sign > 0 ? 'höher' : 'niedriger') + ' als ' + (su.vs === 'Prognose' ? 'erwartet' : 'im Vormonat');
+  var sz = ['', 'leicht', 'deutlich', 'stark'][su.size] || '';
+  var good = su.sign * (k === 'alq' ? -1 : 1);
+  var why = su.sign === 0 ? 'Keine Überraschung: Der Markt achtet jetzt eher auf Details und andere Daten, ein klarer Impuls ist nicht zu erwarten.'
+    : (k === 'infl' ? (su.sign > 0 ? 'Mehr Inflation als erwartet: Zinssenkungen werden unwahrscheinlicher, das stützt ' + cur + ' und belastet Aktien und Gold.' : 'Weniger Inflation als erwartet: Zinssenkungen werden wahrscheinlicher, das schwächt ' + cur + ' und stützt Aktien und Gold.')
+      : k === 'zins' ? (su.sign > 0 ? 'Zinsen höher als erwartet: stützt ' + cur + ', belastet Aktien und Gold.' : 'Zinsen tiefer als erwartet: schwächt ' + cur + ', stützt Aktien und Gold.')
+      : (good > 0 ? 'Wirtschaft stärker als erwartet: stützt ' + cur + ' und eher die Aktien.' : 'Wirtschaft schwächer als erwartet: belastet ' + cur + ' und eher die Aktien.'));
+  var calls = su.size >= 1 ? newsCalls(ev, su.sign) : []; if (su.size === 1) calls.forEach(function(c){ c.weak = true; });
+  return { head: nm + ' ' + dirTxt + (sz && su.sign ? ' (' + sz + ')' : ''), why: why + (su.size === 1 ? ' Kleine Abweichung, eher schwacher Impuls.' : ''), calls: calls };
+}
 // END LOGIC
 
 // ===================== App =====================
@@ -2448,11 +2516,22 @@ function viewHeute(){
   h += fold('meld', 'Meldungen', (V.log || []).length ? (V.log || []).length + ' zuletzt' : 'noch keine', inboxCard() || '<p class="hint">Hier erscheint jede Push-Meldung in voller Länge.</p>');
   h += fold('strat', 'Strategien', 'Beleg und Stand je Strategie', viewCockpit());
   h += fold('depot', 'Depot und Aktien-Korb', kb && kb.passed && kb.top ? 'Korb ' + esc(kb.top.slice(0, 3).map(function(x){ return x.name; }).join(', ')) + ' …' : 'monatlich', viewDepot() + viewKorb());
-  h += fold('termine', 'Termine', cal.length ? cal.length + ' wichtige heute, nächster ' + hm(Date.parse(cal[0].date)) : 'heute nichts Wichtiges mehr', '<section class="card"><div class="row"><h2>Termine</h2><button class="link small" data-act="tab" data-t="markt">alle</button></div>' + (V.cal ? viewCal(4) : '<div class="loading"><span class="spin"></span> lädt …</div>') + '</section>');
+  var nres = (V.news || []).filter(function(x){ return berlinParts(x.at).key === b.key; });
+  h += fold('termine', 'Termine', (nres.length ? nres.length + (nres.length === 1 ? ' Ergebnis' : ' Ergebnisse') + ' · ' : '') + (cal.length ? cal.length + ' wichtige heute, nächster ' + hm(Date.parse(cal[0].date)) : 'heute nichts Wichtiges mehr'), viewNews() + '<section class="card"><div class="row"><h2>Termine</h2><button class="link small" data-act="tab" data-t="markt">alle</button></div>' + (V.cal ? viewCal(4) : '<div class="loading"><span class="spin"></span> lädt …</div>') + '</section>');
   h += fold('train', 'Training', 'echte Setups, Ausgang verdeckt', trainCard());
   return h;
 }
 // Eingeklappter Bereich; offen/zu bleibt gemerkt
+// ================= Ergebnisse wichtiger Termine mit Einschaetzung und Trefferbilanz =================
+function viewNews(){
+  var L2 = (V.news || []).slice().reverse().slice(0, 8), st = V.newsStat; if (!L2.length) return '';
+  var nn = function(v, x){ return newsNum(v, x); }, ar = function(d){ return d > 0 ? '↑' : '↓'; };
+  return '<section class="card" id="news"><div class="row"><h2>Ergebnisse</h2><span class="muted small">' + (st && st.n ? 'Einschätzung richtig: ' + st.hit + ' von ' + st.n : 'Bilanz sammelt') + '</span></div><ul class="lvl">' + L2.map(function(x){
+    var ev = x.ev, mv = ev && ev.moves ? ev.moves : [];
+    return '<li><div class="row"><b>' + esc(x.head || x.title) + '</b><span class="muted small">' + hm(x.at) + '</span></div><div class="small">' + esc(x.cur) + ' ' + esc(x.title) + ': <b>' + esc(nn(x.actual, x)) + '</b> · Prognose ' + esc(nn(x.forecast, x)) + ' · vorher ' + esc(nn(x.previous, x)) + '</div>' +
+      (x.calls && x.calls.length ? '<div class="muted small">Erwartung: ' + x.calls.map(function(c){ var m = mv.filter(function(q){ return q.nm === c.nm; })[0]; return esc(c.nm) + ' ' + ar(c.dir) + (c.weak ? ' (eher)' : '') + (m ? ' → ' + sgn(m.mv, 2) + ' %' + (Math.abs(m.mv) < 0.05 ? '' : (Math.sign(m.mv) === c.dir ? ' ✓' : ' ✗')) : ''); }).join(' · ') + (ev ? '' : ' · Auswertung nach 30 Min') + '</div>' : '') + '</li>'; }).join('') + '</ul>' +
+    more('Einschätzung nach der üblichen Reaktion auf eine Überraschung, keine Garantie.', 'Höhere Inflation oder Zinsen als erwartet stützen die Währung und belasten meist Aktien und Gold, stärkere Wirtschaftsdaten stützen Währung und eher die Aktien. Nach 30 Minuten wird geprüft, ob die Märkte so gelaufen sind (nur Bewegungen ab 0,05 %, „eher“-Einschätzungen zählen nicht). So siehst du ehrlich, wie verlässlich das ist. Direkt nach der Zahl springen Spreads auf und es gibt oft Gegenbewegungen.') + '</section>';
+}
 function fold(key, title, sum, body){
   S.fold = S.fold || {};
   return '<details class="card fold" data-fold="' + key + '"' + (S.fold[key] ? ' open' : '') + '><summary><span class="fold-t">' + esc(title) + '</span><span class="fold-s">' + sum + '</span></summary><div class="fold-b">' + body + '</div></details>';
@@ -2662,7 +2741,7 @@ function briefCard(){
 }
 // ================= Meldungen: jede Push-Meldung in voller Laenge, Antippen oeffnet sie direkt =================
 function msgIcon(m){ var d = m.d || {}, t = (m.title || '') + ' ' + (m.t || '');
-  return d.kind === 'fill' ? '🎯' : d.kind === 'finder' ? '🔎' : d.kind === 'korb' ? '🧺' : d.kind === 'auto' ? '🧪' : /^⏸/.test(m.title || '') ? '⏸' : /Kursdaten|GitHub|Dienst:/.test(m.title || '') ? '🛡️' : /pausiert|Wieder im Rahmen/.test(m.title || '') ? '📏' : /Neue Strategie/.test(m.title || '') ? '🧪' : d.kind === 'd3' ? '📈' : d.kind === 'intra' || d.kind === 'orb' ? '⚡' : d.kind === 'ibs' || d.kind === 'tt' || d.kind === 'swing' ? '📈' : /Briefing/.test(t) ? '☀️' : /Bilanz|Wochenbericht/.test(t) ? '📊' : /TP1|Ziel erreicht|✅/.test(t) ? '✅' : /Stop|❌/.test(t) ? '❌' : /Termin|In \d+ Min/.test(t) ? '📅' : '🔔'; }
+  return d.kind === 'fill' ? '🎯' : d.kind === 'finder' ? '🔎' : d.kind === 'korb' ? '🧺' : d.kind === 'news' ? '📰' : d.kind === 'auto' ? '🧪' : /^⏸/.test(m.title || '') ? '⏸' : /Kursdaten|GitHub|Dienst:/.test(m.title || '') ? '🛡️' : /pausiert|Wieder im Rahmen/.test(m.title || '') ? '📏' : /Neue Strategie/.test(m.title || '') ? '🧪' : d.kind === 'd3' ? '📈' : d.kind === 'intra' || d.kind === 'orb' ? '⚡' : d.kind === 'ibs' || d.kind === 'tt' || d.kind === 'swing' ? '📈' : /Briefing/.test(t) ? '☀️' : /Bilanz|Wochenbericht/.test(t) ? '📊' : /TP1|Ziel erreicht|✅/.test(t) ? '✅' : /Stop|❌/.test(t) ? '❌' : /Termin|In \d+ Min/.test(t) ? '📅' : '🔔'; }
 function msgTitle(m){ return m.title && m.title !== 'Trade Check' ? m.title : (String(m.t || '').split(/[:.]/)[0] || 'Meldung').slice(0, 60); }
 // Radar: Wie nah ist jeder US-Markt am IBS-Signal, und was fehlt der Intraday-Stufe? Der Dienst rechnet stuendlich waehrend der US-Sitzung.
 function radarCard(){
@@ -3533,6 +3612,7 @@ function viewMehr(){
       '<label class="switch"><span>Depot-Strategien und Aktien-Korb (monatlich)</span><input type="checkbox" data-push="depot"' + (p.depot !== false ? ' checked' : '') + '></label>' +
       '<p class="hint">Diese Strategien melden sich nur, solange sie die Rückrechnung bestehen (siehe Tagebuch → Strategien aus der Forschung).</p>' +
       '<label class="switch"><span>Hauptzeiten (08:00 und 14:30)</span><input type="checkbox" data-push="kz"' + (p.kz ? ' checked' : '') + '></label>' +
+      '<label class="switch"><span>Ergebnisse wichtiger Termine mit Markteinschätzung</span><input type="checkbox" data-push="newsRes"' + (p.newsRes !== false ? ' checked' : '') + '></label>' +
       '<div class="label" style="margin-top:6px">News-Warnung vorher</div><div class="seg" style="margin-top:6px">' + [10, 15, 30].map(function(m){ return '<button data-act="lead" data-m="' + m + '" aria-pressed="' + (p.lead === m) + '">' + m + ' Min</button>'; }).join('') + '</div>' +
       '<div class="btns"><button class="btn ghost block" data-act="ptest">Test senden</button><button class="btn ghost block" data-act="poff">Ausschalten</button></div>'
       : '<div class="btns"><button class="btn block" data-act="pon"' + (canPush ? '' : ' disabled') + '>Benachrichtigungen einschalten</button></div>') +
@@ -3553,7 +3633,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -3562,7 +3642,7 @@ function syncTrade(extra){
     var hits = {}, deads = {}; (j.alerts || []).forEach(function(a){ if (a.hit) hits[a.id] = a; if (a.dead) deads[a.id] = a.dead; });
     var changed = false;
     S.alerts.forEach(function(a){ if (hits[a.id] && !a.hit){ a.hit = hits[a.id].hit; a.hitPx = hits[a.id].hitPx; changed = true; } if (deads[a.id] && !a.dead){ a.dead = deads[a.id]; changed = true; } });
-    V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || []; V.ibsPos = j.ibsPos || []; V.brief = j.brief || null; V.log = j.log || []; V.radar = j.radar || null; V.autoPos = j.autoPos || []; V.lc = j.lc || null; V.wd = j.wd || null; V.syncErr = ''; appBadge();
+    V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || []; V.ibsPos = j.ibsPos || []; V.brief = j.brief || null; V.log = j.log || []; V.radar = j.radar || null; V.autoPos = j.autoPos || []; V.news = j.news || []; V.newsStat = j.newsStat || null; V.lc = j.lc || null; V.wd = j.wd || null; V.syncErr = ''; appBadge();
     if (V.wantSig){ var w = V.wantSig; V.wantSig = null; useSignal(w); return j; }
     if (changed || S.tab === 'markt' || S.tab === 'buch' || S.tab === 'check'){ if (changed) save(); rerender(); }
     return j;

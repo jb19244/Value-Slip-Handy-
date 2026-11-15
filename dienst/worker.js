@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '715b991be8';
+const WORKER_VER = 'ae79a8466a';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3251,11 +3251,93 @@ var COND_NAMES = { trend: function(c){ return 'über dem ' + (c[1] || 200) + '-T
 var EXIT_NAMES = { sma: function(e){ return 'Schluss über dem ' + (e[1] || 5) + '-Tage-Schnitt'; }, ibs: function(e){ return 'IBS über ' + String(e[1] || 0.8).replace('.', ','); }, ph: function(){ return 'Schluss über dem Vortageshoch'; }, rsi2: function(e){ return 'RSI-2 über ' + (e[1] || 70); }, up: function(){ return 'erster Tag im Plus'; }, days: function(){ return 'nur Zeit'; } };
 function ruleText(rule){ return 'Kauf zum Schluss bei ' + rule.c.filter(function(c){ return c[0] !== 'trend'; }).map(function(c){ return COND_NAMES[c[0]] ? COND_NAMES[c[0]](c) : c[0]; }).join(' und ') + (rule.c.some(function(c){ return c[0] === 'trend'; }) ? ' im Aufwärtstrend' : '') + '. Verkauf bei ' + EXIT_NAMES[(rule.x || ['sma'])[0]](rule.x || ['sma', 5]) + ', spätestens nach ' + (rule.max || 10) + ' Tagen. Notstop 3 ATR.'; }
 function ruleId(rule){ return rule.c.map(function(c){ return c.join('_'); }).join('+') + '>' + (rule.x || ['sma', 5]).join('_') + '@' + (rule.max || 10); }
-  return { riskCluster, riskBudget, groupOf, groupName, dailyGroup, logSym, shadowRun, shadowCost, liveCheck, expOf, ruleSeries, ruleHit, ruleExit, ruleText, ruleId, smaAt, ibs, trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
+// ================= Termin-Ergebnisse: Ist gegen Prognose und die typische Marktreaktion =================
+// Quelle der Ist-Werte: Wirtschaftskalender von TradingView (actual, forecast, previous, importance, currency, unit, scale).
+// Einschaetzung nach der ueblichen Lehrbuch-Reaktion: Zahl besser als erwartet -> Waehrung staerker; Inflation und Zinsen hoeher -> Aktien und Gold
+// eher schwaecher; Wachstum besser -> Aktien eher staerker. Ob das stimmt, prueft der Dienst 30 Minuten spaeter (Trefferbilanz).
+var NEWS_DE = [[/Core Inflation Rate MoM|Core CPI MM/i, 'Kerninflation (Monat)'], [/Core Inflation Rate YoY|Core CPI YY/i, 'Kerninflation (Jahr)'], [/^Inflation Rate MoM|CPI MM/i, 'Inflation (Monat)'], [/^Inflation Rate YoY|CPI YY/i, 'Inflation (Jahr)'],
+  [/Core PCE Price Index MoM/i, 'PCE-Kerninflation (Monat)'], [/Core PCE Price Index YoY/i, 'PCE-Kerninflation (Jahr)'], [/PPI MoM/i, 'Erzeugerpreise (Monat)'], [/PPI YoY/i, 'Erzeugerpreise (Jahr)'],
+  [/Non Farm Payrolls/i, 'US-Arbeitsmarkt (NFP)'], [/Unemployment Rate/i, 'Arbeitslosenquote'], [/Initial Jobless Claims/i, 'Erstanträge Arbeitslosenhilfe'], [/ADP Employment Change/i, 'ADP-Beschäftigung'],
+  [/Average Hourly Earnings MoM/i, 'Stundenlöhne (Monat)'], [/GDP Growth Rate QoQ Adv|GDP Growth Rate QoQ Flash/i, 'BIP (Quartal, erste Schätzung)'], [/GDP Growth Rate QoQ/i, 'BIP (Quartal)'], [/GDP Growth Rate YoY/i, 'BIP (Jahr)'],
+  [/Retail Sales MoM/i, 'Einzelhandel (Monat)'], [/Retail Sales YoY/i, 'Einzelhandel (Jahr)'], [/ISM Manufacturing PMI/i, 'ISM Industrie'], [/ISM Services PMI|ISM Non-Manufacturing/i, 'ISM Dienstleister'],
+  [/Manufacturing PMI/i, 'Einkaufsmanager Industrie'], [/Services PMI/i, 'Einkaufsmanager Dienstleister'], [/Composite PMI/i, 'Einkaufsmanager gesamt'], [/Fed Interest Rate Decision/i, 'Fed-Zinsentscheid'],
+  [/ECB Interest Rate Decision|Main Refinancing Rate/i, 'EZB-Zinsentscheid'], [/Deposit Facility Rate/i, 'EZB-Einlagenzins'], [/BoE Interest Rate Decision/i, 'BoE-Zinsentscheid'], [/BoJ Interest Rate Decision/i, 'BoJ-Zinsentscheid'],
+  [/Interest Rate Decision/i, 'Zinsentscheid'], [/ZEW Economic Sentiment/i, 'ZEW-Konjunkturerwartung'], [/Ifo Business Climate/i, 'Ifo-Geschäftsklima'], [/Michigan Consumer Sentiment/i, 'Uni Michigan Verbrauchervertrauen'],
+  [/CB Consumer Confidence/i, 'Verbrauchervertrauen (Conference Board)'], [/Durable Goods Orders MoM/i, 'Auftragseingang langlebige Güter'], [/Industrial Production MoM/i, 'Industrieproduktion (Monat)'], [/JOLTs Job Openings/i, 'Offene Stellen (JOLTS)'],
+  [/Building Permits/i, 'Baugenehmigungen'], [/Housing Starts/i, 'Baubeginne'], [/Existing Home Sales/i, 'Hausverkäufe (bestehend)'], [/New Home Sales/i, 'Hausverkäufe (neu)'], [/Balance of Trade/i, 'Handelsbilanz'], [/Employment Change/i, 'Beschäftigung']];
+function newsName(title){ for (var i = 0; i < NEWS_DE.length; i++) if (NEWS_DE[i][0].test(title || '')) return NEWS_DE[i][1]; return title || ''; }
+// Art der Zahl: Inflation, Zinsentscheid, Arbeitsmarkt (umgekehrt: Arbeitslosigkeit), Wachstum
+function newsKind(ev){
+  var t = String(ev.title || '') + ' ' + String(ev.indicator || ''), c = ev.category || '';
+  if (/Interest Rate Decision|Refinancing Rate|Deposit Facility|Cash Rate|Rate Decision/i.test(t)) return 'zins';
+  if (c === 'prce' || /Inflation|CPI|PPI|PCE|Price Index|Hourly Earnings|Wage/i.test(t)) return 'infl';
+  if (/Unemployment|Jobless|Claims|Claimant/i.test(t)) return 'alq';
+  if (c === 'lbr' || /Payrolls|Employment|Job Openings/i.test(t)) return 'job';
+  return 'wachs';
+}
+// Ueberraschung: Ist gegen Prognose (ohne Prognose gegen den Vorwert). Groesse: Prozentzahlen in Punkten, sonst relativ.
+function newsSurprise(ev){
+  var a = +ev.actual, f = ev.forecast != null && ev.forecast !== '' && isFinite(+ev.forecast) ? +ev.forecast : null, p = ev.previous != null && ev.previous !== '' && isFinite(+ev.previous) ? +ev.previous : null;
+  if (!isFinite(a)) return null;
+  var base = f != null ? f : p, vs = f != null ? 'Prognose' : 'Vorwert'; if (base == null) return { diff: null, sign: 0, size: 0, vs: vs };
+  var d = a - base, pct = ev.unit === '%', k = newsKind(ev);
+  var rel = pct ? Math.abs(d) : (Math.abs(base) > 1e-9 ? Math.abs(d) / Math.abs(base) * 100 : Math.abs(d) > 0 ? 100 : 0);
+  // Schwellen: Inflation/Zinsen reagieren schon auf 0,1 Punkte, Wachstum und Arbeitsmarkt eher auf groessere Abweichungen
+  var s1 = pct ? (k === 'infl' || k === 'zins' ? 0.05 : 0.1) : 2, s2 = pct ? (k === 'infl' || k === 'zins' ? 0.15 : 0.3) : 8;
+  var size = rel < 1e-9 ? 0 : rel < s1 ? 1 : rel < s2 ? 2 : 3;
+  return { diff: d, sign: d > 1e-12 ? 1 : d < -1e-12 ? -1 : 0, size: size, vs: vs, base: base };
+}
+// Maerkte, auf die diese Zahl wirkt, mit der ueblichen Richtung. good = +1: gut fuer die Waehrung (staerker / falkenhaft)
+function newsCalls(ev, sign){
+  var k = newsKind(ev), good = sign * (k === 'alq' ? -1 : 1), cur = ev.currency || '', hawk = k === 'infl' || k === 'zins', out = [];
+  if (!good) return out;
+  var add = function(nm, y, dir, weak){ out.push({ nm: nm, y: y, dir: dir, weak: !!weak }); };
+  if (cur === 'USD'){ add('EUR/USD', 'EURUSD=X', -good); add('Gold', 'GC=F', -good, !hawk); add('Nasdaq-Future', 'NQ=F', hawk ? -good : good, !hawk); }
+  else if (cur === 'EUR'){ add('EUR/USD', 'EURUSD=X', good); add('DAX', '^GDAXI', hawk ? -good : good, true); }
+  else if (cur === 'GBP') add('GBP/USD', 'GBPUSD=X', good);
+  else if (cur === 'JPY') add('USD/JPY', 'JPY=X', -good);
+  else if (cur === 'CAD') add('USD/CAD', 'CAD=X', -good);
+  else if (cur === 'CHF') add('USD/CHF', 'CHF=X', -good);
+  else if (cur === 'AUD') add('AUD/USD', 'AUDUSD=X', good);
+  else if (cur === 'NZD') add('NZD/USD', 'NZDUSD=X', good);
+  else if (cur === 'CNY'){ if (!hawk) { add('AUD/USD', 'AUDUSD=X', good, true); add('Kupfer', 'HG=F', good, true); } }
+  return out;
+}
+function newsNum(v, ev){ if (v == null || v === '' || !isFinite(+v)) return '–'; var x = +v, d = Math.abs(x) >= 100 ? 0 : Math.abs(x) >= 10 ? 1 : (ev.unit === '%' ? 1 : 2); if (ev.unit === '%' && Math.abs(x) < 10 && Math.round(x * 10) !== x * 10) d = 2;
+  return (x < 0 ? '−' : '') + Math.abs(x).toFixed(d).replace('.', ',') + (ev.unit === '%' ? ' %' : (ev.scale ? ' ' + ({ K: 'Tsd.', M: 'Mio.', B: 'Mrd.', T: 'Bio.' }[ev.scale] || ev.scale) : '')); }
+// Text der Einschaetzung
+function newsText(ev, su){
+  var k = newsKind(ev), cur = ev.currency || '', nm = newsName(ev.title);
+  if (!su || su.diff == null) return { head: nm + ': ' + newsNum(ev.actual, ev), why: 'Keine Prognose zum Vergleich.', calls: [] };
+  var dirTxt = su.sign === 0 ? 'genau wie erwartet' : (su.sign > 0 ? 'höher' : 'niedriger') + ' als ' + (su.vs === 'Prognose' ? 'erwartet' : 'im Vormonat');
+  var sz = ['', 'leicht', 'deutlich', 'stark'][su.size] || '';
+  var good = su.sign * (k === 'alq' ? -1 : 1);
+  var why = su.sign === 0 ? 'Keine Überraschung: Der Markt achtet jetzt eher auf Details und andere Daten, ein klarer Impuls ist nicht zu erwarten.'
+    : (k === 'infl' ? (su.sign > 0 ? 'Mehr Inflation als erwartet: Zinssenkungen werden unwahrscheinlicher, das stützt ' + cur + ' und belastet Aktien und Gold.' : 'Weniger Inflation als erwartet: Zinssenkungen werden wahrscheinlicher, das schwächt ' + cur + ' und stützt Aktien und Gold.')
+      : k === 'zins' ? (su.sign > 0 ? 'Zinsen höher als erwartet: stützt ' + cur + ', belastet Aktien und Gold.' : 'Zinsen tiefer als erwartet: schwächt ' + cur + ', stützt Aktien und Gold.')
+      : (good > 0 ? 'Wirtschaft stärker als erwartet: stützt ' + cur + ' und eher die Aktien.' : 'Wirtschaft schwächer als erwartet: belastet ' + cur + ' und eher die Aktien.'));
+  var calls = su.size >= 1 ? newsCalls(ev, su.sign) : []; if (su.size === 1) calls.forEach(function(c){ c.weak = true; });
+  return { head: nm + ' ' + dirTxt + (sz && su.sign ? ' (' + sz + ')' : ''), why: why + (su.size === 1 ? ' Kleine Abweichung, eher schwacher Impuls.' : ''), calls: calls };
+}
+  return { newsName, newsKind, newsSurprise, newsCalls, newsNum, newsText, riskCluster, riskBudget, groupOf, groupName, dailyGroup, logSym, shadowRun, shadowCost, liveCheck, expOf, ruleSeries, ruleHit, ruleExit, ruleText, ruleId, smaAt, ibs, trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
 const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
 const FF_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.json';
+// Ist-Werte der Termine: Wirtschaftskalender von TradingView (die Forex-Factory-Daten haben keine Ist-Werte)
+const TV_CAL = 'https://economic-calendar.tradingview.com/events';
+const NEWS_CC = { USD: 'US', EUR: 'EU,DE,FR,IT', GBP: 'GB', JPY: 'JP', CAD: 'CA', AUD: 'AU', NZD: 'NZ', CHF: 'CH', CNY: 'CN' };
+async function tvCalendar(env, nowMs, ccys) {
+  const cc = [...new Set((ccys || []).map((c) => NEWS_CC[c]).filter(Boolean).join(',').split(','))].filter(Boolean).sort().join(',');
+  return cachedKV(env, 'mkt:tv:' + cc, 90e3, nowMs, async () => {
+    const from = new Date(nowMs - 3 * 3600e3).toISOString(), to = new Date(nowMs + 3600e3).toISOString();
+    const r = await fetch(TV_CAL + '?from=' + from + '&to=' + to + '&countries=' + cc, { headers: { Origin: 'https://www.tradingview.com', 'User-Agent': UA['User-Agent'] } });
+    if (!r.ok) throw new Error('TV ' + r.status);
+    const j = await r.json();
+    return (j.result || []).filter((e) => e && e.importance === 1).map((e) => ({ id: String(e.id), title: String(e.title || '').slice(0, 80), indicator: String(e.indicator || '').slice(0, 80), currency: e.currency, country: e.country, category: e.category,
+      actual: e.actual, forecast: e.forecast, previous: e.previous, unit: e.unit, scale: e.scale, date: e.date, period: e.period }));
+  });
+}
 const COT_URL = 'https://publicreporting.cftc.gov/resource/6dca-aqww.json';
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; TradeCheck/1.0)', Accept: 'application/json' };
 const symOk = (s) => typeof s === 'string' && /^[A-Za-z0-9^=.\-]{1,20}$/.test(s);
@@ -3360,7 +3442,7 @@ async function tradeRoute(request, headers, env, nowMs) {
   if (path === '/trade/key' && request.method === 'GET') return jsonData({ key: (await vapidKeys(env)).pub }, headers);
   if (path === '/trade/health' && request.method === 'GET') {
     const h = (await env.VS.get('trade', 'json')) || {}, age = h.hb ? Math.round((nowMs - h.hb) / 60e3) : null, wd = h.wd || {};
-    return jsonData({ ok: age != null && age < 45 && !wd.dataSent, age, push: !!(h.on && validSub(h.sub)), data: !wd.dataSince, dataSince: wd.dataSince || null, gh: (wd.gh || []).map((g) => g.name + ': ' + g.c), ver: WORKER_VER }, headers);
+    return jsonData({ ok: age != null && age < 45 && !wd.dataSent, age, push: !!(h.on && validSub(h.sub)), data: !wd.dataSince, dataSince: wd.dataSince || null, news: wd.tv || null, gh: (wd.gh || []).map((g) => g.name + ': ' + g.c), ver: WORKER_VER }, headers);
   }
   if (request.method !== 'POST') return json(405, 'Method not allowed', headers);
   let b;
@@ -3385,12 +3467,12 @@ async function tradeRoute(request, headers, env, nowMs) {
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
       swing: b.swing !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, tight: !!b.tight, ibsMax1: !!b.ibsMax1, ibsCand: t.ibsCand || null, ibsPick: t.ibsPick || null, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null),
-      shadowCap: num(b.shadow, 100, 1e7, 1000), fee: num(b.fee, 0, 20, 1) });
+      shadowCap: num(b.shadow, 100, 1e7, 1000), fee: num(b.fee, 0, 20, 1), newsRes: b.newsRes !== false });
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
     return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-400), swingPos: next.swingPos, ibsPos: next.ibsPos, autoPos: next.autoPos || [], brief: next.brief || null, radar: next.radar || null, log: (t.log || []).slice(-40),
-      lc: next.lc || null, wd: { hb: next.hb || null, dataSince: next.wd && next.wd.dataSince || null, gh: next.wd && next.wd.gh || [], ghAt: next.wd && next.wd.ghAt || null }, now: nowMs }, headers);
+      news: (next.newsLog || []).slice(-20), newsStat: next.newsStat || null, lc: next.lc || null, wd: { hb: next.hb || null, dataSince: next.wd && next.wd.dataSince || null, gh: next.wd && next.wd.gh || [], ghAt: next.wd && next.wd.ghAt || null }, now: nowMs }, headers);
   }
   if (path === '/trade/test') {
     if (!validSub(t.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in Trade Check ein.', headers);
@@ -3622,6 +3704,56 @@ async function runTrade(env, nowMs) {
     return cache[key];
   };
   const fmtp = (x, k) => { const i = TL.instrumentByKey(k); return (+x).toFixed(i ? i.dec : 2).replace('.', ','); };
+  // 1b) Ergebnisse wichtiger Termine: Ist gegen Prognose, Einschaetzung je Markt nach der ueblichen Reaktion, erste Kursreaktion.
+  // 30 Minuten spaeter prueft der Dienst, ob die Einschaetzung gestimmt hat (Trefferbilanz, ehrlich mitgezaehlt).
+  if (t.newsRes !== false && weekday) {
+    const ccys = t.ccys && t.ccys.length ? t.ccys : ['USD', 'EUR'];
+    t.newsLog = Array.isArray(t.newsLog) ? t.newsLog : []; t.newsDone = t.newsDone || {};
+    let ffc = cal; if (!ffc) { try { ffc = (await getCalendar(env, nowMs)).data; } catch (e) { ffc = []; } }
+    // Erreichbarkeit der Ist-Werte alle 6 Stunden pruefen (steht im Waechter)
+    t.wd = t.wd || {};
+    if (nowMs - (t.wd.tvAt || 0) > 6 * 3600e3) { t.wd.tvAt = nowMs; dirty = true; try { const r0 = await tvCalendar(env, nowMs, ccys); t.wd.tv = Array.isArray(r0.data) ? 'ok' : 'leer'; } catch (e) { t.wd.tv = String(e && e.message || 'Fehler').slice(0, 40); } }
+    const recent = (ffc || []).some((e) => e.impact === 'High' && ccys.includes(e.country) && nowMs - Date.parse(e.date) >= 0 && nowMs - Date.parse(e.date) < 40 * 60e3);
+    const pend = t.newsLog.filter((x) => !x.ev && nowMs - x.at >= 30 * 60e3 && nowMs - x.at < 4 * 3600e3);
+    if (recent) {
+      let tv = null; try { tv = (await tvCalendar(env, nowMs, ccys)).data; } catch (e) { tv = null; }
+      const fresh = (tv || []).filter((e) => e.actual != null && e.actual !== '' && ccys.includes(e.currency) && !t.newsDone[e.id] && nowMs - Date.parse(e.date) >= 0 && nowMs - Date.parse(e.date) < 40 * 60e3);
+      // gleichzeitige Zahlen (z. B. US-Inflation Monat und Jahr) in einer Meldung, die wichtigste zuerst
+      const byT = {}; fresh.forEach((e) => { (byT[e.date + e.currency] = byT[e.date + e.currency] || []).push(e); });
+      for (const k of Object.keys(byT).slice(0, 3)) {
+        const g = byT[k].sort((a, b) => (/Core/i.test(b.title) - /Core/i.test(a.title)) || (/MoM|Payrolls|Decision/i.test(b.title) - /MoM|Payrolls|Decision/i.test(a.title)));
+        g.forEach((e) => { t.newsDone[e.id] = nowMs; }); dirty = true;
+        const ev = g[0], rel = Date.parse(ev.date), su = TL.newsSurprise(ev), tx = TL.newsText(ev, su), arrow = (d) => d > 0 ? '↑' : '↓';
+        // erste Reaktion: Kurs jetzt gegen den Schluss der 5-Min-Kerze vor der Zahl
+        const react = [], ref = {};
+        for (const c of tx.calls.slice(0, 3)) { const c5 = await candlesOf(c.y, '5m', '1d'); if (!c5 || c5.length < 3) continue;
+          const pre = c5.filter((x) => x.t + 5 * 60e3 <= rel).pop(), last = c5[c5.length - 1]; if (!pre || last.t < rel) continue;
+          ref[c.y] = pre.c; const mv = (last.c / pre.c - 1) * 100; react.push(c.nm + ' ' + (mv >= 0 ? '+' : '−') + Math.abs(mv).toFixed(2).replace('.', ',') + ' %' + (Math.abs(mv) < 0.03 ? '' : (Math.sign(mv) === c.dir ? ' ✓' : ' ✗'))); }
+        const stat = t.newsStat || { n: 0, hit: 0 }, others = g.slice(1, 4).map((e) => TL.newsName(e.title) + ' ' + TL.newsNum(e.actual, e) + (e.forecast != null && e.forecast !== '' ? ' (Prognose ' + TL.newsNum(e.forecast, e) + ')' : ''));
+        const body = TL.newsName(ev.title) + (ev.period ? ' ' + ev.period : '') + ': ' + TL.newsNum(ev.actual, ev) + ' · Prognose ' + TL.newsNum(ev.forecast, ev) + ' · vorher ' + TL.newsNum(ev.previous, ev) + '. ' +
+          (others.length ? 'Dazu: ' + others.join(', ') + '. ' : '') + tx.why +
+          (tx.calls.length ? ' Erwartung: ' + tx.calls.map((c) => c.nm + ' ' + arrow(c.dir) + (c.weak ? ' (eher)' : '')).join(', ') + '.' : '') +
+          (react.length ? ' Erste Reaktion: ' + react.join(', ') + '.' : '') +
+          (stat.n >= 10 ? ' Bisher lag diese Einschätzung 30 Min nach der Zahl in ' + stat.hit + ' von ' + stat.n + ' Fällen richtig.' : '') +
+          ' Direkt nach Zahlen springen Spreads auf, oft gibt es eine Gegenbewegung: erst die ersten 5 bis 15 Minuten abwarten.';
+        const id = 'nr:' + ev.id;
+        t.newsLog.push({ id: ev.id, at: rel, title: TL.newsName(ev.title), cur: ev.currency, actual: ev.actual, forecast: ev.forecast, previous: ev.previous, unit: ev.unit, scale: ev.scale, head: tx.head, calls: tx.calls.map((c) => ({ nm: c.nm, y: c.y, dir: c.dir, weak: c.weak })), ref });
+        t.newsLog = t.newsLog.slice(-60);
+        await send(id, { title: '📰 ' + tx.head, body, tag: 'newsres', url: './', d: { kind: 'news' } });
+      }
+    }
+    // Auswertung 30 Min nach der Zahl: Richtung je Markt gegen die Einschaetzung (nur deutliche Bewegungen ab 0,05 % zaehlen)
+    for (const x of pend) {
+      const ev2 = { n: 0, hit: 0, moves: [] };
+      for (const c of x.calls) { const c5 = await candlesOf(c.y, '5m', '1d'); if (!c5 || !c5.length) continue;
+        const pre = x.ref && x.ref[c.y] ? x.ref[c.y] : (c5.filter((q) => q.t + 5 * 60e3 <= x.at).pop() || {}).c, at30 = c5.filter((q) => q.t <= x.at + 30 * 60e3).pop();
+        if (!pre || !at30 || at30.t < x.at + 20 * 60e3) continue; const mv = (at30.c / pre - 1) * 100; ev2.moves.push({ nm: c.nm, mv: Math.round(mv * 100) / 100 });
+        if (Math.abs(mv) >= 0.05 && !c.weak) { ev2.n++; if (Math.sign(mv) === c.dir) ev2.hit++; } }
+      x.ev = ev2; dirty = true;
+      if (ev2.n) { const s2 = t.newsStat || { n: 0, hit: 0 }; s2.n += ev2.n; s2.hit += ev2.hit; t.newsStat = s2; }
+    }
+    for (const k of Object.keys(t.newsDone)) if (nowMs - t.newsDone[k] > 3 * 86400e3) delete t.newsDone[k];
+  }
   // 3) Kurs-Alarme: Preis erreicht deine Zone. Einstiegs-Alarme melden sich nur, wenn der Einstieg noch gueltig ist.
   const open = (t.alerts || []).filter((a) => !a.hit && !a.dead);
   let calA = null;
