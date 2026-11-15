@@ -131,13 +131,14 @@ function placeboRows(rows) { let seed = 7; const rnd = () => { seed = (seed * 16
   for (let i = rows.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [rets[i], rets[j]] = [rets[j], rets[i]]; }
   rows.forEach((r, i) => { const q = rets[i], o = px * q[0]; out.push([r[0], o, o * q[1], o * q[2], o * q[3]]); px = o * q[3]; }); return out; }
 // ---------- Lauf
-const out = { at: new Date().toISOString(), data: {}, tested: 0, passed: [], top: [], placebo: { tested: 0, core: 0, passed: 0 } };
+const out = { at: new Date().toISOString(), data: {}, tested: 0, passed: [], top: [], best: [], placebo: { tested: 0, core: 0, passed: 0 } };
 for (const ins of INS) {
   const rows = await load(ins); if (rows.length < 50000) { console.log('zu wenig Daten', ins.k, rows.length); continue; }
   const D = prep(rows, ins); out.data[ins.k] = { from: D[0].day, to: D[D.length - 1].day, days: D.length, bars: rows.length };
   console.log('Daten', ins.k, out.data[ins.k]);
   const C = cands(ins), R = new Map(); out.tested += C.length;
   for (const c of C) R.set(c.id, evaluate(c, ins, D));
+  for (const c of C) { const o = R.get(c.id); if (o.all.n >= 100) out.best.push({ k: ins.k, id: c.id, fam: c.fam, name: c.name, unit: o.unit, all: o.all, p: [o.p1, o.p2, o.p3].map((p) => p.mean), stress: o.stress.mean, years: o.yearsUp + '/' + o.yearsN, perYear: o.perYear, core: o.core }); }
   for (const c of C) { const o = R.get(c.id); if (!o.core) continue; const nb = neighbors(c, C).map((x) => R.get(x.id)); const robust = nb.length >= 2 && nb.every((x) => x.all.n >= 100 && x.all.mean > 0);
     const e = { k: ins.k, ins: ins.name, id: c.id, fam: c.fam, name: c.name, rule: c, unit: o.unit, all: o.all, p: [o.p1, o.p2, o.p3].map((p) => p.mean), stress: o.stress.mean, years: o.yearsUp + '/' + o.yearsN, perYear: o.perYear, robust };
     if (robust) out.passed.push(e); out.top.push(e); }
@@ -145,7 +146,10 @@ for (const ins of INS) {
   const DP = prep(placeboRows(rows), ins); for (const c of C) { const o = evaluate(c, ins, DP); out.placebo.tested++; if (o.core) { out.placebo.core++; const nb = neighbors(c, C).map((x) => evaluate(x, ins, DP)); if (nb.length >= 2 && nb.every((x) => x.all.n >= 100 && x.all.mean > 0)) out.placebo.passed++; } }
   console.log(ins.k, 'Kandidaten', C.length, 'streng', out.top.filter((x) => x.k === ins.k).length, 'bestanden', out.passed.filter((x) => x.k === ins.k).length, '| Placebo bisher streng', out.placebo.core, 'bestanden', out.placebo.passed);
 }
+out.best.sort((a, b) => b.all.t - a.all.t); const fams = {}; out.best.forEach((e) => { const f = e.fam + ':' + e.k; if (!fams[f] || fams[f].all.t < e.all.t) fams[f] = e; }); out.bestByFam = Object.values(fams).sort((a, b) => b.all.t - a.all.t); out.best = out.best.slice(0, 60);
 out.passed.sort((a, b) => b.all.t - a.all.t); out.top.sort((a, b) => b.all.t - a.all.t); out.top = out.top.slice(0, 40);
 writeFileSync(new URL('./backtest-daytrade.json', import.meta.url), JSON.stringify(out));
 console.log('GESAMT getestet', out.tested, 'bestanden', out.passed.length, '| Placebo', JSON.stringify(out.placebo));
+out.best.slice(0, 25).forEach((e) => console.log('BEST', e.k.padEnd(7), e.name.slice(0, 90).padEnd(90), 'n', e.all.n, 'win', e.all.win, 'Ø', e.all.mean, e.unit, 't', e.all.t, '|', e.p.join(' / '), '| Haerte', e.stress, '| Jahre', e.years));
+out.bestByFam.forEach((e) => console.log('FAM ', (e.fam + ':' + e.k).padEnd(14), e.name.slice(0, 80).padEnd(80), 'n', e.all.n, 'Ø', e.all.mean, e.unit, 't', e.all.t, '|', e.p.join(' / '), '| Haerte', e.stress, '| Jahre', e.years));
 out.passed.slice(0, 30).forEach((e) => console.log('OK ', e.k.padEnd(7), e.name.padEnd(95).slice(0, 95), 'n', e.all.n, 'win', e.all.win, 'Ø', e.all.mean, e.unit, 't', e.all.t, 'Zeitraeume', e.p.join(' / '), 'Haerte', e.stress, 'Jahre', e.years, 'pro Jahr', e.perYear));
