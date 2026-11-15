@@ -109,6 +109,17 @@ for (const [reg, list, ix] of [['us', out.uni.us, '^GSPC'], ['de', out.uni.de, '
     console.log((o.passed ? 'KORB OK ' : 'KORB -- ') + (reg + ':' + nm).padEnd(12), 'Strategie', JSON.stringify(o.all), '| alle gleich gewichtet', JSON.stringify(o.bh), '|', parts.map((p) => p.from + ' S ' + p.s.sharpe + '/' + p.b.sharpe + ' R ' + p.s.cagr + '/' + p.b.cagr).join(' | '));
   }
 }
+// ---- Aktueller Korb fuer die App: heutige DAX-Aktien, die 10 staerksten der letzten 12 Monate (ohne den letzten Monat)
+{
+  const DAX = { ADS: 'Adidas', AIR: 'Airbus', ALV: 'Allianz', BAS: 'BASF', BAYN: 'Bayer', BEI: 'Beiersdorf', BMW: 'BMW', BNR: 'Brenntag', CBK: 'Commerzbank', CON: 'Continental', DTG: 'Daimler Truck', DBK: 'Deutsche Bank', DB1: 'Deutsche Börse', DHL: 'DHL', DTE: 'Deutsche Telekom', EOAN: 'E.ON', FRE: 'Fresenius', FME: 'Fresenius Medical Care', G1A: 'GEA', G24: 'Scout24', HNR1: 'Hannover Rück', HEI: 'Heidelberg Materials', HEN3: 'Henkel', IFX: 'Infineon', MBG: 'Mercedes-Benz', MRK: 'Merck', MTX: 'MTU Aero Engines', MUV2: 'Munich Re', P911: 'Porsche AG', PAH3: 'Porsche Holding', QIA: 'Qiagen', RHM: 'Rheinmetall', RWE: 'RWE', SAP: 'SAP', SIE: 'Siemens', ENR: 'Siemens Energy', SHL: 'Siemens Healthineers', SY1: 'Symrise', VOW3: 'Volkswagen', VNA: 'Vonovia', ZAL: 'Zalando' };
+  for (const k of Object.keys(DAX)) { const s = k + '.DE'; if (!D[s]) { D[s] = await chart(s); await wait(200); } }
+  const I = D['^GDAXI'], days = I.slice(-400).map((x) => L.dayOf(x.t)), ends = []; for (let k = 0; k < days.length - 1; k++) if (days[k].slice(0, 7) !== days[k + 1].slice(0, 7)) ends.push(k);
+  const rank = (t) => Object.keys(DAX).map((k) => { const d = D[k + '.DE']; if (!d || d.length < 260) return null; const m = idxOfDay(d); let j = m[days[t]]; for (let q = t; j == null && q > t - 5; q--) j = m[days[q]]; if (j == null || j < 252) return null; return { s: k, name: DAX[k], m: +((d[j - 21].c / d[j - 252].c - 1) * 100).toFixed(1), px: d[j].c }; }).filter(Boolean).sort((x, y) => y.m - x.m);
+  const t1 = ends[ends.length - 1], t0 = ends[ends.length - 2], now = rank(t1), top = now.slice(0, 10), prev = rank(t0).slice(0, 10), b = out.basket['de:mom10roh'];
+  out.korb = { key: 'de:mom10roh', day: days[t1], month: days[t1 + 1].slice(0, 7), n: now.length, top, in: top.filter((x) => !prev.some((y) => y.s === x.s)).map((x) => x.name), out: prev.filter((x) => !top.some((y) => y.s === x.s)).map((x) => x.name),
+    passed: !!(b && b.passed && ['de:mom8roh', 'de:mom12roh', 'de:mom10rohk9', 'de:mom10rohteuer'].filter((k) => out.basket[k] && out.basket[k].passed).length >= 3), perf: b ? { s: b.all, b: b.bh, parts: b.parts } : null };
+  console.log('KORB JETZT', out.korb.passed ? 'bestanden' : 'nicht bestanden', out.korb.day, top.map((x) => x.name + ' ' + x.m).join(', '), '| rein', out.korb.in.join(','), '| raus', out.korb.out.join(','), '| Aktien', now.length);
+}
 out.passed = Object.keys(out.sets).filter((k) => out.sets[k].passed);
 Object.values(out.sets).forEach((x) => { delete x.years; });
 writeFileSync(new URL('./backtest-stocks.json', import.meta.url), JSON.stringify(out));

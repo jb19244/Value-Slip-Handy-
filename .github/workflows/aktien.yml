@@ -2,6 +2,8 @@
 name: Aktien-Rueckrechnung
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '15 5 1-6 * *'
   push:
     branches: [main]
     paths: ['dienst/backtest10.mjs', '.github/workflows/aktien.yml']
