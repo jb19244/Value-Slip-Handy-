@@ -90,14 +90,14 @@ for (const [reg, list, ix] of [['us', out.uni.us, '^GSPC'], ['de', out.uni.de, '
   const I = D[ix], days = I.filter((x) => x.t >= Date.parse('2008-06-01')).map((x) => L.dayOf(x.t)), ii = idxOfDay(I);
   const P = {}; list.forEach((s) => { const m = idxOfDay(D[s]); let last = null; P[s] = days.map((d) => { if (m[d] != null) last = D[s][m[d]].c; return last; }); });
   const ends = []; for (let k = 0; k < days.length - 1; k++) if (days[k].slice(0, 7) !== days[k + 1].slice(0, 7)) ends.push(k);
-  for (const [nm, N, filt] of [['mom5', 5, true], ['mom10', 10, true], ['mom5roh', 5, false]]) {
+  for (const [nm, N, filt, lb, cst] of [['mom5', 5, true, 252, COST_ST], ['mom10', 10, true, 252, COST_ST], ['mom5roh', 5, false, 252, COST_ST], ['mom8', 8, true, 252, COST_ST], ['mom12', 12, true, 252, COST_ST], ['mom10k6', 10, true, 126, COST_ST], ['mom8k6', 8, true, 126, COST_ST], ['mom10k9', 10, true, 189, COST_ST], ['mom10teuer', 10, true, 252, 0.4], ['mom10roh', 10, false, 252, COST_ST]]) {
     const rs = [], bs = [], ms = []; let prev = [];
     for (let e = 0; e < ends.length - 1; e++) { const t = ends[e], t2 = ends[e + 1]; if (t < 252 || days[t] < '2010-01-01') continue;
-      const cand = list.filter((s) => P[s][t - 252] && P[s][t - 21] && P[s][t] && P[s][t2]).map((s) => ({ s, m: P[s][t - 21] / P[s][t - 252] - 1, r: P[s][t2] / P[s][t] - 1 }));
+      const cand = list.filter((s) => P[s][t - 252] && P[s][t - 21] && P[s][t] && P[s][t2]).map((s) => ({ s, m: P[s][t - 21] / P[s][t - lb] - 1, r: P[s][t2] / P[s][t] - 1 }));
       if (cand.length < 15) continue; const bench = cand.reduce((p, q) => p + q.r, 0) / cand.length;
       const j = ii[days[t]], on = !filt || (I[j].c > L.smaAt(I, j, 200));
       const top = on ? cand.slice().sort((x, y) => y.m - x.m).slice(0, N) : [], names = top.map((x) => x.s), turn = names.filter((x) => !prev.includes(x)).length + prev.filter((x) => !names.includes(x)).length;
-      const r = (top.length ? top.reduce((p, q) => p + q.r, 0) / top.length : 0) - turn / Math.max(1, 2 * N) * 2 * COST_ST / 100; prev = names;
+      const r = (top.length ? top.reduce((p, q) => p + q.r, 0) / top.length : 0) - turn / Math.max(1, 2 * N) * 2 * cst / 100; prev = names;
       rs.push(r); bs.push(bench); ms.push(days[t2].slice(0, 7)); }
     const perf = (a) => { if (!a.length) return null; let eq = 1, pk = 1, dd = 0; a.forEach((x) => { eq *= 1 + x; pk = Math.max(pk, eq); dd = Math.max(dd, 1 - eq / pk); }); const m = a.reduce((p, q) => p + q, 0) / a.length, sd = Math.sqrt(a.reduce((p, q) => p + (q - m) * (q - m), 0) / a.length);
       return { n: a.length, cagr: +((Math.pow(eq, 12 / a.length) - 1) * 100).toFixed(1), sharpe: sd ? +(m / sd * Math.sqrt(12)).toFixed(2) : null, maxDD: +(dd * 100).toFixed(0) }; };
