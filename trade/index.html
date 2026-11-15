@@ -1659,11 +1659,11 @@ function riskBudget(open, y, cfg){
   return { cluster: c, risk: Math.max(0, Math.round(room * 100) / 100), full: room < riskP * 0.25, why: why, same: same, tot: Math.round(tot * 100) / 100, cl: Math.round(cl * 100) / 100, capC: capC, heat: heat, riskP: riskP };
 }
 // ================= Strategie-Gruppen fuer Schatten-Bot und Live-Pruefung =================
-var GROUP_NAMES = { dtb: 'DAX-Trend-Ausbruch', ibs: 'IBS (US)', laender: 'IBS Länder-ETFs', tt: 'Turnaround Tuesday', d3: 'Drei Verlusttage', rsi2: 'Swing RSI-2', creme: 'Crème (Intraday)', bplus: 'B+ (Intraday)', intra: 'Intraday', finder: 'Trade Finder', orb: 'ORB', auto: 'Neu entdeckt' };
+var GROUP_NAMES = { dtb: 'DAX-Trend-Ausbruch', dpm: 'DAX-Nachmittag', ibs: 'IBS (US)', laender: 'IBS Länder-ETFs', tt: 'Turnaround Tuesday', d3: 'Drei Verlusttage', rsi2: 'Swing RSI-2', creme: 'Crème (Intraday)', bplus: 'B+ (Intraday)', intra: 'Intraday', finder: 'Trade Finder', orb: 'ORB', auto: 'Neu entdeckt' };
 function groupOf(x){
   if (x.g) return x.g;
   var c = String(x.cls || '');
-  return c === 'DAX-Ausbruch' ? 'dtb' : c === 'IBS' ? 'ibs' : c === 'Turnaround Tuesday' ? 'tt' : c === 'Drei Verlusttage' ? 'd3' : /^Swing/.test(c) ? 'rsi2' : c === 'Finder' ? 'finder' : c === 'ORB' ? 'orb' : /Crème|Creme/.test(c) ? 'creme' : c === 'B+' ? 'bplus' : 'intra';
+  return c === 'DAX-Ausbruch' ? 'dtb' : c === 'DAX-Nachmittag' ? 'dpm' : c === 'IBS' ? 'ibs' : c === 'Turnaround Tuesday' ? 'tt' : c === 'Drei Verlusttage' ? 'd3' : /^Swing/.test(c) ? 'rsi2' : c === 'Finder' ? 'finder' : c === 'ORB' ? 'orb' : /Crème|Creme/.test(c) ? 'creme' : c === 'B+' ? 'bplus' : 'intra';
 }
 function groupName(g, x){ return /^auto:/.test(g) ? 'Neu: ' + ((x && x.gn) || g.slice(5)) : (GROUP_NAMES[g] || g); }
 function dailyGroup(g){ return /^(ibs|laender|tt|d3|rsi2)$/.test(g) || /^auto:/.test(g); }
@@ -1873,6 +1873,87 @@ function pairTrFills(fills){
   });
   return out.sort(function(a, b){ return (a.sellAt || a.buyAt) - (b.sellAt || b.buyAt); });
 }
+// ================= Rueckgang-Schutz: echtes Konto mehr als 10 % unter dem Hoch -> Risiko halbieren, zurueck erst unter 5 % =================
+// start: Kontogroesse am Anfang, pnl: Ergebnisse in Euro in zeitlicher Reihenfolge
+function ddGuard(start, pnl, cfg){
+  cfg = cfg || {}; var lim = cfg.lim > 0 ? cfg.lim : 0.10, back = cfg.back > 0 ? cfg.back : 0.05, eq = +start || 0, peak = eq, on = false, since = null, maxDd = 0, k = 0;
+  if (!(eq > 0)) return { on: false, dd: 0, eq: eq, peak: peak, maxDd: 0, since: null, factor: 1 };
+  (pnl || []).forEach(function(x){ var v = typeof x === 'number' ? x : +(x && x.eur) || 0, t = x && x.t; k++; eq += v; if (eq > peak) peak = eq;
+    var dd = peak > 0 ? 1 - eq / peak : 0; if (dd > maxDd) maxDd = dd;
+    if (!on && dd >= lim - 1e-12){ on = true; since = t || k; } else if (on && dd < back){ on = false; since = null; } });
+  var dd = peak > 0 ? Math.max(0, 1 - eq / peak) : 0;
+  return { on: on, dd: Math.round(dd * 10000) / 10000, eq: Math.round(eq * 100) / 100, peak: Math.round(peak * 100) / 100, maxDd: Math.round(maxDd * 10000) / 10000, since: since, factor: on ? 0.5 : 1, lim: lim, back: back,
+    toBack: on ? Math.round((peak * (1 - back) - eq) * 100) / 100 : 0 };
+}
+// ================= Fehler-Coach: wo Disziplin Geld kostet =================
+// items: je gemeldetem Signal { t, g, gn, r (R der Rueckrechnung), dec: 'ja'|'nein'|null, eur (echt), entryR, exitR (Kosten in R, positiv = schlechter), pz (pausiert), full (Limit voll) }
+// own: eigene Trades ausserhalb der Signale [{ t, eur }]; re: Risiko in Euro je Trade; cost: Gebuehren je Trade
+function coachStats(items, own, re, cost){
+  var de = function(v, d){ return String(Math.round(v * Math.pow(10, d)) / Math.pow(10, d)).replace('.', ','); };
+  re = +re || 0; cost = +cost || 0; items = items || []; own = own || [];
+  var done = items.filter(function(x){ return x.r != null; }), yes = done.filter(function(x){ return x.dec === 'ja'; }), no = done.filter(function(x){ return x.dec === 'nein'; }), open = done.filter(function(x){ return !x.dec; });
+  var sum = function(a, f){ return a.reduce(function(s, x){ return s + (f(x) || 0); }, 0); }, eurOf = function(x){ return x.r * re - cost; };
+  var noW = no.filter(function(x){ return x.r > 0; }), yesW = yes.filter(function(x){ return x.r > 0; });
+  var skipR = sum(no, function(x){ return x.r; }), skipEur = sum(no, eurOf);
+  var en = yes.filter(function(x){ return x.entryR != null; }), ex = yes.filter(function(x){ return x.exitR != null; });
+  var entryR = en.length ? sum(en, function(x){ return x.entryR; }) / en.length : null, exitR = ex.length ? sum(ex, function(x){ return x.exitR; }) / ex.length : null;
+  var pz = yes.filter(function(x){ return x.pz; }), full = yes.filter(function(x){ return x.full; }), real = function(x){ return x.eur != null ? x.eur : eurOf(x); };
+  var byG = {}; no.forEach(function(x){ var k = x.gn || x.g || 'andere'; byG[k] = byG[k] || { n: 0, r: 0 }; byG[k].n++; byG[k].r += x.r; });
+  var topG = Object.keys(byG).map(function(k){ return { name: k, n: byG[k].n, r: Math.round(byG[k].r * 100) / 100 }; }).sort(function(a, b){ return b.r - a.r; })[0] || null;
+  var out = { n: done.length, yes: yes.length, no: no.length, open: open.length, skipR: Math.round(skipR * 100) / 100, skipEur: Math.round(skipEur), skipWin: no.length ? noW.length / no.length : null, yesWin: yes.length ? yesW.length / yes.length : null,
+    entryR: entryR != null ? Math.round(entryR * 100) / 100 : null, nEntry: en.length, exitR: exitR != null ? Math.round(exitR * 100) / 100 : null, nExit: ex.length,
+    pz: pz.length, pzEur: Math.round(sum(pz, real)), full: full.length, fullEur: Math.round(sum(full, real)), own: own.length, ownEur: Math.round(sum(own, function(x){ return +x.eur; })), topSkip: topG, tips: [] };
+  var tip = function(eur, title, text){ out.tips.push({ eur: Math.round(eur), title: title, text: text }); };
+  if (no.length >= 3 && skipEur > 0) tip(skipEur, 'Ausgelassene Signale', 'Die ' + no.length + ' ausgelassenen Signale hätten zusammen ' + de(skipR, 1) + ' R gebracht' + (out.skipWin != null && out.yesWin != null && out.skipWin > out.yesWin + 0.1 ? ', und unter ihnen waren mehr Gewinner als unter deinen gehandelten' : '') + '.' + (topG && topG.r > 0 ? ' Am meisten verpasst: ' + topG.name + ' (' + topG.n + '×).' : '') + ' Wenn du nicht handeln kannst, ist das okay. Aber nicht nach Gefühl aussortieren: entweder eine Strategie ganz abschalten oder jedes Signal nehmen.');
+  if (en.length >= 3 && entryR > 0.15) tip(entryR * re * en.length, 'Später Einstieg', 'Dein Einstieg liegt im Schnitt ' + de(entryR, 2) + ' R schlechter als der Signalkurs (Spread, Aufgeld, Zögern). Gleich nach der Mitteilung kaufen und eine Limit-Order knapp über dem Briefkurs setzen, nicht dem Kurs hinterherlaufen.');
+  if (ex.length >= 3 && exitR > 0.15) tip(exitR * re * ex.length, 'Ausstieg weicht vom Plan ab', 'Beim Verkauf verlierst du im Schnitt ' + de(exitR, 2) + ' R gegenüber dem geplanten Ausstieg. Meist heißt das: zu früh raus oder den Stop nicht als Order gelegt. Stop und Ziel direkt nach dem Kauf als Order bei Trade Republic eintragen.');
+  var pzE = sum(pz, real); if (pz.length >= 1 && pzE < 0) tip(-pzE, 'Trotz Pause gehandelt', pz.length + (pz.length === 1 ? ' Trade' : ' Trades') + ' aus pausierten Strategien: ' + Math.round(pzE) + ' €. Pausiert heißt: Die Strategie liegt live deutlich unter der Rückrechnung. Nur beobachten, bis die Pause aufgehoben ist.');
+  var fuE = sum(full, real); if (full.length >= 1 && fuE < 0) tip(-fuE, 'Über dem Risiko-Limit', full.length + (full.length === 1 ? ' Trade' : ' Trades') + ' bei vollem Konto-Risiko: ' + Math.round(fuE) + ' €. Wenn ⚠️ in der Mitteilung steht, steckt schon genug in derselben Wette.');
+  var oE = sum(own, function(x){ return +x.eur; }); if (own.length >= 3 && oE < 0) tip(-oE, 'Eigene Trades ohne Signal', own.length + ' eigene Trades außerhalb der Signale: ' + Math.round(oE) + ' €. Die belegten Strategien bringen mehr als Bauchgefühl. Eigene Ideen erst im Check prüfen oder im Schatten laufen lassen.');
+  out.tips.sort(function(a, b){ return b.eur - a.eur; });
+  return out;
+}
+// ================= Homescreen-Widget fuer Scriptable (iPhone) =================
+function widgetScript(url, key, origin, app){
+  var q = function(s){ return JSON.stringify(String(s)); };
+  return [
+    '// Trade Check Widget (Scriptable). Klein oder mittel auf den Home-Bildschirm legen, Script: Trade Check.',
+    '// Der Schlüssel zeigt nur diese Übersicht, er kann nichts ändern. Neuer Schlüssel in Trade Check unter Mehr → Widget macht ihn ungültig.',
+    'const URL_ = ' + q(String(url).replace(/\/+$/, '') + '/trade/widget') + ', KEY = ' + q(key) + ', ORIGIN = ' + q(origin) + ', APP = ' + q(app || String(origin) + '/') + ';',
+    'const C = { bg: new Color("#0e1116"), fg: new Color("#e8edf3"), mut: new Color("#8a96a6"), good: new Color("#34c38f"), bad: new Color("#f06b6b"), warn: new Color("#f2b84b") };',
+    'const hm = (ms) => { const d = new Date(ms); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); };',
+    'const px = (v) => v == null ? "" : Number(v).toLocaleString("de-DE", { maximumFractionDigits: Math.abs(v) >= 100 ? 2 : 4 });',
+    'async function load() {',
+    '  const fm = FileManager.local(), cache = fm.joinPath(fm.documentsDirectory(), "tradecheck-widget.json");',
+    '  try { const r = new Request(URL_); r.headers = { Origin: ORIGIN, "X-Widget-Key": KEY }; r.timeoutInterval = 12; const j = await r.loadJSON();',
+    '    if (r.response && r.response.statusCode === 200 && j && j.now) { fm.writeString(cache, JSON.stringify(j)); return j; } return { err: (j && j.message) || "Fehler " + (r.response ? r.response.statusCode : "") };',
+    '  } catch (e) { if (fm.fileExists(cache)) { const j = JSON.parse(fm.readString(cache)); j.stale = true; return j; } return { err: "Keine Verbindung" }; }',
+    '}',
+    'function line(w, txt, color, size, bold) { const t = w.addText(txt); t.textColor = color || C.fg; t.font = bold ? Font.semiboldSystemFont(size || 12) : Font.systemFont(size || 12); t.lineLimit = 1; t.minimumScaleFactor = 0.7; return t; }',
+    'async function build(d, fam) {',
+    '  const w = new ListWidget(); w.backgroundColor = C.bg; w.url = APP; w.setPadding(12, 12, 12, 12); w.refreshAfterDate = new Date(Date.now() + 10 * 60e3);',
+    '  const big = fam !== "small", head = w.addStack(); head.centerAlignContent(); const ti = head.addText("Trade Check"); ti.font = Font.boldSystemFont(13); ti.textColor = C.fg; head.addSpacer();',
+    '  if (d.err) { const s = head.addText("●"); s.textColor = C.bad; s.font = Font.systemFont(11); w.addSpacer(6); line(w, d.err, C.bad, 12); return w; }',
+    '  const st = head.addText(d.stale ? "alt" : d.ok ? "●" : "⚠︎"); st.font = Font.systemFont(11); st.textColor = d.stale ? C.mut : d.ok ? C.good : C.warn;',
+    '  w.addSpacer(4);',
+    '  if (!d.ok) line(w, d.age == null ? "Dienst meldet sich nicht" : "Dienst seit " + d.age + " Min. still", C.warn, 11);',
+    '  if (d.dd > 0) line(w, "Risiko halbiert: Konto " + Math.round(d.dd * 100) + " % unter Hoch", C.warn, 11);',
+    '  const open = d.open || [], wait = d.wait || [], max = big ? 3 : 2;',
+    '  line(w, open.length ? open.length + (open.length === 1 ? " Position offen" : " Positionen offen") : "Keine offene Position", open.length ? C.fg : C.mut, 12, true);',
+    '  open.slice(0, max).forEach((p) => line(w, (p.d > 0 ? "▲ " : "▼ ") + p.n + (big && p.s ? "  Stop " + px(p.s) : ""), p.d > 0 ? C.good : C.bad, 11));',
+    '  if (wait.length) { w.addSpacer(3); wait.slice(0, big ? 2 : 1).forEach((p) => line(w, "⏳ " + p.n + " " + (p.d > 0 ? "Kauf über " : "Verkauf unter ") + px(p.e) + (p.until ? " bis " + hm(p.until) : ""), C.warn, 11)); }',
+    '  w.addSpacer();',
+    '  if (d.next) line(w, "📅 " + hm(d.next.at) + " " + d.next.c + " " + d.next.t, C.mut, 10);',
+    '  if (big && d.last && d.last[0]) line(w, "✉︎ " + hm(d.last[0].at) + " " + d.last[0].title, C.mut, 10);',
+    '  if (d.paused && d.paused.length) line(w, "⏸ " + d.paused.join(", "), C.mut, 10);',
+    '  line(w, "Stand " + hm(d.now), C.mut, 9);',
+    '  return w;',
+    '}',
+    'const data = await load(), fam = config.widgetFamily || "medium", widget = await build(data, fam);',
+    'if (config.runsInWidget) Script.setWidget(widget); else await (fam === "small" ? widget.presentSmall() : widget.presentMedium());',
+    'Script.complete();'
+  ].join('\n');
+}
 // END LOGIC
 
 // ===================== App =====================
@@ -2033,7 +2114,7 @@ function calcOut(){
   var conv = eurPer(i.quote, V.rates), ratio = pnum(f.ratio) || koDefault(i), d = V.data[f.k], live = d && d.m15 && d.m15.length && !i.basis ? d.m15[d.m15.length - 1].c : null;
   if (!(pnum(f.entry) > 0) || !(pnum(f.ko) > 0)) return '<p class="hint">Trag oben Einstieg, Stop, Ziel und die KO-Schwelle deines Scheins ein. Der Rechner zeigt dann sofort, was der Schein an jeder Marke kostet.</p>';
   if (!(conv > 0)) return '<p class="hint">Wechselkurs wird geladen …</p>';
-  var c = koCalc({ dir: f.dir, entry: pnum(f.entry), stop: pnum(f.stop), target: pnum(f.target), ko: pnum(f.ko), ratio: ratio, conv: conv, ask: pnum(f.ask), now: pnum(f.now) || live, account: +S.cfg.account, riskPct: (+S.cfg.risk) / 100, fee: +S.cfg.fee || 0, qty: pnum(f.qty) });
+  var c = koCalc({ dir: f.dir, entry: pnum(f.entry), stop: pnum(f.stop), target: pnum(f.target), ko: pnum(f.ko), ratio: ratio, conv: conv, ask: pnum(f.ask), now: pnum(f.now) || live, account: +S.cfg.account, riskPct: riskNow() / 100, fee: +S.cfg.fee || 0, qty: pnum(f.qty) });
   if (c.error) return c.error === 'fehlt' ? '' : '<p class="err" style="margin:6px 0 0">' + esc(c.error) + '</p>';
   var e2 = function(v){ return fmt(v, 2) + ' €'; }, tot = function(per){ return c.qty ? sgn(per * c.qty, 0) + ' €' : '–'; };
   var line = function(nm, r, cls, total){ if (!r) return ''; return '<tr><td>' + nm + '</td><td>' + fmt(r.lv, i.dec) + '</td><td><b>' + e2(r.cert) + '</b></td><td class="' + cls + '">' + (r.diff != null ? sgn(r.diff, 2) + ' €<br><small>' + sgn(r.pct * 100, 0) + ' %</small>' : '') + '</td><td class="' + cls + '">' + (total != null ? total : '') + '</td></tr>'; };
@@ -2249,7 +2330,7 @@ function viewSize(r){
     if (behind <= 0) warn = '<p class="err">Die KO-Schwelle liegt vor deinem Stop. Der Schein wird wertlos, bevor dein Stop greift. Nimm einen Schein mit Schwelle hinter dem Stop.</p>';
     else if (r.atr && behind < r.atr * 0.5) warn = '<p class="hint warn">Die KO-Schwelle liegt nur knapp hinter dem Stop. Bei Kurslücken kann der Schein ausknocken statt mit Verlust verkauft zu werden.</p>';
   }
-  return '<section class="card"><div class="row"><h2>Positionsgröße</h2><span class="pill">' + fmt(S.cfg.risk, 2).replace(/,?0+$/, '') + ' % Risiko</span></div><dl class="kv"><div><dt>Risiko</dt><dd>' + eur(ps.riskEur) + '</dd></div>' +
+  return '<section class="card"><div class="row"><h2>Positionsgröße</h2><span class="pill' + (ddState().on ? ' warn' : '') + '">' + fmt(riskNow(), 2).replace(/,?0+$/, '') + ' % Risiko' + (ddState().on ? ' (halbiert)' : '') + '</span></div><dl class="kv"><div><dt>Risiko</dt><dd>' + eur(ps.riskEur) + '</dd></div>' +
     rows.map(function(x){ return '<div><dt>' + x[0] + '</dt><dd>' + x[1] + '</dd></div>'; }).join('') + '</dl>' + warn + orderPrices(r, i, f, ps) +
     '<p class="hint">' + (i.type === 'fx' ? '1 Pip = ' + eur(ps.units * (i.quote === 'JPY' ? 0.01 : 0.0001) * r.conv) + '. ' : 'Verlust bis Stop je Einheit ' + (ps.perUnitEur < 0.01 ? fmt(ps.perUnitEur, 4) + ' €' : eur(ps.perUnitEur)) + '. ') + 'Dazu ' + eur(fee) + ' Ordergebühren.' + (f.ratioAssumed ? ' Gerechnet mit Bezugsverhältnis ' + fmt(f.ratio, f.ratio < 1 ? 2 : 0) + ' (üblich bei ' + esc(i.name) + '). Steht im Produktinfoblatt deines Scheins, bitte prüfen.' : '') + (r.koP > 0 ? '' : ' Mit KO-Schwelle rechne ich auch Einsatz und Hebel.') + '</p>' +
     '<div class="btns"><button class="btn block" data-act="open">Ins Tagebuch</button><button class="btn ghost" data-act="alarm">Alarm am Einstieg</button></div></section>';
@@ -2297,7 +2378,7 @@ function runCheck(){
     res.form = { entry: e, stop: s, target: t, dir: f.dir, ratio: ratio, ratioAssumed: !pnum(f.ratio) && ratio != null };
     if (!res.error){
       res.conv = eurPer(i.quote, V.rates);
-      res.ps = positionSize({ account: +S.cfg.account, riskPct: (+S.cfg.risk) / 100, entry: e, stop: s, conv: res.conv, ratio: ratio, type: i.type });
+      res.ps = positionSize({ account: +S.cfg.account, riskPct: riskNow() / 100, entry: e, stop: s, conv: res.conv, ratio: ratio, type: i.type });
       res.koP = pnum(f.ko); res.atr = d.m15 ? atr(d.m15, 14) : null;
       // Spread-Check: Spanne des Scheins in Punkte des Basiswerts umrechnen und am Stop-Abstand messen
       var bid = pnum(f.bid), ask = pnum(f.ask);
@@ -2512,6 +2593,10 @@ function viewDossier(r){
 }
 // ===================== Heute =====================
 function riskEur(){ return (+S.cfg.account || 0) * (+S.cfg.risk || 0) / 100; }
+// Rueckgang-Schutz: echtes Konto (Kontogroesse plus echte Ergebnisse) mehr als 10 % unter dem Hoch -> halbes Risiko, voll erst wieder unter 5 % Rueckgang
+function ddState(){ if (S.cfg.ddOff || !(+S.cfg.account > 0)) return { on: false, dd: 0, factor: 1, off: !!S.cfg.ddOff }; return ddGuard(+S.cfg.account, realRows()); }
+function dpmSet(){ var b = V.bdp; if (!b || !(b.passed || []).some(function(x){ return x.id === 'pm_930_60_gap_range__1045'; })) return null; return (b.best || []).filter(function(x){ return x.id === 'pm_930_60_gap_range__1045'; })[0] || null; }
+function riskNow(){ return (+S.cfg.risk || 1) * ddState().factor; }
 // Abkuehlphase: zwei Verlust-Trades in Folge -> 60 Minuten kein neuer Trade
 function tiltState(){
   var cl = S.trades.filter(function(t){ return t.status === 'closed'; }).sort(function(a, b){ return (b.closedAt || b.at) - (a.closedAt || a.at); });
@@ -2558,6 +2643,9 @@ function viewHeute(){
   h += '<div class="label fold-lbl">Mehr</div>';
   h += fold('markt', 'Markt heute', (hot != null ? (hot ? hot + (hot === 1 ? ' Markt' : ' Märkte') + ' am Tagestief' : 'kein Markt am Tagestief') + ' · ' : '') + (ctx && ctx.vix ? 'VIX ' + fmt(ctx.vix, 1) : esc(s.label)), radarCard() + briefCard() + dayCard);
   h += fold('schatten', 'Schatten-Bot', sh.n ? '<span class="' + (sh.net >= 0 ? 'good' : 'bad') + '">' + sgn(sh.net, 0) + ' €</span> · ' + sh.n + ' Trades' : 'startet mit dem ersten Signal', viewShadow(sh));
+  var mk0 = monthKeys(), cpv = coachMonth(mk0.prev), cc0 = coachMonth(mk0.cur), cTop = (cc0.n >= 3 ? cc0 : cpv).tips[0];
+  if (cpv.yes + cpv.no >= 3 && S.coachSeen !== mk0.prev){ S.fold = S.fold || {}; S.fold.coach = true; S.coachSeen = mk0.prev; V.coachM = mk0.prev; save(); }
+  h += fold('coach', 'Fehler-Coach', cTop ? '<span class="bad">' + esc(cTop.title) + ' −' + fmt(cTop.eur, 0) + ' €</span>' : (cc0.n || cpv.n ? 'nichts Auffälliges' : 'sammelt'), viewCoach());
   h += fold('live', 'Live gegen Rückrechnung', lc.length ? (lcBad ? '<span class="warn">' + lcBad + ' auffällig</span>' : 'alles im Rahmen') : 'sammelt Trades', viewLiveCheck(lc));
   h += fold('meld', 'Meldungen', (V.log || []).length ? (V.log || []).length + ' zuletzt' : 'noch keine', inboxCard() || '<p class="hint">Hier erscheint jede Push-Meldung in voller Länge.</p>');
   h += fold('strat', 'Strategien', 'Beleg und Stand je Strategie', viewCockpit());
@@ -2614,7 +2702,7 @@ function openCard(ts){
   (V.swingPos || []).filter(function(p){ return p.state === 'wartet' || p.state === 'offen' || now - (p.exitAt || p.at) < 86400e3; }).forEach(function(p){ var i = instr(p.k) || { dec: 2 };
     rows.push('<div class="trade"><div class="row"><span>' + pill(p, 'Swing') + '<b>' + esc(p.name) + '</b></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Kauf zur Eröffnung' : 'offen')) + '</span></div><div class="muted small">' + (p.entry ? 'Einstieg ' + fmt(p.entry, i.dec) + ' · ' : 'zuletzt ' + fmt(p.ref, i.dec) + ' · ') + 'Stop ' + fmt(p.stop, i.dec) + ' · Verkauf über dem 5-Tage-Schnitt, spätestens nach 10 Tagen</div></div>'); });
   (V.dtPos || []).filter(function(p){ return (p.state === 'wartet' || p.state === 'offen') || (p.exitAt && now - p.exitAt < 12 * 3600e3); }).forEach(function(p){
-    rows.push('<div class="trade"><div class="row"><span><span class="pill good">DAX-Ausbruch</span> <b>DAX</b> <span class="' + (p.dir > 0 ? 'good' : 'bad') + '">' + (p.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Order wartet' : 'offen')) + '</span></div><div class="muted small">' + (p.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') + fmt(p.px, 1) + ' · Stop ' + fmt(p.stop, 1) + (p.state === 'wartet' ? ' · gilt bis 12:35' : '') + ' · schließen um 17:25</div></div>'); });
+    rows.push('<div class="trade"><div class="row"><span><span class="pill good">' + (p.pm ? 'DAX-Nachmittag' : 'DAX-Ausbruch') + '</span> <b>DAX</b> <span class="' + (p.dir > 0 ? 'good' : 'bad') + '">' + (p.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Order wartet' : 'offen')) + '</span></div><div class="muted small">' + (p.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') + fmt(p.px, 1) + ' · Stop ' + fmt(p.stop, 1) + (p.state === 'wartet' ? ' · gilt bis ' + (p.pm ? '17:25' : '12:35') : '') + ' · schließen um 17:25</div></div>'); });
   (V.autoPos || []).filter(function(p){ return p.state === 'offen' || now - (p.exitAt || p.at) < 86400e3; }).forEach(function(p){ var i = instr(p.k) || { dec: 2 };
     rows.push('<div class="trade"><div class="row"><span><span class="pill warn">Neu</span> <b>' + esc(p.name) + '</b></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : 'offen') + '</span></div><div class="muted small">' + esc(p.gn || '') + ' · Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + '</div></div>'); });
   if (!rows.length) return '';
@@ -2622,20 +2710,20 @@ function openCard(ts){
 }
 // ================= Konto-Risiko =================
 function openRiskList(){
-  var rp = +S.cfg.risk || 1, acct = +S.cfg.account || 0, out = [], sigIds = {};
+  var rp = riskNow(), acct = +S.cfg.account || 0, out = [], sigIds = {};
   var add = function(p, src){ if (p.skip) return; out.push({ y: p.y || logSym(p), risk: p.risk != null ? +p.risk : rp, name: p.name, src: src, id: p.id }); };
   S.trades.filter(function(t){ return t.status === 'open'; }).forEach(function(t){ if (t.sig) sigIds[t.sig.id || t.sig] = 1; var i = instr(t.instr);
     out.push({ y: i ? i.y : String(t.instr || ''), risk: t.size && t.size.risk && acct ? t.size.risk / acct * 100 : rp, name: t.name, src: 'Tagebuch', id: t.id }); });
   (V.ibsPos || []).forEach(function(p){ if (p.state === 'offen') add(p, p.kind === 'tt' ? 'Turnaround Tuesday' : p.kind === 'd3' ? 'Drei Verlusttage' : 'IBS'); });
   (V.swingPos || []).forEach(function(p){ if (p.state === 'offen' || p.state === 'wartet') add(p, 'Swing'); });
   (V.autoPos || []).forEach(function(p){ if (p.state === 'offen') add(p, 'Neu entdeckt'); });
-  (V.dtPos || []).forEach(function(p){ if (p.state === 'offen' || p.state === 'wartet') add(p, 'DAX-Ausbruch'); });
+  (V.dtPos || []).forEach(function(p){ if (p.state === 'offen' || p.state === 'wartet') add(p, p.pm ? 'DAX-Nachmittag' : 'DAX-Ausbruch'); });
   (V.track || []).forEach(function(x){ if ((x.state === 'wartet' || x.state === 'offen') && !sigIds[x.id]) add(x, x.cls); });
   return out;
 }
 function viewRisk(){
   var L = openRiskList(); if (!L.length) return '';
-  var heat = +S.cfg.heat || 5, capC = (+S.cfg.risk || 1) * 1.5, tot = 0, cl = {};
+  var heat = +S.cfg.heat || 5, capC = riskNow() * 1.5, tot = 0, cl = {};
   L.forEach(function(p){ tot += p.risk; var c = riskCluster(p.y), q = cl[c.id] = cl[c.id] || { name: c.name, risk: 0, n: 0 }; q.risk += p.risk; q.n++; });
   var lvl = tot >= heat - 1e-9 ? 'bad' : tot >= heat * 0.7 ? 'warn' : 'good';
   return '<div class="rk" id="risk"><div class="row"><span class="small"><b>Konto-Risiko ' + fmt(tot, 1) + ' %</b> <span class="muted">von höchstens ' + fmt(heat, 1) + ' %</span></span></div><div class="rk-bar"><i class="' + lvl + '" style="width:' + Math.min(100, tot / heat * 100) + '%"></i></div>' +
@@ -2644,7 +2732,7 @@ function viewRisk(){
 // Hinweis im Check: gleiche Wette wie eine offene Position?
 function viewBundle(r){
   var i = instr(r.k); if (!i) return '';
-  var b = riskBudget(openRiskList(), i.y, { riskP: +S.cfg.risk || 1, heat: +S.cfg.heat || 5 }); if (!b.same.length && b.risk >= b.riskP) return '';
+  var b = riskBudget(openRiskList(), i.y, { riskP: riskNow(), heat: +S.cfg.heat || 5 }); if (!b.same.length && b.risk >= b.riskP) return '';
   var acct = +S.cfg.account || 0;
   return '<div class="spk ' + (b.full ? 'bad' : 'warn') + '" id="bundle"><b>' + (b.full ? (b.why === 'heat' ? 'Gesamtlimit voll' : 'Bündel voll') : (b.same.length ? 'Gleiche Wette wie eine offene Position' : 'Gesamtlimit fast voll')) + '</b><span>' +
     (b.same.length ? 'Schon offen im Bündel ' + esc(b.cluster.name) + ': ' + esc(b.same.map(function(q){ return q.name; }).join(', ')) + '. Märkte, die zusammen laufen, sind im Kern eine Wette. ' : '') +
@@ -2660,6 +2748,7 @@ function watchBanner(){
     if (w.dataSince) out.push(['bad', 'Kursdaten fehlen seit ' + hm(w.dataSince) + ' Uhr', 'Der Dienst bekommt keine Kurse. Solange können Signale ausbleiben.']);
     (w.gh || []).forEach(function(g){ out.push(['warn', 'GitHub: ' + (/pages build/i.test(g.name) ? 'Website (App-Updates)' : g.name) + (g.c === 'hängt' ? ' hängt' : ' fehlgeschlagen'), /pages build/i.test(g.name) ? 'App-Updates und frische Daten kommen verspätet. Deine Signale laufen über Cloudflare normal weiter.' : 'Diese Rückrechnung ist nicht aktuell, die App rechnet mit dem letzten Stand. Signale laufen normal weiter.']); });
   }
+  var dg = ddState(); if (dg.on) out.push(['warn', 'Rückgang-Schutz: Risiko halbiert', 'Dein echtes Konto liegt ' + fmt(dg.dd * 100, 1).replace(/,0$/, '') + ' % unter dem Hoch von ' + eur(dg.peak) + '. Positionsgrößen und Mitteilungen rechnen jetzt mit ' + fmt(riskNow(), 2).replace(/,?0+$/, '') + ' % statt ' + fmt(+S.cfg.risk || 1, 2).replace(/,?0+$/, '') + ' % je Trade. Volles Risiko wieder, sobald der Rückgang unter 5 % liegt (noch ' + eur(dg.toBack) + ').']);
   return out.map(function(x){ return '<div class="wb ' + x[0] + '" role="alert"><b>' + esc(x[1]) + '</b><span>' + esc(x[2]) + '</span></div>'; }).join('');
 }
 // ================= Schatten-Bot =================
@@ -2906,6 +2995,7 @@ function evid(k){
   if (k === 'd3') return daily(s['mr:down3']);
   if (k === 'creme' || k === 'bplus' || k === 'finder') return 'probe';
   if (k === 'depot') return 'stark';
+  if (k === 'dpm') return dpmSet() ? 'mittel' : null;
   if (k === 'dtb') return V.bdf && V.bdf.best && V.bdf.best.some(function(b){ return b.id === 'orb_15_trend_range__1045_v20' && b.all.t >= 3; }) ? 'mittel' : null;
   if (k === 'korb') return V.bk && V.bk.korb && V.bk.korb.passed ? 'mittel' : null;
   if (k === 'auto') return V.bq && V.bq.live && V.bq.live.length ? 'probe' : null;
@@ -3045,7 +3135,7 @@ function trainDraw(){
 // ================= Echte Bilanz: Euro statt Theorie =================
 // Je gemeldetem Signal: gehandelt oder nicht, mit echtem Euro-Ergebnis. Dazu Trades aus dem Tagebuch und ein CSV-Import.
 // Zeigt, was wirklich auf dem Konto ankam, je Strategie gegen die Rueckrechnung, und was die ausgelassenen Signale gebracht haetten.
-function realGroup(c){ c = String(c || ''); if (/DAX-Ausbruch/.test(c)) return 'DAX-Trend-Ausbruch'; if (/Neu entdeckt/.test(c)) return 'Neu entdeckt'; if (/Turnaround/.test(c)) return 'Turnaround Tuesday'; if (/Finder/.test(c)) return 'Trade Finder (unbelegt)'; if (/Drei Verlusttage/.test(c)) return 'Drei Verlusttage'; return /Crème|A\+|^A$|3×|60/.test(c) ? 'Crème (Intraday)' : (/B\+|B grün/.test(c) ? 'B+ (ab 16 Uhr)' : (/Swing/.test(c) ? 'Swing RSI-2' : (/IBS/.test(c) ? 'IBS' : (/ORB/.test(c) ? 'ORB' : 'Andere')))); }
+function realGroup(c){ c = String(c || ''); if (/DAX-Ausbruch/.test(c)) return 'DAX-Trend-Ausbruch'; if (/DAX-Nachmittag/.test(c)) return 'DAX-Nachmittag'; if (/Neu entdeckt/.test(c)) return 'Neu entdeckt'; if (/Turnaround/.test(c)) return 'Turnaround Tuesday'; if (/Finder/.test(c)) return 'Trade Finder (unbelegt)'; if (/Drei Verlusttage/.test(c)) return 'Drei Verlusttage'; return /Crème|A\+|^A$|3×|60/.test(c) ? 'Crème (Intraday)' : (/B\+|B grün/.test(c) ? 'B+ (ab 16 Uhr)' : (/Swing/.test(c) ? 'Swing RSI-2' : (/IBS/.test(c) ? 'IBS' : (/ORB/.test(c) ? 'ORB' : 'Andere')))); }
 function realRows(){
   var rows = [], re = riskEur(), cost = (+S.cfg.fee || 0) * 2, seen = {};
   (V.trackLog || []).forEach(function(x){ var m = S.real[x.id]; if (!m || !m.traded) return; seen[x.id] = 1;
@@ -3085,6 +3175,27 @@ function viewExec(){
     (n > nSplit ? '<tr><td>Spread und Timing (ETF, Aktie)</td><td class="' + (s.slip > 0 ? 'bad' : 'good') + '">' + neg(s.slip) + '</td></tr>' : '') + '<tr><td>Ordergebühren</td><td class="bad">−' + fmt(s.fee, 2) + ' €</td></tr><tr><td><b>Echt</b></td><td class="' + (s.act >= 0 ? 'good' : 'bad') + '"><b>' + sgn(s.act, 2) + ' €</b></td></tr></table>' +
     '<p class="hint">' + (re && per / re > 0.15 ? 'Die Ausführung kostet dich ' + fmt(per / re, 2) + ' R je Trade, das frisst einen großen Teil des Vorteils. Größere Positionen (die feste Gebühr fällt weniger ins Gewicht) und Limit-Orders nah am Signalkurs helfen.' : 'Die Ausführung liegt im Rahmen.') + '</p>' +
     '<details class="real-list"><summary>Je Trade</summary><ul class="list-plain">' + rows.reverse().join('') + '</ul></details>';
+}
+// ================= Fehler-Coach: wo die Umsetzung Geld kostet, je Monat =================
+function coachMonth(m){
+  var re = riskEur(), cost = (+S.cfg.fee || 0) * 2, inM = function(t){ return berlinParts(t).key.slice(0, 7) === m; };
+  var items = (V.trackLog || []).filter(function(x){ return x.r != null && inM(x.x || x.t); }).map(function(x){ var d = S.real[x.id], c = d && d.traded ? execCost(x, d) : null;
+    return { t: x.t, g: x.g, gn: realGroup(x.cls), r: x.r, dec: d ? (d.traded ? 'ja' : 'nein') : null, eur: d && d.eur != null ? d.eur : null, entryR: c && c.entry != null && re ? c.entry / re : null, exitR: c && c.exit != null && re ? c.exit / re : null, pz: !!x.pz, full: !!x.skip }; });
+  var own = S.trades.filter(function(t){ return t.status === 'closed' && !t.sig && inM(t.closedAt || t.at); }).map(function(t){ return { t: t.closedAt || t.at, eur: t.eur != null ? t.eur : (tradeR(t) || 0) * ((t.size && t.size.risk) || re) - cost }; });
+  return coachStats(items, own, re, cost);
+}
+function monthKeys(){ var b = berlinParts(Date.now()).key, y = +b.slice(0, 4), mo = +b.slice(5, 7), p = mo === 1 ? (y - 1) + '-12' : y + '-' + ('0' + (mo - 1)).slice(-2); return { cur: b.slice(0, 7), prev: p }; }
+function monthName(m){ return new Intl.DateTimeFormat('de-DE', { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7) - 1, 15))); }
+function viewCoach(){
+  var mk = monthKeys(), sel = V.coachM || (coachMonth(mk.cur).n >= 3 ? mk.cur : mk.prev), c = coachMonth(sel);
+  var h = '<div class="seg" style="margin-bottom:8px">' + [mk.prev, mk.cur].map(function(m){ return '<button data-act="coachm" data-m="' + m + '" aria-pressed="' + (m === sel) + '">' + esc(monthName(m)) + '</button>'; }).join('') + '</div>';
+  if (!c.n) return h + '<p class="hint">Im ' + esc(monthName(sel)) + ' ist noch kein Signal abgeschlossen. Der Coach vergleicht jedes Signal mit dem, was du daraus gemacht hast: ausgelassen, zu spät gekauft, zu früh verkauft, trotz Pause oder Limit gehandelt.</p>';
+  h += '<dl class="kv"><div><dt>Signale</dt><dd>' + c.n + '</dd></div><div><dt>Gehandelt</dt><dd>' + c.yes + '</dd></div><div><dt>Ausgelassen</dt><dd>' + c.no + (c.no ? ' <span class="muted small">(' + (c.skipR >= 0 ? '+' : '') + fmt(c.skipR, 1) + ' R)</span>' : '') + '</dd></div><div><dt>Nicht abgehakt</dt><dd class="' + (c.open ? 'warn' : '') + '">' + c.open + '</dd></div>' +
+    (c.entryR != null ? '<div><dt>Einstieg</dt><dd class="' + (c.entryR > 0.15 ? 'bad' : '') + '">' + (c.entryR > 0 ? '−' : '+') + fmt(Math.abs(c.entryR), 2) + ' R</dd></div>' : '') + (c.exitR != null ? '<div><dt>Ausstieg</dt><dd class="' + (c.exitR > 0.15 ? 'bad' : '') + '">' + (c.exitR > 0 ? '−' : '+') + fmt(Math.abs(c.exitR), 2) + ' R</dd></div>' : '') + '</dl>';
+  if (c.tips.length) h += '<ul class="lvl">' + c.tips.map(function(t){ return '<li><div class="row"><b>' + esc(t.title) + '</b><span class="pill bad">−' + fmt(t.eur, 0) + ' €</span></div><p class="hint" style="margin:4px 0 0">' + esc(t.text) + '</p></li>'; }).join('') + '</ul>';
+  else h += '<p class="hint good">' + (c.yes + c.no >= 3 ? 'Saubere Umsetzung: Nichts kostet dich in diesem Monat spürbar Geld.' : 'Noch zu wenig abgehakt, um Muster zu sehen.') + '</p>';
+  if (c.open) h += '<p class="hint">' + c.open + (c.open === 1 ? ' Signal ist' : ' Signale sind') + ' nicht abgehakt (unter „Echtes Geld“: gehandelt oder ausgelassen). Je vollständiger, desto genauer der Coach.</p>';
+  return h + more('Ein Hinweis kommt erst ab drei gleichartigen Fällen und nur, wenn es wirklich Geld kostet.', 'Ausgelassen: was die Signale laut Rückrechnung gebracht hätten, abzüglich Gebühren. Einstieg und Ausstieg: Abstand deiner echten Kauf- und Verkaufskurse zu den Signalkursen, umgerechnet auf den Schein (braucht Kurse, Bezugsverhältnis und KO-Schwelle beim Abhaken oder aus der PDF). Pause und Limit: Trades, die du gehandelt hast, obwohl die Strategie pausiert war oder ⚠️ in der Mitteilung stand.');
 }
 function viewReal(){
   var rows = realRows(), L2 = (V.trackLog || []).filter(function(x){ return x.r != null; });
@@ -3381,7 +3492,7 @@ function finderBuild(data){
       if (sim.filled && dist > 0.3) return;                              // zu weit gelaufen, nicht hinterherkaufen
       var news = (V.cal || []).filter(function(e){ var t = Date.parse(e.date); return e.impact === 'High' && i.ccy.indexOf(e.country) >= 0 && t > now - 15 * 60e3 && t < now + 60 * 60e3; })[0];
       var kz = killzones(i).some(function(z){ return bp.min >= z[0] && bp.min < z[1]; }) && bp.wd !== 'Sat' && bp.wd !== 'Sun';
-      var heat = +S.cfg.heat || 5, rp = +S.cfg.risk || 1, open = openRiskCount(), room = heat - open * rp;
+      var heat = +S.cfg.heat || 5, rp = riskNow(), open = openRiskCount(), room = heat - open * rp;
       var conf = g.conf ? g.conf.score : null, P = best.part, win = P.both.win;
       var checks = [
         { ok: proven, t: 'Stufe „' + best.name + '“: ' + (proven ? 'in 1. Hälfte, 2. Hälfte und Härtetest im Plus' : 'nicht in allen drei Zeiträumen im Plus (' + sgn(P.train.mean, 2) + ' / ' + sgn(P.test.mean, 2) + ' / ' + sgn(P.hold.mean, 2) + ' R)') + ', ' + P.both.n + ' Trades' },
@@ -3597,6 +3708,8 @@ function viewCockpit(){
   var orb = bx.sets && bx.sets['orbplay:top3_rvol2']; if (orb) row('ORB Stocks in Play', (bx.passed || []).some(function(k){ return /^orbplay:/.test(k); }), (bx.passed || []).some(function(k){ return /^orbplay:/.test(k); }) ? orb.all.win : null, null, '15:45 · wenige große Gewinner');
   row('Trade Finder (ab 16 Uhr)', S.cfg.push.finder !== false, null, null, 'beste aktuelle Setups ohne geprüfte Stufe · zum Selbstprüfen', 'bis 5/Tag', 'finder');
   if (V.bdf && V.bdf.best){ var db0 = V.bdf.best.filter(function(b){ return b.id === 'orb_15_trend_range__1045_v20'; })[0]; if (db0) row('DAX-Trend-Ausbruch (Daytrading)', S.cfg.push.dtb !== false, db0.all.win, null, 'Signal gegen 9:35, schließen 17:25 · Ø ' + sgn(db0.all.mean, 2) + ' R je Trade', null, 'dtb'); }
+  var dp0 = dpmSet(); if (dp0){ var fee0 = S.cfg.fee != null ? +S.cfg.fee : 1, be = dp0.all.mean > 0.02 ? (fee0 > 0 ? 2 * fee0 / (dp0.all.mean - 0.02) : 0) : null, rn = riskEur() * ddState().factor;
+    row('DAX-Nachmittag (Daytrading ab 16:30)', S.cfg.push.dpm !== false, dp0.all.win, null, 'Signal gegen 16:38, schließen 17:25 · Ø ' + sgn(dp0.all.mean, 2) + ' R je Trade' + (be ? ' · lohnt erst ab ' + fmt(Math.ceil(be), 0) + ' € Risiko je Trade (Ordergebühren)' + (rn && rn < be ? ', du riskierst ' + fmt(rn, 0) + ' €: darum keine Meldung' : '') : ''), null, 'dpm'); }
   if (V.bq && V.bq.week) row('Neu entdeckt (Sonntags-Suche)', (V.bq.live || []).length > 0, null, null, (V.bq.live || []).length ? (V.bq.live || []).length + ((V.bq.live || []).length === 1 ? ' Regel' : ' Regeln') + ' in Bewährung, halbe Größe' : 'bisher keine Regel hat alle Hürden genommen', null, 'auto');
   if (bm.depotPassed) row('Depot-Strategien', bm.depotPassed.length > 0, null, null, bm.depotPassed.length + (bm.depotPassed.length === 1 ? ' Regel' : ' Regeln') + ' · Wechsel am Monatsanfang', null, 'depot');
   if (!rows.length) return '';
@@ -3788,12 +3901,30 @@ function viewBackup(){
     '<details class="more"><summary>Neues Handy: mit Code wiederherstellen</summary><div class="fields f2" style="margin-top:8px"><label class="field txt"><span>Wiederherstellungs-Code</span><input id="bakcodein" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="40 Zeichen"></label></div><div class="btns"><button class="btn block" data-act="bakfromcode">Daten holen</button></div></details>' +
     '<input type="file" id="bakfile" accept=".json,application/json" hidden></section>';
 }
+// ================= Homescreen-Widget (Scriptable) =================
+function viewWidget(){
+  var on = S.cfg.push.on && base(), k = S.cfg.wk;
+  var h = '<section class="card" id="widget"><div class="row"><h2>Homescreen-Widget</h2>' + (k && on ? '<span class="pill good">eingerichtet</span>' : '') + '</div>' +
+    '<p class="hint" style="margin-top:4px">Web-Apps dürfen auf dem iPhone selbst keine Widgets anlegen. Mit der kostenlosen App Scriptable geht es trotzdem: Das Widget zeigt offene Positionen mit Stop, wartende Orders, den nächsten wichtigen Termin, die letzte Meldung und ob der Dienst läuft. Antippen öffnet Trade Check. iOS frischt Widgets etwa alle 10 bis 15 Minuten auf.</p>';
+  if (!on) return h + '<p class="hint warn">Das Widget holt seine Daten vom Push-Dienst. Schalte zuerst die Benachrichtigungen ein.</p></section>';
+  if (!k) return h + '<div class="btns"><button class="btn block" data-act="wkon">Widget einrichten</button></div></section>';
+  return h + '<ol class="hint" style="padding-left:20px;margin:8px 0"><li>Scriptable aus dem App Store laden.</li><li>Hier „Script kopieren“ tippen.</li><li>In Scriptable oben rechts auf + tippen, einfügen, oben den Namen in „Trade Check“ ändern, Fertig.</li><li>Home-Bildschirm lange drücken → + → Scriptable → klein oder mittel → Widget hinzufügen.</li><li>Das Widget lange drücken → Widget bearbeiten → Script: Trade Check.</li></ol>' +
+    '<div class="btns" style="flex-wrap:wrap"><button class="btn sm" data-act="wkcopy">Script kopieren</button><button class="btn sm ghost" data-act="wknew">Neuer Schlüssel</button><button class="btn sm ghost" data-act="wkoff">Widget ausschalten</button></div>' +
+    '<details class="more"><summary>Script anzeigen</summary><textarea id="wkscript" readonly rows="6" style="width:100%;margin-top:8px;font:12px ui-monospace,monospace">' + esc(wkScript()) + '</textarea></details>' +
+    '<p class="hint">Der Schlüssel im Script zeigt nur diese Übersicht und kann nichts ändern. „Neuer Schlüssel“ macht den alten sofort ungültig, danach das Script neu kopieren.</p></section>';
+}
+function wkScript(){ return widgetScript(base(), S.cfg.wk || '', location.origin, location.href.split('#')[0].split('?')[0]); }
+function wkMake(){
+  var a = new Uint8Array(16); crypto.getRandomValues(a); var k = Array.prototype.map.call(a, function(x){ return ('0' + x.toString(16)).slice(-2); }).join('');
+  return sha256hexB(k).then(function(h){ S.cfg.wk = k; S.cfg.wkh = h; save(); return syncTrade(); }).then(function(){ toast('Widget-Schlüssel gespeichert'); rerender(); }, function(e){ toast('Fehler: ' + (e && e.message || e)); rerender(); });
+}
 function viewMehr(){
   var c = S.cfg, p = c.push;
   var risks = [0.5, 1, 1.5, 2];
   var h = '<section class="card"><h2>Konto</h2><div class="fields f2"><label class="field"><span>Kontogröße (€)</span><input inputmode="decimal" data-cfg="account" value="' + esc(fmtIn(c.account, 0)) + '"></label><label class="field"><span>Gebühr je Order (€)</span><input inputmode="decimal" data-cfg="fee" value="' + esc(fmtIn(c.fee, 2)) + '"></label></div>' +
     '<div class="label" style="margin-top:14px">Risiko pro Trade</div><div class="seg" style="margin-top:6px">' + risks.map(function(r){ return '<button data-act="risk" data-r="' + r + '" aria-pressed="' + (+c.risk === r) + '">' + fmt(r, r % 1 ? 1 : 0) + ' %</button>'; }).join('') + '</div>' +
     '<p class="hint">Bei ' + eur(c.account) + ' riskierst du ' + eur(c.account * c.risk / 100) + ' pro Trade. Die Positionsgröße im Check richtet sich danach.</p>' +
+    '<label class="switch"><span>Rückgang-Schutz: ab 10 % unter dem Kontohoch halbes Risiko, bis der Rückgang wieder unter 5 % liegt</span><input type="checkbox" data-cfgb="ddGuard"' + (c.ddOff ? '' : ' checked') + '></label>' + (function(){ var d = ddState(); return d.on ? '<p class="hint warn">Aktiv: Konto ' + fmt(d.dd * 100, 1).replace(/,0$/, '') + ' % unter dem Hoch, du riskierst gerade ' + eur((+c.account || 0) * riskNow() / 100) + ' je Trade.</p>' : (!c.ddOff && d.peak ? '<p class="hint">Echtes Konto ' + eur(d.eq) + ', Hoch ' + eur(d.peak) + (d.dd > 0 ? ', ' + fmt(d.dd * 100, 1).replace(/,0$/, '') + ' % darunter' : '') + '. Grundlage sind deine Einträge unter „Echtes Geld“.</p>' : ''); })() +
     '<div class="label" style="margin-top:14px">Tagesgrenzen</div><div class="fields f2"><label class="field"><span>Max. Trades pro Tag</span><input inputmode="numeric" data-cfg="maxTrades" value="' + esc(c.maxTrades || 2) + '"></label><label class="field"><span>Schluss bei Tagesverlust (R)</span><input inputmode="decimal" data-cfg="maxLossR" value="' + esc(fmtIn(c.maxLossR || 2, 1)) + '"></label></div>' +
     '<div class="fields f2" style="margin-top:8px"><label class="field"><span>Max. Risiko aller offenen Trades (% vom Konto)</span><input inputmode="decimal" data-cfg="heat" value="' + esc(fmtIn(c.heat || 5, 1)) + '"></label></div>' +
     '<p class="hint">Wenn viele Signale gleichzeitig kommen, verkleinert jede Mitteilung das Risiko automatisch, damit alle offenen Trades zusammen diese Grenze nicht überschreiten. Ist sie voll, steht ⚠️ in der Mitteilung.</p>' +
@@ -3810,6 +3941,7 @@ function viewMehr(){
       (true ? '<label class="switch"><span>' + ((p.quality || 'creme') === 'creme' ? 'B+ ab 16:00 (nur Stufen mit mind. 50 % Gewinnern)' : 'B-Setups ab 16:00: nur Ampel grün + Premium/Discount + Liquiditätsziel + CRV ab 2') + '</span><input type="checkbox" data-push="bgreen"' + (p.bgreen !== false ? ' checked' : '') + '></label>' : '') +
       '<label class="switch"><span>ORB „Stocks in Play“ (US-Eröffnung)</span><input type="checkbox" data-push="orb"' + (p.orb !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>DAX-Trend-Ausbruch (Daytrading, Signal gegen 9:35)</span><input type="checkbox" data-push="dtb"' + (p.dtb !== false ? ' checked' : '') + '></label>' +
+      '<label class="switch"><span>DAX-Nachmittag (Daytrading, Signal gegen 16:38)</span><input type="checkbox" data-push="dpm"' + (p.dpm !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Swing RSI-2 (abends, Haltedauer Tage)</span><input type="checkbox" data-push="swing"' + (p.swing !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>IBS-Mean-Reversion (US-Märkte, kurz vor Schluss)</span><input type="checkbox" data-push="ibs"' + (p.ibs !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Abends höchstens 1 Signal (das stärkste aus IBS, Doppelsignal, Turnaround Tuesday, Drei Verlusttage)</span><input type="checkbox" data-push="ibsMax1"' + (p.ibsMax1 !== false ? ' checked' : '') + '></label>' +
@@ -3824,6 +3956,7 @@ function viewMehr(){
       : '<div class="btns"><button class="btn block" data-act="pon"' + (canPush ? '' : ' disabled') + '>Benachrichtigungen einschalten</button></div>') +
     (V.pushMsg ? '<p class="' + (/^Fehler|nicht/.test(V.pushMsg) ? 'err' : 'hint') + '">' + esc(V.pushMsg) + '</p>' : '') + '</section>';
   h += viewBackup();
+  h += viewWidget();
   h += '<section class="card"><h2>Datendienst</h2><p class="hint" style="margin-top:4px">' + (base() ? 'Verbunden: ' + esc(base().replace('https://', '')) : 'Wird automatisch aus deiner Value-Slip-Einrichtung übernommen …') + '</p>' +
     '<details class="more"><summary>Adresse selbst eintragen</summary><label class="field txt" style="margin-top:8px"><span>Adresse des Dienstes</span><input data-cfg="url" value="' + esc(c.url) + '" placeholder="https://value-slip.….workers.dev" autocapitalize="off" autocorrect="off"></label></details></section>';
   h += '<section class="card"><h2>Über Trade Check</h2><p class="hint" style="margin-top:4px">Trade Check bestätigt dein Setup mit Daten: Kurse von Yahoo Finance (bei manchen Börsen leicht verzögert), Termine von Forex Factory, Positionierung der Großspekulanten aus dem COT-Bericht der CFTC (wöchentlich). Die Entscheidung bleibt bei dir.</p>' +
@@ -3840,7 +3973,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, dtb: S.cfg.push.dtb !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: S.cfg.risk ? riskNow() : 0, dd: ddState().on ? ddState().dd : 0, wkh: S.cfg.wk && S.cfg.wkh ? S.cfg.wkh : '', heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, dtb: S.cfg.push.dtb !== false, dpm: S.cfg.push.dpm !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -3887,6 +4020,7 @@ function bind(root){
     if (el.dataset.f === 'entry' || el.dataset.f === 'stop'){ var kb = $('.kobox:not(.calc)'), i = instr(S.form.k); if (kb && i){ var w = document.createElement('div'); w.innerHTML = viewKo(S.form, i); var nb = w.firstChild; kb.replaceWith(nb); bind(nb); } } calcRefresh(); }); });
   $$('input[data-cfg]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.cfg; if (k === 'url'){ S.cfg.url = el.value.trim(); mem = {}; } else { var v = pnum(el.value); if (v >= 0) S.cfg[k] = v; } save(); if (['account', 'risk', 'heat', 'shadow', 'fee'].indexOf(k) >= 0) syncTrade().catch(function(){}); rerender(); }); });
   $$('input[data-watch]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.watch, i = S.watch.indexOf(k); if (el.checked && i < 0) S.watch.push(k); if (!el.checked && i >= 0) S.watch.splice(i, 1); save(); syncTrade(); }); });
+  $$('input[data-cfgb]', root).forEach(function(el){ el.addEventListener('change', function(){ if (el.dataset.cfgb === 'ddGuard') S.cfg.ddOff = !el.checked; save(); syncTrade().catch(function(){}); rerender(); }); });
   $$('input[data-push]', root).forEach(function(el){ el.addEventListener('change', function(){ S.cfg.push[el.dataset.push] = el.checked; save(); syncTrade(); }); });
   $$('input[data-fib]', root).forEach(function(el){ el.addEventListener('input', function(){ S.fib[el.dataset.fib] = el.value; save(); }); });
 }
@@ -3994,6 +4128,10 @@ function onAct(e){
   if (a === 'closego') return closeTrade(el.dataset.id, pnum($('#xp').value));
   if (a === 'tdel'){ S.trades = S.trades.filter(function(x){ return x.id !== el.dataset.id; }); save(); return rerender(); }
   if (a === 'csv') return csv();
+  if (a === 'wkon' || a === 'wknew') return wkMake();
+  if (a === 'wkoff'){ delete S.cfg.wk; delete S.cfg.wkh; save(); syncTrade().catch(function(){}); toast('Widget ausgeschaltet'); return rerender(); }
+  if (a === 'wkcopy'){ var sc = wkScript(); return (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(sc) : Promise.reject()).then(function(){ toast('Script kopiert, jetzt in Scriptable einfügen'); }, function(){ var ta = $('#wkscript'); if (ta){ ta.closest('details').open = true; ta.focus(); ta.select(); } toast('Bitte das Script markieren und kopieren'); }); }
+  if (a === 'coachm'){ V.coachM = el.dataset.m; return rerender(); }
   if (a === 'risk'){ S.cfg.risk = +el.dataset.r; save(); syncTrade().catch(function(){}); return rerender(); }
   if (a === 'lead'){ S.cfg.push.lead = +el.dataset.m; save(); syncTrade(); return rerender(); }
   if (a === 'pon') return pushOn();
@@ -4009,6 +4147,7 @@ try { var qs = new URLSearchParams(location.search).get('sig'); if (qs) V.wantSi
 fetch('../dienst/backtest-fx.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.tf){ V.bf = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-scalp.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bs = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-daytrade.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.tested){ V.bd = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
+fetch('../dienst/backtest-daytrade-pm.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.best){ V.bdp = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-daytrade-focus.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.best){ V.bdf = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-suche.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.week){ V.bq = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-stocks.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.korb){ V.bk = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});

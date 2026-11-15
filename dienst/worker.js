@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '9b36ba3068';
+const WORKER_VER = '206f474049';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3149,11 +3149,11 @@ function riskBudget(open, y, cfg){
   return { cluster: c, risk: Math.max(0, Math.round(room * 100) / 100), full: room < riskP * 0.25, why: why, same: same, tot: Math.round(tot * 100) / 100, cl: Math.round(cl * 100) / 100, capC: capC, heat: heat, riskP: riskP };
 }
 // ================= Strategie-Gruppen fuer Schatten-Bot und Live-Pruefung =================
-var GROUP_NAMES = { dtb: 'DAX-Trend-Ausbruch', ibs: 'IBS (US)', laender: 'IBS Länder-ETFs', tt: 'Turnaround Tuesday', d3: 'Drei Verlusttage', rsi2: 'Swing RSI-2', creme: 'Crème (Intraday)', bplus: 'B+ (Intraday)', intra: 'Intraday', finder: 'Trade Finder', orb: 'ORB', auto: 'Neu entdeckt' };
+var GROUP_NAMES = { dtb: 'DAX-Trend-Ausbruch', dpm: 'DAX-Nachmittag', ibs: 'IBS (US)', laender: 'IBS Länder-ETFs', tt: 'Turnaround Tuesday', d3: 'Drei Verlusttage', rsi2: 'Swing RSI-2', creme: 'Crème (Intraday)', bplus: 'B+ (Intraday)', intra: 'Intraday', finder: 'Trade Finder', orb: 'ORB', auto: 'Neu entdeckt' };
 function groupOf(x){
   if (x.g) return x.g;
   var c = String(x.cls || '');
-  return c === 'DAX-Ausbruch' ? 'dtb' : c === 'IBS' ? 'ibs' : c === 'Turnaround Tuesday' ? 'tt' : c === 'Drei Verlusttage' ? 'd3' : /^Swing/.test(c) ? 'rsi2' : c === 'Finder' ? 'finder' : c === 'ORB' ? 'orb' : /Crème|Creme/.test(c) ? 'creme' : c === 'B+' ? 'bplus' : 'intra';
+  return c === 'DAX-Ausbruch' ? 'dtb' : c === 'DAX-Nachmittag' ? 'dpm' : c === 'IBS' ? 'ibs' : c === 'Turnaround Tuesday' ? 'tt' : c === 'Drei Verlusttage' ? 'd3' : /^Swing/.test(c) ? 'rsi2' : c === 'Finder' ? 'finder' : c === 'ORB' ? 'orb' : /Crème|Creme/.test(c) ? 'creme' : c === 'B+' ? 'bplus' : 'intra';
 }
 function groupName(g, x){ return /^auto:/.test(g) ? 'Neu: ' + ((x && x.gn) || g.slice(5)) : (GROUP_NAMES[g] || g); }
 function dailyGroup(g){ return /^(ibs|laender|tt|d3|rsi2)$/.test(g) || /^auto:/.test(g); }
@@ -3363,6 +3363,87 @@ function pairTrFills(fills){
   });
   return out.sort(function(a, b){ return (a.sellAt || a.buyAt) - (b.sellAt || b.buyAt); });
 }
+// ================= Rueckgang-Schutz: echtes Konto mehr als 10 % unter dem Hoch -> Risiko halbieren, zurueck erst unter 5 % =================
+// start: Kontogroesse am Anfang, pnl: Ergebnisse in Euro in zeitlicher Reihenfolge
+function ddGuard(start, pnl, cfg){
+  cfg = cfg || {}; var lim = cfg.lim > 0 ? cfg.lim : 0.10, back = cfg.back > 0 ? cfg.back : 0.05, eq = +start || 0, peak = eq, on = false, since = null, maxDd = 0, k = 0;
+  if (!(eq > 0)) return { on: false, dd: 0, eq: eq, peak: peak, maxDd: 0, since: null, factor: 1 };
+  (pnl || []).forEach(function(x){ var v = typeof x === 'number' ? x : +(x && x.eur) || 0, t = x && x.t; k++; eq += v; if (eq > peak) peak = eq;
+    var dd = peak > 0 ? 1 - eq / peak : 0; if (dd > maxDd) maxDd = dd;
+    if (!on && dd >= lim - 1e-12){ on = true; since = t || k; } else if (on && dd < back){ on = false; since = null; } });
+  var dd = peak > 0 ? Math.max(0, 1 - eq / peak) : 0;
+  return { on: on, dd: Math.round(dd * 10000) / 10000, eq: Math.round(eq * 100) / 100, peak: Math.round(peak * 100) / 100, maxDd: Math.round(maxDd * 10000) / 10000, since: since, factor: on ? 0.5 : 1, lim: lim, back: back,
+    toBack: on ? Math.round((peak * (1 - back) - eq) * 100) / 100 : 0 };
+}
+// ================= Fehler-Coach: wo Disziplin Geld kostet =================
+// items: je gemeldetem Signal { t, g, gn, r (R der Rueckrechnung), dec: 'ja'|'nein'|null, eur (echt), entryR, exitR (Kosten in R, positiv = schlechter), pz (pausiert), full (Limit voll) }
+// own: eigene Trades ausserhalb der Signale [{ t, eur }]; re: Risiko in Euro je Trade; cost: Gebuehren je Trade
+function coachStats(items, own, re, cost){
+  var de = function(v, d){ return String(Math.round(v * Math.pow(10, d)) / Math.pow(10, d)).replace('.', ','); };
+  re = +re || 0; cost = +cost || 0; items = items || []; own = own || [];
+  var done = items.filter(function(x){ return x.r != null; }), yes = done.filter(function(x){ return x.dec === 'ja'; }), no = done.filter(function(x){ return x.dec === 'nein'; }), open = done.filter(function(x){ return !x.dec; });
+  var sum = function(a, f){ return a.reduce(function(s, x){ return s + (f(x) || 0); }, 0); }, eurOf = function(x){ return x.r * re - cost; };
+  var noW = no.filter(function(x){ return x.r > 0; }), yesW = yes.filter(function(x){ return x.r > 0; });
+  var skipR = sum(no, function(x){ return x.r; }), skipEur = sum(no, eurOf);
+  var en = yes.filter(function(x){ return x.entryR != null; }), ex = yes.filter(function(x){ return x.exitR != null; });
+  var entryR = en.length ? sum(en, function(x){ return x.entryR; }) / en.length : null, exitR = ex.length ? sum(ex, function(x){ return x.exitR; }) / ex.length : null;
+  var pz = yes.filter(function(x){ return x.pz; }), full = yes.filter(function(x){ return x.full; }), real = function(x){ return x.eur != null ? x.eur : eurOf(x); };
+  var byG = {}; no.forEach(function(x){ var k = x.gn || x.g || 'andere'; byG[k] = byG[k] || { n: 0, r: 0 }; byG[k].n++; byG[k].r += x.r; });
+  var topG = Object.keys(byG).map(function(k){ return { name: k, n: byG[k].n, r: Math.round(byG[k].r * 100) / 100 }; }).sort(function(a, b){ return b.r - a.r; })[0] || null;
+  var out = { n: done.length, yes: yes.length, no: no.length, open: open.length, skipR: Math.round(skipR * 100) / 100, skipEur: Math.round(skipEur), skipWin: no.length ? noW.length / no.length : null, yesWin: yes.length ? yesW.length / yes.length : null,
+    entryR: entryR != null ? Math.round(entryR * 100) / 100 : null, nEntry: en.length, exitR: exitR != null ? Math.round(exitR * 100) / 100 : null, nExit: ex.length,
+    pz: pz.length, pzEur: Math.round(sum(pz, real)), full: full.length, fullEur: Math.round(sum(full, real)), own: own.length, ownEur: Math.round(sum(own, function(x){ return +x.eur; })), topSkip: topG, tips: [] };
+  var tip = function(eur, title, text){ out.tips.push({ eur: Math.round(eur), title: title, text: text }); };
+  if (no.length >= 3 && skipEur > 0) tip(skipEur, 'Ausgelassene Signale', 'Die ' + no.length + ' ausgelassenen Signale hätten zusammen ' + de(skipR, 1) + ' R gebracht' + (out.skipWin != null && out.yesWin != null && out.skipWin > out.yesWin + 0.1 ? ', und unter ihnen waren mehr Gewinner als unter deinen gehandelten' : '') + '.' + (topG && topG.r > 0 ? ' Am meisten verpasst: ' + topG.name + ' (' + topG.n + '×).' : '') + ' Wenn du nicht handeln kannst, ist das okay. Aber nicht nach Gefühl aussortieren: entweder eine Strategie ganz abschalten oder jedes Signal nehmen.');
+  if (en.length >= 3 && entryR > 0.15) tip(entryR * re * en.length, 'Später Einstieg', 'Dein Einstieg liegt im Schnitt ' + de(entryR, 2) + ' R schlechter als der Signalkurs (Spread, Aufgeld, Zögern). Gleich nach der Mitteilung kaufen und eine Limit-Order knapp über dem Briefkurs setzen, nicht dem Kurs hinterherlaufen.');
+  if (ex.length >= 3 && exitR > 0.15) tip(exitR * re * ex.length, 'Ausstieg weicht vom Plan ab', 'Beim Verkauf verlierst du im Schnitt ' + de(exitR, 2) + ' R gegenüber dem geplanten Ausstieg. Meist heißt das: zu früh raus oder den Stop nicht als Order gelegt. Stop und Ziel direkt nach dem Kauf als Order bei Trade Republic eintragen.');
+  var pzE = sum(pz, real); if (pz.length >= 1 && pzE < 0) tip(-pzE, 'Trotz Pause gehandelt', pz.length + (pz.length === 1 ? ' Trade' : ' Trades') + ' aus pausierten Strategien: ' + Math.round(pzE) + ' €. Pausiert heißt: Die Strategie liegt live deutlich unter der Rückrechnung. Nur beobachten, bis die Pause aufgehoben ist.');
+  var fuE = sum(full, real); if (full.length >= 1 && fuE < 0) tip(-fuE, 'Über dem Risiko-Limit', full.length + (full.length === 1 ? ' Trade' : ' Trades') + ' bei vollem Konto-Risiko: ' + Math.round(fuE) + ' €. Wenn ⚠️ in der Mitteilung steht, steckt schon genug in derselben Wette.');
+  var oE = sum(own, function(x){ return +x.eur; }); if (own.length >= 3 && oE < 0) tip(-oE, 'Eigene Trades ohne Signal', own.length + ' eigene Trades außerhalb der Signale: ' + Math.round(oE) + ' €. Die belegten Strategien bringen mehr als Bauchgefühl. Eigene Ideen erst im Check prüfen oder im Schatten laufen lassen.');
+  out.tips.sort(function(a, b){ return b.eur - a.eur; });
+  return out;
+}
+// ================= Homescreen-Widget fuer Scriptable (iPhone) =================
+function widgetScript(url, key, origin, app){
+  var q = function(s){ return JSON.stringify(String(s)); };
+  return [
+    '// Trade Check Widget (Scriptable). Klein oder mittel auf den Home-Bildschirm legen, Script: Trade Check.',
+    '// Der Schlüssel zeigt nur diese Übersicht, er kann nichts ändern. Neuer Schlüssel in Trade Check unter Mehr → Widget macht ihn ungültig.',
+    'const URL_ = ' + q(String(url).replace(/\/+$/, '') + '/trade/widget') + ', KEY = ' + q(key) + ', ORIGIN = ' + q(origin) + ', APP = ' + q(app || String(origin) + '/') + ';',
+    'const C = { bg: new Color("#0e1116"), fg: new Color("#e8edf3"), mut: new Color("#8a96a6"), good: new Color("#34c38f"), bad: new Color("#f06b6b"), warn: new Color("#f2b84b") };',
+    'const hm = (ms) => { const d = new Date(ms); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); };',
+    'const px = (v) => v == null ? "" : Number(v).toLocaleString("de-DE", { maximumFractionDigits: Math.abs(v) >= 100 ? 2 : 4 });',
+    'async function load() {',
+    '  const fm = FileManager.local(), cache = fm.joinPath(fm.documentsDirectory(), "tradecheck-widget.json");',
+    '  try { const r = new Request(URL_); r.headers = { Origin: ORIGIN, "X-Widget-Key": KEY }; r.timeoutInterval = 12; const j = await r.loadJSON();',
+    '    if (r.response && r.response.statusCode === 200 && j && j.now) { fm.writeString(cache, JSON.stringify(j)); return j; } return { err: (j && j.message) || "Fehler " + (r.response ? r.response.statusCode : "") };',
+    '  } catch (e) { if (fm.fileExists(cache)) { const j = JSON.parse(fm.readString(cache)); j.stale = true; return j; } return { err: "Keine Verbindung" }; }',
+    '}',
+    'function line(w, txt, color, size, bold) { const t = w.addText(txt); t.textColor = color || C.fg; t.font = bold ? Font.semiboldSystemFont(size || 12) : Font.systemFont(size || 12); t.lineLimit = 1; t.minimumScaleFactor = 0.7; return t; }',
+    'async function build(d, fam) {',
+    '  const w = new ListWidget(); w.backgroundColor = C.bg; w.url = APP; w.setPadding(12, 12, 12, 12); w.refreshAfterDate = new Date(Date.now() + 10 * 60e3);',
+    '  const big = fam !== "small", head = w.addStack(); head.centerAlignContent(); const ti = head.addText("Trade Check"); ti.font = Font.boldSystemFont(13); ti.textColor = C.fg; head.addSpacer();',
+    '  if (d.err) { const s = head.addText("●"); s.textColor = C.bad; s.font = Font.systemFont(11); w.addSpacer(6); line(w, d.err, C.bad, 12); return w; }',
+    '  const st = head.addText(d.stale ? "alt" : d.ok ? "●" : "⚠︎"); st.font = Font.systemFont(11); st.textColor = d.stale ? C.mut : d.ok ? C.good : C.warn;',
+    '  w.addSpacer(4);',
+    '  if (!d.ok) line(w, d.age == null ? "Dienst meldet sich nicht" : "Dienst seit " + d.age + " Min. still", C.warn, 11);',
+    '  if (d.dd > 0) line(w, "Risiko halbiert: Konto " + Math.round(d.dd * 100) + " % unter Hoch", C.warn, 11);',
+    '  const open = d.open || [], wait = d.wait || [], max = big ? 3 : 2;',
+    '  line(w, open.length ? open.length + (open.length === 1 ? " Position offen" : " Positionen offen") : "Keine offene Position", open.length ? C.fg : C.mut, 12, true);',
+    '  open.slice(0, max).forEach((p) => line(w, (p.d > 0 ? "▲ " : "▼ ") + p.n + (big && p.s ? "  Stop " + px(p.s) : ""), p.d > 0 ? C.good : C.bad, 11));',
+    '  if (wait.length) { w.addSpacer(3); wait.slice(0, big ? 2 : 1).forEach((p) => line(w, "⏳ " + p.n + " " + (p.d > 0 ? "Kauf über " : "Verkauf unter ") + px(p.e) + (p.until ? " bis " + hm(p.until) : ""), C.warn, 11)); }',
+    '  w.addSpacer();',
+    '  if (d.next) line(w, "📅 " + hm(d.next.at) + " " + d.next.c + " " + d.next.t, C.mut, 10);',
+    '  if (big && d.last && d.last[0]) line(w, "✉︎ " + hm(d.last[0].at) + " " + d.last[0].title, C.mut, 10);',
+    '  if (d.paused && d.paused.length) line(w, "⏸ " + d.paused.join(", "), C.mut, 10);',
+    '  line(w, "Stand " + hm(d.now), C.mut, 9);',
+    '  return w;',
+    '}',
+    'const data = await load(), fam = config.widgetFamily || "medium", widget = await build(data, fam);',
+    'if (config.runsInWidget) Script.setWidget(widget); else await (fam === "small" ? widget.presentSmall() : widget.presentMedium());',
+    'Script.complete();'
+  ].join('\n');
+}
   return { newsName, newsKind, newsSurprise, newsCalls, newsNum, newsText, riskCluster, riskBudget, groupOf, groupName, dailyGroup, logSym, shadowRun, shadowCost, liveCheck, expOf, ruleSeries, ruleHit, ruleExit, ruleText, ruleId, smaAt, ibs, trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
@@ -3502,6 +3583,11 @@ async function tradeRoute(request, headers, env, nowMs) {
     const h = (await env.VS.get('trade', 'json')) || {}, age = h.hb ? Math.round((nowMs - h.hb) / 60e3) : null, wd = h.wd || {};
     return jsonData({ ok: age != null && age < 45 && !wd.dataSent, age, push: !!(h.on && validSub(h.sub)), data: !wd.dataSince, dataSince: wd.dataSince || null, news: wd.tv || null, gh: (wd.gh || []).map((g) => g.name + ': ' + g.c), ver: WORKER_VER }, headers);
   }
+  if (path === '/trade/widget' && request.method === 'GET') {
+    const k = request.headers.get('X-Widget-Key') || '', h = (await env.VS.get('trade', 'json')) || {};
+    if (!/^[a-f0-9]{32}$/.test(k) || !h.wkh || h.wkh !== (await sha256hex(k))) return json(403, 'Widget-Schlüssel ungültig. In Trade Check unter Mehr → Homescreen-Widget das Script neu kopieren.', headers);
+    return jsonData(await widgetData(env, h, nowMs), headers);
+  }
   if (request.method !== 'POST') return json(405, 'Method not allowed', headers);
   let b;
   try { b = await readBody(request); } catch (e) { return json(400, 'Ungültige Anfrage', headers); }
@@ -3523,9 +3609,9 @@ async function tradeRoute(request, headers, env, nowMs) {
       scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix', 'creme'].includes(b.quality) ? b.quality : 'creme',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
-      swing: b.swing !== false, dtb: b.dtb !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, tight: !!b.tight, ibsMax1: !!b.ibsMax1, ibsCand: t.ibsCand || null, ibsPick: t.ibsPick || null, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
+      swing: b.swing !== false, dtb: b.dtb !== false, dpm: b.dpm !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, tight: !!b.tight, ibsMax1: !!b.ibsMax1, ibsCand: t.ibsCand || null, ibsPick: t.ibsPick || null, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null),
-      shadowCap: num(b.shadow, 100, 1e7, 1000), fee: num(b.fee, 0, 20, 1), newsRes: b.newsRes !== false });
+      shadowCap: num(b.shadow, 100, 1e7, 1000), fee: num(b.fee, 0, 20, 1), newsRes: b.newsRes !== false, dd: num(b.dd, 0, 1, 0), wkh: typeof b.wkh === 'string' && /^[a-f0-9]{64}$/.test(b.wkh) ? b.wkh : null });
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
@@ -3696,6 +3782,28 @@ async function dtbCfg(env, nowMs) {
     return c.data || {};
   } catch (e) { return {}; }
 }
+// DAX-Nachmittag: Kennzahlen aus der Nachmittags-Forschung (Spanne 15:30-16:30, Richtung des Tages, Order ab 16:40, Schluss 17:25)
+const DPM_ID = 'pm_930_60_gap_range__1045';
+async function dpmCfg(env, nowMs) {
+  try {
+    const c = await cachedKV(env, 'mkt:dpm', 12 * 3600e3, nowMs, async () => {
+      if (!env.PAGES_URL) return {};
+      const r = await fetch(env.PAGES_URL + 'dienst/backtest-daytrade-pm.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA });
+      if (!r.ok) return {};
+      const j = await r.json(), ok = (j.passed || []).some((x) => x.id === DPM_ID), b = (j.best || []).find((x) => x.id === DPM_ID);
+      return ok && b && b.all && b.all.n ? { n: b.all.n, win: b.all.win, mean: b.all.mean, t: b.all.t, sd: b.all.t ? b.all.mean / b.all.t * Math.sqrt(b.all.n) : null, p: b.p, stress: b.stress, years: b.years } : {};
+    });
+    return c.data || {};
+  } catch (e) { return {}; }
+}
+// Knock-out-Hinweis fuer DAX-Signale: Schwelle knapp hinter dem Stop, Scheinpreis bei Bezugsverhaeltnis 100, Stueckzahl fuers Risiko
+function koHint(t, p) {
+  const r = Math.abs(p.px - p.stop), k2 = p.stop - p.dir * 0.15 * r, lo = Math.min(p.stop, k2), hi = Math.max(p.stop, k2), price = Math.abs(p.px - (p.stop + k2) / 2) / 100;
+  const eur = t.acct > 0 && p.risk > 0 && !p.skip ? t.acct * p.risk / 100 : null, n = eur && price > 0 ? Math.floor(eur / price) : null, f0 = (x) => Math.round(x).toLocaleString('de-DE');
+  return ' In Trade Republic: DAX → Derivate → Knock-out ' + (p.dir > 0 ? 'Long' : 'Short') + ', KO-Schwelle zwischen ' + f0(lo) + ' und ' + f0(hi) + '. So ein Schein kostet bei Bezugsverhältnis 100 etwa ' + price.toFixed(2).replace('.', ',') + ' €' + (n ? ', für dein Risiko etwa ' + n + ' Stück' : '') + '. Die KO-Schwelle ist dann dein Stop.';
+}
+// Gebuehren in R: Kauf und Verkauf je eine Ordergebuehr, geteilt durch das Risiko in Euro
+function feeR(t) { return t.acct > 0 && t.riskP > 0 ? 2 * (t.fee != null ? t.fee : 1) / (t.acct * t.riskP / 100) : null; }
 const AUTO_NAMES = { '^GSPC': 'S&P 500', '^NDX': 'Nasdaq 100', '^DJI': 'Dow Jones', '^RUT': 'Russell 2000', XLK: 'US-Technologie', XLF: 'US-Finanzen', XLE: 'US-Energie', XLV: 'US-Gesundheit', XLY: 'US-Zykl. Konsum', XLP: 'US-Basiskonsum', XLI: 'US-Industrie', XLB: 'US-Rohstoffe', XLU: 'US-Versorger' };
 // Laender-ETFs (US-gehandelt), auf denen IBS als Gruppe bestanden hat
 const LAENDER = { EEM: 'Schwellenländer', EWZ: 'Brasilien', EWJ: 'Japan', FXI: 'China', EFA: 'Industrieländer ohne USA', EWG: 'Deutschland (US-ETF)', EWY: 'Südkorea', EWT: 'Taiwan', INDA: 'Indien', EWW: 'Mexiko' };
@@ -3715,6 +3823,19 @@ function nyseDaysLeftInMonth(key) {
 }
 // Produkt bei Trade Republic und Risiko fuer diesen Trade: Obergrenze fuer alle offenen Positionen zusammen (heat, % vom Konto)
 // Offene Positionen aller Strategien mit ihrem Risiko (% vom Konto); ausgelassene (skip) zaehlen nicht
+// Kurzuebersicht fuers Homescreen-Widget: nur lesen, keine Schluessel, keine Kontodaten
+async function widgetData(env, t, nowMs) {
+  const age = t.hb ? Math.round((nowMs - t.hb) / 60e3) : null, nm = (p) => String(p.name || p.k || '').slice(0, 18);
+  const open = allPos(t).filter((p) => p.state === 'offen' && !p.skip).sort((a, b) => (b.fillAt || b.at || 0) - (a.fillAt || a.at || 0)).slice(0, 6).map((p) => ({ n: nm(p), d: p.dir === -1 ? -1 : 1, e: +p.entry || null, s: +p.stop || null, at: p.fillAt || p.at || null }));
+  const wait = allPos(t).filter((p) => p.state === 'wartet' && !p.skip).slice(0, 4).map((p) => ({ n: nm(p), d: p.dir === -1 ? -1 : 1, e: +(p.px || p.entry) || null, s: +p.stop || null, until: p.expires || p.exp || null }));
+  let next = null;
+  try { const ccys = t.ccys && t.ccys.length ? t.ccys : ['USD', 'EUR'], cal = (await getCalendar(env, nowMs)).data || [];
+    const e = cal.filter((x) => x.impact === 'High' && ccys.includes(x.country) && Date.parse(x.date) > nowMs).sort((a, b) => Date.parse(a.date) - Date.parse(b.date))[0];
+    if (e) next = { t: String(e.title || '').slice(0, 40), c: e.country, at: Date.parse(e.date) }; } catch (e) { next = null; }
+  const last = (t.log || []).slice(-3).reverse().map((x) => ({ at: x.at, title: String(x.title || '').slice(0, 60) }));
+  const paused = Object.keys((t.lc && t.lc.paused) || {}).map((g) => TL.groupName(g));
+  return { ok: age != null && age < 45 && !(t.wd && t.wd.dataSince), age, push: !!(t.on && validSub(t.sub)), open, wait, next, last, paused, dd: t.dd || 0, now: nowMs };
+}
 function allPos(t) { return [].concat(t.swingPos || [], t.ibsPos || [], t.autoPos || [], t.dtPos || [], t.track || []); }
 function openRiskOf(t, except) {
   return allPos(t).filter((p) => p.id !== except && !p.skip && (p.state === 'offen' || p.state === 'wartet'))
@@ -3731,7 +3852,7 @@ function riskTxt(t, stopPct, y, pid) {
   const cut = b.risk < rp0 ? ' Nur ' + pc(b.risk) + ' % Risiko statt ' + pc(rp0) + ' % (' + (b.why === 'heat' ? 'Gesamtlimit ' + hs + ' %' : 'Bündel') + ').' : '';
   if (!(t.acct > 0 && t.riskP > 0)) return bund + cut;
   const eur = Math.round(t.acct * b.risk / 100), stake = stopPct > 0 ? Math.round(eur / (stopPct / 100) / 10) * 10 : null;
-  return bund + cut + ' Risiko: ' + eur + ' €' + (stake ? ', ohne Hebel ca. ' + stake.toLocaleString('de-DE') + ' € Positionsgröße' : '') + '.';
+  return bund + cut + ' Risiko: ' + eur + ' €' + (stake ? ', ohne Hebel ca. ' + stake.toLocaleString('de-DE') + ' € Positionsgröße' : '') + '.' + (t.dd > 0 ? ' Rückgang-Schutz: halbes Risiko, Konto ' + String(Math.round(t.dd * 1000) / 10).replace('.', ',') + ' % unter dem Hoch.' : '');
 }
 function tradeTxt(t, ins, stopPct, pid) {
   const pr = TL.trProduct(ins.y), r = riskTxt(t, stopPct, ins.y, pid);
@@ -3777,7 +3898,7 @@ async function runTrade(env, nowMs) {
     if (!b || !(b.n >= 30) || !(b.meanR > s.meanR)) return '';
     return ' VIX ' + vixMemo.toFixed(1).replace('.', ',') + ': Bei dieser Unruhe brachte das Signal in der Rückrechnung im Schnitt +' + b.meanR.toFixed(2).replace('.', ',') + ' R statt +' + s.meanR.toFixed(2).replace('.', ',') + ' R. Mehr Angst im Markt heißt hier mehr Vorteil, also kein Grund, es auszulassen.';
   };
-  const logTrade = (o) => { Object.keys(o).forEach((k) => { if (o[k] === undefined) delete o[k]; }); t.trackLog = (t.trackLog || []).concat([o]).slice(-400); };
+  const logTrade = (o) => { Object.keys(o).forEach((k) => { if (o[k] === undefined) delete o[k]; }); if (o.g && t.lc && t.lc.paused && t.lc.paused[o.g] && t.lc.paused[o.g] <= (o.t || nowMs)) o.pz = 1; t.trackLog = (t.trackLog || []).concat([o]).slice(-400); };
   const ds = { ok: 0, fail: 0 };
   // 1) Wichtige Termine kurz vorher
   let cal = null;
@@ -4136,7 +4257,7 @@ async function runTrade(env, nowMs) {
   // Stop auf der anderen Seite der Spanne (= KO-Schwelle), kein festes Ziel, Schluss 17:25. Ist der Kurs beim Signal schon durch: nicht hinterher.
   if (t.dtb !== false && weekday && clk.min >= 9 * 60 + 15 && clk.min < 17 * 60 + 45) {
     t.dtPos = Array.isArray(t.dtPos) ? t.dtPos.filter((x) => nowMs - x.at < 5 * 86400e3) : [];
-    let p = t.dtPos.find((x) => x.day === dayKey);
+    let p = t.dtPos.find((x) => x.day === dayKey && !x.pm);
     const m5 = (p && (p.state === 'wartet' || p.state === 'offen')) || (!p && clk.min < 10 * 60 + 30) ? await candlesOf('^GDAXI', '5m', '1d') : null;
     const bars = (m5 || []).map((x) => { const bf = TL.berlinFast(x.t); return Object.assign({ m: bf.min, key: bf.key }, x); }).filter((x) => x.key === dayKey);
     const fp = (x) => (+x).toFixed(1).replace('.', ',');
@@ -4150,14 +4271,15 @@ async function runTrade(env, nowMs) {
           const dir = prevC > sma ? 1 : -1, hi = Math.max(...rg.map((x) => x.h)), lo = Math.min(...rg.map((x) => x.l)), buf = 0.03 * atr;
           const px = dir > 0 ? hi + buf : lo - buf, stop = dir > 0 ? lo - buf : hi + buf, risk = Math.abs(px - stop), lastPx = bars[bars.length - 1].c;
           const late = (lastPx - px) * dir > 0, bad = !(risk > 3.6 && risk <= 3 * atr), st = await dtbCfg(env, nowMs);
-          p = { id: 'DAX:dtb:' + dayKey, day: dayKey, k: 'DAX', y: '^GDAXI', name: 'DAX', cls: 'DAX-Ausbruch', g: 'dtb', dir, px, stop, rpts: risk, hi, lo, atr, at: nowMs, state: late || bad ? 'aus' : 'wartet', why: late ? 'schon durchgelaufen' : bad ? 'Spanne untypisch' : null,
+          p = { id: 'DAX:dtb:' + dayKey, day: dayKey, k: 'DAX', y: '^GDAXI', name: 'DAX', cls: 'DAX-Ausbruch', g: 'dtb', dir, px, stop, rpts: risk, hi, lo, atr, at: nowMs, exp: nowMs + (12 * 60 + 35 - clk.min) * 60e3, state: late || bad ? 'aus' : 'wartet', why: late ? 'schon durchgelaufen' : bad ? 'Spanne untypisch' : null,
             ex: st.n ? { win: st.win, mean: st.mean, sd: st.sd, unit: 'R', n: st.n } : null };
           t.dtPos.push(p); dirty = true;
           if (p.state === 'wartet') {
+            const rt = riskTxt(t, 0, '^GDAXI', p.id);
             await send('d:' + p.id, { g: 'dtb', pw: st.n ? { n: st.n, win: st.win } : null, d: { k: 'DAX', dir, entry: px, stop, kind: 'dtb' }, title: '⚡ DAX-Trend-Ausbruch · ' + (dir > 0 ? 'Long' : 'Short'),
               body: 'DAX ' + (dir > 0 ? 'Long' : 'Short') + ' (Trend-Ausbruch): Eröffnungsspanne 9:00 bis 9:15 von ' + fp(lo) + ' bis ' + fp(hi) + ', der Trend zeigt ' + (dir > 0 ? 'nach oben' : 'nach unten') + '. ' +
-                (dir > 0 ? 'Kauf-Stopp bei ' : 'Verkaufs-Stopp bei ') + fp(px) + ', Stop ' + fp(stop) + ' (' + fp(risk) + ' Punkte). Am einfachsten: Knock-out mit Schwelle bei ' + fp(stop) + ' oder knapp dahinter, dann ist der Stop eingebaut. Kein festes Ziel: um 17:25 Uhr schließen, ich erinnere dich. Order gilt bis 12:35, sonst löschen.' +
-                riskTxt(t, 0, '^GDAXI', p.id) + (st.n ? ' Rückrechnung 2013 bis heute mit 20 Minuten Verzögerung: ' + st.n + ' Trades, ' + Math.round(st.win * 100) + ' % Gewinner, Ø +' + st.mean.toFixed(2).replace('.', ',') + ' R nach Kosten. Wenige Gewinner bringen das Plus: viele kleine Verluste sind normal.' : ''), tag: 'dtb', url: './' });
+                (dir > 0 ? 'Kauf-Stopp bei ' : 'Verkaufs-Stopp bei ') + fp(px) + ', Stop ' + fp(stop) + ' (' + fp(risk) + ' Punkte).' + koHint(t, p) + ' Kein festes Ziel: um 17:25 Uhr schließen, ich erinnere dich. Order gilt bis 12:35, sonst löschen.' +
+                rt + (st.n ? ' Rückrechnung 2013 bis heute mit 20 Minuten Verzögerung: ' + st.n + ' Trades, ' + Math.round(st.win * 100) + ' % Gewinner, Ø +' + st.mean.toFixed(2).replace('.', ',') + ' R nach Kosten. Wenige Gewinner bringen das Plus: viele kleine Verluste sind normal.' : ''), tag: 'dtb', url: './' });
           }
         }
       }
@@ -4176,6 +4298,55 @@ async function runTrade(env, nowMs) {
         const hit = bars.find((x) => x.m >= p.fillM && (p.dir > 0 ? x.l <= p.stop : x.h >= p.stop));
         if (hit) await log('stop', p.dir > 0 ? Math.min(p.stop, hit.o) : Math.max(p.stop, hit.o), '❌ DAX-Trend-Ausbruch: Stop bei ' + fp(p.stop) + ' erreicht');
         else if (clk.min >= 17 * 60 + 25) await log(((bars[bars.length - 1].c - p.entry) * p.dir >= 0 ? 'ziel' : 'tagesende'), bars[bars.length - 1].c, '⏰ DAX-Trend-Ausbruch: jetzt schließen, Stand ' + fp(bars[bars.length - 1].c));
+      }
+    }
+  }
+  // 5e) DAX-Nachmittag (Daytrading ab 16:30, belegt mit 5-Min-Kerzen seit 2013): Spanne der ersten US-Stunde 15:30-16:30,
+  // Richtung = wohin der DAX seit gestern 17:30 gelaufen ist (Stand 15:30). Kauf-/Verkaufsstopp knapp hinter der Spanne, gilt 16:40-17:25,
+  // Stop auf der anderen Seite, kein Ziel, Schluss 17:25. Kleiner Vorteil: nur melden, wenn er nach den Ordergebuehren noch spuerbar bleibt.
+  if (t.dpm !== false && weekday && clk.min >= 16 * 60 + 30 && clk.min < 17 * 60 + 45) {
+    t.dtPos = Array.isArray(t.dtPos) ? t.dtPos : [];
+    let p = t.dtPos.find((x) => x.day === dayKey && x.pm);
+    const m5 = (p && (p.state === 'wartet' || p.state === 'offen')) || (!p && clk.min < 17 * 60) ? await candlesOf('^GDAXI', '5m', '1d') : null;
+    const bars = (m5 || []).map((x) => { const bf = TL.berlinFast(x.t); return Object.assign({ m: bf.min, key: bf.key }, x); }).filter((x) => x.key === dayKey);
+    const fp = (x) => (+x).toFixed(1).replace('.', ',');
+    if (!p && bars.length && clk.min >= 16 * 60 + 38) {
+      const rg = bars.filter((x) => x.m >= 930 && x.m < 990), o0 = bars.find((x) => x.m >= 930 && x.m < 945);
+      if (rg.length >= 10 && o0 && bars.some((x) => x.m >= 990)) {
+        const d1 = await candlesOf('^GDAXI', '1d', '3mo'), prior = (d1 || []).filter((x) => TL.berlinFast(x.t).key < dayKey);
+        if (prior.length >= 15) {
+          const prevC = prior[prior.length - 1].c, atr = prior.slice(-14).reduce((a, x) => a + x.h - x.l, 0) / 14, dir = o0.o > prevC ? 1 : o0.o < prevC ? -1 : 0;
+          const hi = Math.max(...rg.map((x) => x.h)), lo = Math.min(...rg.map((x) => x.l)), buf = 0.03 * atr;
+          const px = dir > 0 ? hi + buf : lo - buf, stop = dir > 0 ? lo - buf : hi + buf, risk = Math.abs(px - stop), lastPx = bars[bars.length - 1].c;
+          const st = await dpmCfg(env, nowMs), fr = feeR(t), net = st.n ? st.mean - (fr || 0) : null;
+          const why = !dir ? 'keine Tagesrichtung' : !st.n ? 'Rückrechnung nicht bestanden' : (lastPx - px) * dir > 0 ? 'schon durchgelaufen' : !(risk > 3.6 && risk <= 3 * atr) ? 'Spanne untypisch' : net < 0.02 ? 'Gebühren fressen den Vorteil' : null;
+          p = { id: 'DAX:dpm:' + dayKey, day: dayKey, pm: 1, k: 'DAX', y: '^GDAXI', name: 'DAX', cls: 'DAX-Nachmittag', g: 'dpm', dir: dir || 1, px, stop, rpts: risk, hi, lo, atr, at: nowMs, exp: nowMs + (17 * 60 + 25 - clk.min) * 60e3, state: why ? 'aus' : 'wartet', why,
+            ex: st.n ? { win: st.win, mean: st.mean, sd: st.sd, unit: 'R', n: st.n } : null };
+          t.dtPos.push(p); dirty = true;
+          if (p.state === 'wartet') {
+            const pc = (v) => (v >= 0 ? '+' : '') + v.toFixed(2).replace('.', ','), rt = riskTxt(t, 0, '^GDAXI', p.id);
+            await send('d:' + p.id, { g: 'dpm', pw: { n: st.n, win: st.win }, d: { k: 'DAX', dir, entry: px, stop, kind: 'dtb' }, title: '⚡ DAX-Nachmittag · ' + (dir > 0 ? 'Long' : 'Short'),
+              body: 'DAX ' + (dir > 0 ? 'Long' : 'Short') + ' (Nachmittag): Spanne der ersten US-Stunde 15:30 bis 16:30 von ' + fp(lo) + ' bis ' + fp(hi) + ', der DAX steht seit gestern ' + (dir > 0 ? 'im Plus' : 'im Minus') + '. ' +
+                (dir > 0 ? 'Kauf-Stopp bei ' : 'Verkaufs-Stopp bei ') + fp(px) + ', Stop ' + fp(stop) + ' (' + fp(risk) + ' Punkte).' + koHint(t, p) + ' Kein Ziel: um 17:25 Uhr schließen, ich erinnere dich. Order gilt bis 17:25, sonst löschen.' +
+                rt + ' Rückrechnung 2013 bis heute: ' + st.n + ' Trades, ' + Math.round(st.win * 100) + ' % Gewinner, Ø ' + pc(st.mean) + ' R nach Spread' + (fr != null ? ', nach deinen Ordergebühren ca. ' + pc(net) + ' R' : '') + '. Kleiner, aber stabiler Vorteil: Er zeigt sich erst über viele Trades.', tag: 'dpm', url: './' });
+          }
+        }
+      }
+    }
+    if (p && (p.state === 'wartet' || p.state === 'offen') && bars.length) {
+      const log = (state, xp, txt) => { p.state = state; p.exit = xp; p.r = Math.round(((xp - p.entry) * p.dir - 1.2) / p.rpts * 100) / 100; p.exitAt = nowMs; dirty = true;
+        logTrade({ id: p.id, k: 'DAX', y: '^GDAXI', name: 'DAX', dir: p.dir, cls: 'DAX-Nachmittag', g: 'dpm', t: p.fillAt || p.at, x: nowMs, state, r: p.r, e: p.entry, xp, sp: p.rpts / p.entry, pct: Math.round((xp / p.entry - 1) * p.dir * 10000) / 100, ex: p.ex || null, risk: p.risk, skip: p.skip });
+        return send('d:' + p.id + ':done', { body: txt + ' (' + (p.r >= 0 ? '+' : '') + String(p.r).replace('.', ',') + ' R).', tag: 'dpm' }); };
+      if (p.state === 'wartet') {
+        const fill = bars.find((x) => x.m >= 1000 && x.m < 1045 && (p.dir > 0 ? x.h >= p.px : x.l <= p.px));
+        if (fill) { p.state = 'offen'; p.entry = p.dir > 0 ? Math.max(p.px, fill.o) : Math.min(p.px, fill.o); p.fillM = fill.m; p.fillAt = fill.t; dirty = true;
+          await send('d:' + p.id + ':fill', { title: '🎯 DAX-Nachmittag ausgelöst', body: 'DAX ' + (p.dir > 0 ? 'Long' : 'Short') + ' ausgelöst bei ' + fp(p.entry) + '. Stop ' + fp(p.stop) + '. Um 17:25 Uhr schließen.', tag: 'dpm' }); }
+        else if (clk.min >= 17 * 60 + 25) { p.state = 'verfallen'; dirty = true; await send('d:' + p.id + ':exp', { body: 'DAX-Nachmittag: bis 17:25 nicht ausgelöst. Order löschen.', tag: 'dpm' }); }
+      }
+      if (p.state === 'offen') {
+        const hit = bars.find((x) => x.m >= p.fillM && (p.dir > 0 ? x.l <= p.stop : x.h >= p.stop));
+        if (hit) await log('stop', p.dir > 0 ? Math.min(p.stop, hit.o) : Math.max(p.stop, hit.o), '❌ DAX-Nachmittag: Stop bei ' + fp(p.stop) + ' erreicht');
+        else if (clk.min >= 17 * 60 + 25) await log(((bars[bars.length - 1].c - p.entry) * p.dir >= 0 ? 'ziel' : 'tagesende'), bars[bars.length - 1].c, '⏰ DAX-Nachmittag: jetzt schließen, Stand ' + fp(bars[bars.length - 1].c));
       }
     }
   }
