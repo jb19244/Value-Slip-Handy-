@@ -7,7 +7,8 @@
 // t-Wert >= 3 (viele Kandidaten), Haertetest (doppelte Kosten und 5 Minuten spaeter) im Plus, mind. 60 % der Jahre im Plus,
 // Nachbar-Einstellungen ebenfalls im Plus. Probelauf auf Zufallskursen gleicher Schwankung: dort darf nichts bestehen.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-const DIR = process.env.DUKA_DIR || '/tmp/duka', FROM = 2013, NOWY = new Date().getUTCFullYear();
+const DIR = process.env.DUKA_DIR || '/tmp/duka', FROM = 2013, NOWY = new Date().getUTCFullYear(), FOCUS = !!process.env.FOCUS;
+// FOCUS: vorher festgelegte Gegenprobe der besten DAX-Familie mit 10, 20 und 30 Minuten Verspaetung (Daten plus Reaktion)
 const INS = [
   { k: 'DAX', d: 'deuidxeur', tz: 'Europe/Berlin', name: 'DAX', cost: 1.2, sess: 'dax' },
   { k: 'NDX', d: 'usatechidxusd', tz: 'America/New_York', name: 'Nasdaq 100', cost: 2.0, sess: 'us' },
@@ -66,6 +67,10 @@ const firstAt = (d, m) => d.b.find((x) => x.m >= m && x.m < m + 15);
 function dirOf(f, d, r, sess) { if (f === 'trend') return d.prev.close > d.sma20 ? 1 : -1; if (f === 'gap') { const g = sess - d.prev.close; return g > 0 ? 1 : g < 0 ? -1 : 0; } if (f === 'bar') return r.c > r.o ? 1 : r.c < r.o ? -1 : 0; return 0; }
 // ---------- Kandidaten erzeugen
 function cands(ins) {
+  if (FOCUS) { const F = []; if (ins.k !== 'DAX') return F;
+    for (const delay of [10, 20, 30]) { for (const len of [15, 30]) for (const tg of [1.5, 2, null]) F.push({ fam: 'orb', id: ['orb', len, 'trend', 'range', tg, 1045, 'v' + delay].join('_'), name: 'Eröffnungsspanne ' + len + ' Min, mit Trend, ' + (tg ? 'Ziel ' + tg + ' R' : 'ohne Ziel') + ', raus DAX-Schluss, Order ' + delay + ' Min nach Spannen-Ende', len, f: 'trend', st: 'range', tg, ex: 1045, open: 540, delay });
+      for (const tg of [1.5, 2, null]) F.push({ fam: 'asia', id: ['asia', 'trend', 'range', tg, 1045, 'v' + delay].join('_'), name: 'Asien-Spanne bis 9:00, mit Trend, ' + (tg ? 'Ziel ' + tg + ' R' : 'ohne Ziel') + ', raus DAX-Schluss, Order ' + delay + ' Min nach 9:00', f: 'trend', st: 'range', tg, ex: 1045, delay }); }
+    return F; }
   const C = [], S = ins.sess, open = S === 'us' ? 570 : 540, delay = 10;
   const exits = S === 'us' ? [[720, '12:00 NY'], [955, 'US-Schluss']] : S === 'dax' ? [[990, '16:30'], [1045, 'DAX-Schluss']] : [[990, '16:30'], [1310, '21:50']];
   for (const len of [15, 30, 60]) for (const f of ['trend', 'gap', 'bar']) for (const st of ['range', 'half']) for (const tg of [1, 1.5, 2, 3, null]) for (const [ex, exn] of exits)
@@ -143,12 +148,13 @@ for (const ins of INS) {
     const e = { k: ins.k, ins: ins.name, id: c.id, fam: c.fam, name: c.name, rule: c, unit: o.unit, all: o.all, p: [o.p1, o.p2, o.p3].map((p) => p.mean), stress: o.stress.mean, years: o.yearsUp + '/' + o.yearsN, perYear: o.perYear, robust };
     if (robust) out.passed.push(e); out.top.push(e); }
   // Probelauf: dieselben Regeln auf vertauschten Kursen
+  if (FOCUS) { C.forEach((c) => { const o = R.get(c.id); console.log('FOKUS', c.name.padEnd(90), 'n', o.all.n, 'win', o.all.win, 'Ø', o.all.mean, 'R t', o.all.t, '|', [o.p1, o.p2, o.p3].map((p) => p.mean).join(' / '), '| Haerte', o.stress.mean, '| Jahre', o.yearsUp + '/' + o.yearsN); }); continue; }
   const DP = prep(placeboRows(rows), ins); for (const c of C) { const o = evaluate(c, ins, DP); out.placebo.tested++; if (o.core) { out.placebo.core++; const nb = neighbors(c, C).map((x) => evaluate(x, ins, DP)); if (nb.length >= 2 && nb.every((x) => x.all.n >= 100 && x.all.mean > 0)) out.placebo.passed++; } }
   console.log(ins.k, 'Kandidaten', C.length, 'streng', out.top.filter((x) => x.k === ins.k).length, 'bestanden', out.passed.filter((x) => x.k === ins.k).length, '| Placebo bisher streng', out.placebo.core, 'bestanden', out.placebo.passed);
 }
 out.best.sort((a, b) => b.all.t - a.all.t); const fams = {}; out.best.forEach((e) => { const f = e.fam + ':' + e.k; if (!fams[f] || fams[f].all.t < e.all.t) fams[f] = e; }); out.bestByFam = Object.values(fams).sort((a, b) => b.all.t - a.all.t); out.best = out.best.slice(0, 60);
 out.passed.sort((a, b) => b.all.t - a.all.t); out.top.sort((a, b) => b.all.t - a.all.t); out.top = out.top.slice(0, 40);
-writeFileSync(new URL('./backtest-daytrade.json', import.meta.url), JSON.stringify(out));
+writeFileSync(new URL(FOCUS ? './backtest-daytrade-focus.json' : './backtest-daytrade.json', import.meta.url), JSON.stringify(out));
 console.log('GESAMT getestet', out.tested, 'bestanden', out.passed.length, '| Placebo', JSON.stringify(out.placebo));
 out.best.slice(0, 25).forEach((e) => console.log('BEST', e.k.padEnd(7), e.name.slice(0, 90).padEnd(90), 'n', e.all.n, 'win', e.all.win, 'Ø', e.all.mean, e.unit, 't', e.all.t, '|', e.p.join(' / '), '| Haerte', e.stress, '| Jahre', e.years));
 out.bestByFam.forEach((e) => console.log('FAM ', (e.fam + ':' + e.k).padEnd(14), e.name.slice(0, 80).padEnd(80), 'n', e.all.n, 'Ø', e.all.mean, e.unit, 't', e.all.t, '|', e.p.join(' / '), '| Haerte', e.stress, '| Jahre', e.years));
