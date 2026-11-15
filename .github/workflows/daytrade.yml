@@ -1,0 +1,36 @@
+# Daytrading-Forschung: 5-Minuten-Kerzen seit 2013 (Dukascopy), Regeln passend zum Arbeitstag, streng geprueft
+name: Daytrading-Forschung
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '37 5 * * 0'
+  push:
+    branches: [main]
+    paths: ['dienst/backtest13.mjs', '.github/workflows/daytrade.yml']
+permissions:
+  contents: write
+concurrency: daytrade
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/duka
+          key: duka-v1-${{ github.run_id }}
+          restore-keys: duka-v1-
+      - name: Datenwerkzeug
+        run: npm i --no-save --no-package-lock dukascopy-node@1 >/dev/null 2>&1
+      - name: Rechnen
+        run: node --max-old-space-size=6000 dienst/backtest13.mjs
+      - name: Speichern
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dienst/backtest-daytrade.json
+          git diff --cached --quiet || (git commit -m "Daytrading-Forschung aktualisiert [skip ci]" && git pull --rebase -X theirs -q && git push)
