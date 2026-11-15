@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'b7879e67a6';
+const WORKER_VER = 'ab4adbe8c3';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3505,7 +3505,7 @@ async function autoCfg(env, nowMs) {
       if (!r.ok) return {};
       const j = await r.json();
       return { at: j.at, week: j.week, batch: j.batch || 0, testedTotal: j.testedTotal || 0, space: j.space || 0, found: (j.found || []).map((f) => ({ id: f.id, name: f.name })),
-        live: (j.live || []).filter((l) => l && l.rule && Array.isArray(l.rule.c) && Array.isArray(l.syms) && l.stats).slice(0, 5).map((l) => ({ id: String(l.id).slice(0, 80), name: String(l.name).slice(0, 80), text: String(l.text).slice(0, 300), rule: l.rule, syms: l.syms.slice(0, 12), stats: l.stats, since: l.since })) };
+        live: (j.live || []).filter((l) => l && l.rule && Array.isArray(l.rule.c) && Array.isArray(l.syms) && l.stats).slice(0, 5).map((l) => ({ id: String(l.id).slice(0, 80), name: String(l.name).slice(0, 80), text: String(l.text).slice(0, 300), rule: l.rule, syms: l.syms.slice(0, 12), stats: l.stats, tval: +l.tval || 0, since: l.since })) };
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -4034,8 +4034,10 @@ async function runTrade(env, nowMs) {
     const qa = await autoCfg(env, nowMs), rules = qa.live || [];
     t.autoPos = Array.isArray(t.autoPos) ? t.autoPos : []; t.autoSent = t.autoSent || {}; t.autoAnn = t.autoAnn || {};
     // neue Regel einmal ankuendigen
-    for (const R of rules) { if (t.autoAnn[R.id]) continue; t.autoAnn[R.id] = nowMs; dirty = true;
-      await send('aa:' + R.id.slice(0, 60), { title: '🧪 Neue Strategie entdeckt', body: R.name + ': ' + R.text + ' Rückrechnung seit 2000: ' + R.stats.n + ' Trades, ' + Math.round(R.stats.win * 100) + ' % Gewinner, Ø +' + (+R.stats.mean).toFixed(2).replace('.', ',') + ' % nach Kosten. Sie hat alle Hürden der Sonntags-Suche genommen und läuft ab jetzt in Bewährung: Signale kommen mit „Neu entdeckt“, erst mit halber Größe handeln. Die Live-Prüfung vergleicht jeden Trade mit der Rückrechnung.', tag: 'auto', url: './' }); }
+    const fresh = rules.filter((R) => !t.autoAnn[R.id]);
+    if (fresh.length) { fresh.forEach((R) => { t.autoAnn[R.id] = nowMs; }); dirty = true;
+      const st1 = (R) => R.stats.n + ' Trades, ' + Math.round(R.stats.win * 100) + ' % Gewinner, Ø +' + (+R.stats.mean).toFixed(2).replace('.', ',') + ' %';
+      await send('aa:' + fresh.map((R) => R.id).join('|').slice(0, 80), { title: '🧪 ' + (fresh.length === 1 ? 'Neue Strategie entdeckt' : fresh.length + ' neue Strategien entdeckt'), body: (fresh.length === 1 ? fresh[0].name + ': ' + fresh[0].text + ' Rückrechnung seit 2000: ' + st1(fresh[0]) + ' nach Kosten.' : fresh.map((R) => R.name + ' (' + st1(R) + ')').join('; ') + '. Alle nach Kosten, Rückrechnung seit 2000.') + ' Alle Hürden der Sonntags-Suche genommen, ab jetzt in Bewährung: höchstens ein Signal pro Abend, mit „Neu entdeckt“ markiert, erst mit halber Größe handeln. Die Live-Prüfung vergleicht jeden Trade mit der Rückrechnung.', tag: 'auto', url: './' }); }
     const ny = nyMin(nowMs), win = ny >= 15 * 60 + 40 && ny < 15 * 60 + 56, confW = ny >= 16 * 60 + 5 && ny < 16 * 60 + 40;
     let fetches = 12;
     for (const p of t.autoPos.filter((q) => q.state === 'offen')) {
@@ -4047,10 +4049,10 @@ async function runTrade(env, nowMs) {
       const li = d1.length - 1, last = d1[li], S = TL.ruleSeries(d1), today = dKey(last.t) === dayKey;
       const fin = async (state, px, txt) => { p.state = state; p.exit = px; p.pct = Math.round((px / p.entry - 1) * 10000) / 100; p.r = Math.round((px - p.entry) / (3 * p.atr) * 100) / 100; p.exitAt = nowMs;
         logTrade({ id: p.id, k: p.k, y: p.y, name: p.name, dir: 1, cls: 'Neu entdeckt', g: p.g, gn: p.gn, t: p.at, x: nowMs, state, r: p.r, e: p.entry, xp: px, sp: 3 * p.atr / p.entry, pct: p.pct, ex: p.ex || null, risk: p.risk, skip: p.skip });
-        await send('a:' + p.id + ':done', { body: txt + ' (' + (p.pct >= 0 ? '+' : '') + String(p.pct).replace('.', ',') + ' %).', tag: 'auto-' + p.k }); };
+        if (!p.silent) await send('a:' + p.id + ':done', { body: txt + ' (' + (p.pct >= 0 ? '+' : '') + String(p.pct).replace('.', ',') + ' %).', tag: 'auto-' + p.k }); };
       if (d1.some((x) => dKey(x.t) > p.day && x.l <= p.stop)) { await fin('stop', p.stop, '❌ Notstop: ' + p.name + ' (' + p.gn + ') bei ' + fmtp(p.stop, p.k)); continue; }
       if (needConf && today) { p.conf = nowMs; const still = TL.ruleHit(d1, li, p.rule, S); p.entry = last.c; p.stop = last.c - 3 * p.atr;
-        await send('a:' + p.id + ':conf', { g: p.g, gn: p.gn, title: (still ? 'Einstieg bestätigt · ' : 'Einstieg knapp · ') + p.name, body: still ? '🎯 Einstieg bestätigt: ' + p.name + ' schloss bei ' + fmtp(last.c, p.k) + '. Das ist dein Einstiegskurs, Notstop ' + fmtp(p.stop, p.k) + '. Ich melde mich zum Verkauf.' : '⚠️ ' + p.name + ' hat sich zum Schluss erholt und schloss bei ' + fmtp(last.c, p.k) + '. Die Regel war am Schluss knapp nicht mehr erfüllt. Wer gekauft hat, führt den Trade normal weiter.', tag: 'auto-' + p.k }); continue; }
+        if (!p.silent) await send('a:' + p.id + ':conf', { g: p.g, gn: p.gn, title: (still ? 'Einstieg bestätigt · ' : 'Einstieg knapp · ') + p.name, body: still ? '🎯 Einstieg bestätigt: ' + p.name + ' schloss bei ' + fmtp(last.c, p.k) + '. Das ist dein Einstiegskurs, Notstop ' + fmtp(p.stop, p.k) + '. Ich melde mich zum Verkauf.' : '⚠️ ' + p.name + ' hat sich zum Schluss erholt und schloss bei ' + fmtp(last.c, p.k) + '. Die Regel war am Schluss knapp nicht mehr erfüllt. Wer gekauft hat, führt den Trade normal weiter.', tag: 'auto-' + p.k }); continue; }
       if (win && today && p.day !== dayKey) {
         const held = d1.filter((x) => dKey(x.t) > p.day).length;
         if (TL.ruleExit(d1, li, p.rule, S)) await fin(last.c >= p.entry ? 'ziel' : 'tagesende', last.c, '✅ Jetzt verkaufen: ' + p.name + ' (' + p.gn + '), die Ausstiegsregel greift. Stand ' + fmtp(last.c, p.k));
@@ -4066,8 +4068,13 @@ async function runTrade(env, nowMs) {
       t.autoSent[key] = dayKey; dirty = true;
       const S = TL.ruleSeries(d1); if (!TL.ruleHit(d1, li, R.rule, S)) continue;
       const atr = S.atr[li], ins = TL.INSTRUMENTS.find((i) => i.y === y) || { k: 'B:' + y, name: AUTO_NAMES[y] || y, y, dec: 2, type: /^\^/.test(y) ? 'idx' : 'etf' };
+      // Hoechstens eine Meldung pro Abend aus der Suche; keine, wenn heute schon ein IBS-Signal kam (du nimmst hoechstens eins) oder das Buendel voll ist.
+      // Diese Treffer verfolgt der Dienst still weiter: fuer die Live-Pruefung und den Schatten-Bot.
+      const ibsToday = (t.ibsPos || []).some((q) => q.day === dayKey && !q.skip), autoToday = t.autoPos.some((q) => q.day === dayKey && !q.silent);
+      const silent = autoToday || (t.ibsMax1 && ibsToday) || TL.riskBudget(openRiskOf(t, null), y, { riskP: t.riskP > 0 ? t.riskP : 1, heat: t.heat || 5 }).full;
       const pid = ins.k + ':a' + Object.keys(t.autoAnn).indexOf(R.id) + ':' + dayKey, stop = last.c - 3 * atr, g = 'auto:' + R.id, st = R.stats;
-      t.autoPos.push({ id: pid, rid: R.id, rule: R.rule, k: ins.k, y, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, g, gn: R.name, ex: TL.expOf(st), pw: { n: st.n, win: st.win } });
+      t.autoPos.push({ id: pid, rid: R.id, rule: R.rule, k: ins.k, y, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, g, gn: R.name, ex: TL.expOf(st), pw: { n: st.n, win: st.win }, silent: silent || undefined, skip: silent || undefined, risk: silent ? 0 : undefined });
+      if (silent) continue;
       await send('a:' + pid, { g, gn: R.name, pw: { n: st.n, win: st.win, weak: true }, d: { k: ins.k, dir: 1, entry: last.c, stop, kind: 'auto' }, title: '🧪 Neu entdeckt · ' + ins.name,
         body: ins.name + ' Long (' + R.name + '): ' + R.text + ' Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, ins.k) + ', Notstop ' + fmtp(stop, ins.k) + '. Neu aus der Sonntags-Suche, noch in Bewährung: Rückrechnung ' + st.n + ' Trades, ' + Math.round(st.win * 100) + ' % Gewinner, Ø +' + (+st.mean).toFixed(2).replace('.', ',') + ' % nach Kosten. Bis die Live-Prüfung genug Trades hat: halbe Größe.' + tradeTxt(t, ins, 3 * atr / last.c * 100, pid), tag: 'auto-' + ins.k, url: './' });
     }
