@@ -6,6 +6,8 @@ indicator("Trade Check · Zonen (alle Zeitebenen)", shorttitle="TC Zonen", overl
 // höhere Zeitebenen sind kräftiger als niedrige. Übereinander liegende Zonen werden dunkler: das ist Konfluenz.
 // Alles wird nur aus abgeschlossenen Kerzen der jeweiligen Zeitebene berechnet (kein Nachzeichnen).
 // Zeitebenen, die kleiner sind als der Chart, werden automatisch ausgelassen.
+// Nach dem SMC-Leitfaden ergänzt: gebrochene Order Blocks werden zu Breaker Blocks (Rolle getauscht, gestrichelt),
+// abgeholte Liquidität mit Schluss zurück wird als Sweep markiert, und Fair Value Gaps schrumpfen beim Füllen.
 
 // ───────── Einstellungen ─────────
 grpT = "Zeitebenen (von klein nach groß)"
@@ -23,6 +25,9 @@ showFvg = input.bool(true, "Fair Value Gaps", group=grpS)
 showOb = input.bool(true, "Order Blocks", group=grpS)
 showLiq = input.bool(true, "Liquidität (Hochs / Tiefs, gleiche Hochs / Tiefs)", group=grpS)
 showStr = input.bool(true, "Struktur (BOS / CHoCH)", group=grpS)
+showBrk = input.bool(true, "Breaker Blocks (gebrochene Order Blocks wechseln die Rolle)", group=grpS)
+showSw = input.bool(true, "Sweep-Marken (Liquidität geholt, Schluss zurück)", group=grpS)
+fvgFill = input.bool(true, "FVG schrumpft beim Füllen (nur der offene Teil bleibt)", group=grpS)
 showTab = input.bool(true, "Übersicht", group=grpS)
 
 grpL = "Darstellung"
@@ -32,6 +37,7 @@ nearAtr = input.float(12.0, "Nur was in Kursnähe liegt (Abstand in ATR, 0 = all
 maxZ = input.int(2, "Offene Zonen je Art und Zeitebene", minval=1, maxval=10, group=grpL)
 maxL = input.int(3, "Liquiditäts-Linien je Zeitebene", minval=1, maxval=10, group=grpL)
 maxM = input.int(1, "Struktur-Marken je Zeitebene", minval=1, maxval=10, group=grpL)
+maxSw = input.int(4, "Sweep-Marken im Chart", minval=1, maxval=20, group=grpL)
 bullCol = input.color(#2FD07A, "Farbe bullisch", group=grpL)
 bearCol = input.color(#FF5A5F, "Farbe bärisch", group=grpL)
 tabPos = input.string("Oben rechts", "Übersicht: Position", options=["Oben rechts", "Unten rechts", "Oben links", "Unten links"], group=grpL)
@@ -50,6 +56,9 @@ type Zone
     color bg
     color bd
     color tx
+    string nm
+    bool ob = false
+    bool brk = false
 
 type Liq
     line ln
@@ -57,6 +66,7 @@ type Liq
     float px
     int dir
     color col
+    string nm
 
 type Mark
     line ln
@@ -158,12 +168,35 @@ f_name(string tf) =>
     int s = timeframe.in_seconds(tf)
     s >= 604800 ? "W" : s >= 86400 ? "D" : s >= 3600 ? str.tostring(math.round(s / 3600.0)) + "h" : str.tostring(math.round(s / 60.0)) + "m"
 
-// ───────── Zonen pflegen: rechts mitführen, weit entfernte ausblenden, durchbrochene löschen ─────────
+// ───────── Zonen pflegen: rechts mitführen, weit entfernte ausblenden ─────────
+// Order Block mit Schluss durch die Zone: wird einmal zum Breaker mit umgekehrter Rolle, beim zweiten Bruch gelöscht.
+// Fair Value Gap: schrumpft auf den noch offenen Teil, gelöscht wenn ganz gefüllt oder mit Schluss durchbrochen.
 f_upd(array<Zone> zs) =>
     if array.size(zs) > 0
         for i = array.size(zs) - 1 to 0
             Zone z = array.get(zs, i)
-            bool dead = z.dir > 0 ? close < z.bot : close > z.top
+            bool through = z.dir > 0 ? close < z.bot : close > z.top
+            bool dead = false
+            if through and z.ob and not z.brk and showBrk
+                z.brk := true
+                z.dir := -z.dir
+                color nc = z.dir > 0 ? bullCol : bearCol
+                z.bg := color.new(nc, 91)
+                z.bd := color.new(nc, 45)
+                box.set_text(z.bx, z.nm + " Breaker")
+                box.set_border_style(z.bx, line.style_dashed)
+            else if through
+                dead := true
+            else if not z.ob and fvgFill
+                if z.dir > 0 and low < z.top
+                    z.top := math.max(z.bot, low)
+                if z.dir < 0 and high > z.bot
+                    z.bot := math.min(z.top, high)
+                if z.top - z.bot <= 0
+                    dead := true
+                else
+                    box.set_top(z.bx, z.top)
+                    box.set_bottom(z.bx, z.bot)
             if dead
                 box.delete(z.bx)
                 array.remove(zs, i)
@@ -178,7 +211,8 @@ f_upd(array<Zone> zs) =>
                 box.set_text_color(z.bx, far ? color(na) : z.tx)
     0
 
-f_tf(array<Zone> zF, array<Zone> zO, array<Liq> lq, array<Mark> mk, string nm, int rk, bool enabled, bool nb, bool bullFvg, bool bearFvg, float fTop, float fBot, int fTime, bool newPH, float phV, int phT, bool eqh, bool newPL, float plV, int plT, bool eql, bool bosUp, bool bosDn, bool isCh, float bLvl, int bT, bool obBull, bool obBear, float obTop, float obBot, int obT) =>
+f_tf(array<Zone> zF, array<Zone> zO, array<Liq> lq, array<Mark> mk, array<label> sw, string nm, int rk, bool enabled, bool nb, bool bullFvg, bool bearFvg, float fTop, float fBot, int fTime, bool newPH, float phV, int phT, bool eqh, bool newPL, float plV, int plT, bool eql, bool bosUp, bool bosDn, bool isCh, float bLvl, int bT, bool obBull, bool obBear, float obTop, float obBot, int obT) =>
+    bool swNew = false
     if enabled
         string hal = rk == 1 ? text.align_left : rk == 2 ? text.align_center : text.align_right
         color txc = color.new(fgCol, 40)
@@ -189,7 +223,7 @@ f_tf(array<Zone> zF, array<Zone> zO, array<Liq> lq, array<Mark> mk, string nm, i
                 color bgF = color.new(fc, 93 - rk * 3)
                 color bdF = color.new(fc, 100)
                 box bxF = box.new(compact ? lEdge : fTime, fTop, rEdge, fBot, xloc=xloc.bar_time, bgcolor=bgF, border_color=bdF, border_width=1, text=nm + " FVG", text_color=txc, text_size=size.tiny, text_halign=hal, text_valign=text.align_center)
-                array.push(zF, Zone.new(bxF, fTop, fBot, d, fTime, bgF, bdF, txc))
+                array.push(zF, Zone.new(bxF, fTop, fBot, d, fTime, bgF, bdF, txc, nm, false, false))
                 if array.size(zF) > maxZ
                     Zone oldF = array.shift(zF)
                     box.delete(oldF.bx)
@@ -199,7 +233,7 @@ f_tf(array<Zone> zF, array<Zone> zO, array<Liq> lq, array<Mark> mk, string nm, i
                 color bgO = color.new(oc, 90 - rk * 4)
                 color bdO = color.new(oc, 60 - rk * 8)
                 box bxO = box.new(compact ? lEdge : obT, obTop, rEdge, obBot, xloc=xloc.bar_time, bgcolor=bgO, border_color=bdO, border_width=1, text=nm + " OB", text_color=txc, text_size=size.tiny, text_halign=hal, text_valign=text.align_bottom)
-                array.push(zO, Zone.new(bxO, obTop, obBot, d2, obT, bgO, bdO, txc))
+                array.push(zO, Zone.new(bxO, obTop, obBot, d2, obT, bgO, bdO, txc, nm, true, false))
                 if array.size(zO) > maxZ
                     Zone oldO = array.shift(zO)
                     box.delete(oldO.bx)
@@ -208,11 +242,11 @@ f_tf(array<Zone> zF, array<Zone> zO, array<Liq> lq, array<Mark> mk, string nm, i
             if showLiq and newPH and not na(phV) and not na(phT)
                 line lnH = line.new(compact ? lEdge : phT, phV, rEdge, phV, xloc=xloc.bar_time, color=lc, style=lst, width=eqh ? 2 : 1)
                 label lbH = label.new(rEdge, phV, nm + (eqh ? " EQH" : " Liq ↑"), xloc=xloc.bar_time, style=label.style_label_left, color=color.new(fgCol, 100), textcolor=lc, size=size.tiny)
-                array.push(lq, Liq.new(lnH, lbH, phV, 1, lc))
+                array.push(lq, Liq.new(lnH, lbH, phV, 1, lc, nm))
             if showLiq and newPL and not na(plV) and not na(plT)
                 line lnL = line.new(compact ? lEdge : plT, plV, rEdge, plV, xloc=xloc.bar_time, color=lc, style=lst, width=eql ? 2 : 1)
                 label lbL = label.new(rEdge, plV, nm + (eql ? " EQL" : " Liq ↓"), xloc=xloc.bar_time, style=label.style_label_left, color=color.new(fgCol, 100), textcolor=lc, size=size.tiny)
-                array.push(lq, Liq.new(lnL, lbL, plV, -1, lc))
+                array.push(lq, Liq.new(lnL, lbL, plV, -1, lc, nm))
             while array.size(lq) > maxL
                 Liq oldL = array.shift(lq)
                 line.delete(oldL.ln)
@@ -234,6 +268,15 @@ f_tf(array<Zone> zF, array<Zone> zO, array<Liq> lq, array<Mark> mk, string nm, i
                 Liq q = array.get(lq, i)
                 bool swept = q.dir > 0 ? high > q.px : low < q.px
                 if swept
+                    // Sweep: Docht durch das Level, Schluss wieder davor (Stops abgeräumt, Gegenbewegung möglich)
+                    bool back = q.dir > 0 ? close < q.px : close > q.px
+                    if back and showSw
+                        color swc = q.dir > 0 ? bearCol : bullCol
+                        label lbW = label.new(time, q.dir > 0 ? high : low, q.nm + " Sweep", xloc=xloc.bar_time, style=q.dir > 0 ? label.style_label_down : label.style_label_up, color=color.new(swc, 82), textcolor=swc, size=size.tiny)
+                        array.push(sw, lbW)
+                        swNew := true
+                        if array.size(sw) > maxSw
+                            label.delete(array.shift(sw))
                     line.delete(q.ln)
                     label.delete(q.lb)
                     array.remove(lq, i)
@@ -245,7 +288,7 @@ f_tf(array<Zone> zF, array<Zone> zO, array<Liq> lq, array<Mark> mk, string nm, i
                     label.set_x(q.lb, rEdge)
                     line.set_color(q.ln, farL ? color(na) : q.col)
                     label.set_textcolor(q.lb, farL ? color(na) : q.col)
-    0
+    swNew
 
 f_cnt(array<Zone> zs) =>
     int u = 0
@@ -299,11 +342,12 @@ var array<Zone> zF4 = array.new<Zone>()
 var array<Zone> zO4 = array.new<Zone>()
 var array<Liq> lq4 = array.new<Liq>()
 var array<Mark> mk4 = array.new<Mark>()
+var array<label> swAll = array.new<label>()
 
-f_tf(zF1, zO1, lq1, mk1, nm1, 1, ok1, nb1, a1, b1, c1t, d1b, e1, f1, g1, h1, i1, j1, k1, l1, m1, n1, o1, p1, q1, r1, s1, t1, u1, v1, w1)
-f_tf(zF2, zO2, lq2, mk2, nm2, 2, ok2, nb2, a2, b2, c2t, d2b, e2, f2, g2, h2, i2, j2, k2, l2, m2, n2, o2, p2, q2, r2, s2, t2, u2, v2, w2)
-f_tf(zF3, zO3, lq3, mk3, nm3, 3, ok3, nb3, a3, b3, c3t, d3b, e3, f3, g3, h3, i3, j3, k3, l3, m3, n3, o3, p3, q3, r3, s3, t3, u3, v3, w3)
-f_tf(zF4, zO4, lq4, mk4, nm4, 4, ok4, nb4, a4, b4, c4t, d4b, e4, f4, g4, h4, i4, j4, k4, l4, m4, n4, o4, p4, q4, r4, s4, t4, u4, v4, w4)
+bool sw1 = f_tf(zF1, zO1, lq1, mk1, swAll, nm1, 1, ok1, nb1, a1, b1, c1t, d1b, e1, f1, g1, h1, i1, j1, k1, l1, m1, n1, o1, p1, q1, r1, s1, t1, u1, v1, w1)
+bool sw2 = f_tf(zF2, zO2, lq2, mk2, swAll, nm2, 2, ok2, nb2, a2, b2, c2t, d2b, e2, f2, g2, h2, i2, j2, k2, l2, m2, n2, o2, p2, q2, r2, s2, t2, u2, v2, w2)
+bool sw3 = f_tf(zF3, zO3, lq3, mk3, swAll, nm3, 3, ok3, nb3, a3, b3, c3t, d3b, e3, f3, g3, h3, i3, j3, k3, l3, m3, n3, o3, p3, q3, r3, s3, t3, u3, v3, w3)
+bool sw4 = f_tf(zF4, zO4, lq4, mk4, swAll, nm4, 4, ok4, nb4, a4, b4, c4t, d4b, e4, f4, g4, h4, i4, j4, k4, l4, m4, n4, o4, p4, q4, r4, s4, t4, u4, v4, w4)
 
 // ───────── Übersicht ─────────
 color pTxt = #E8EAED
@@ -353,4 +397,5 @@ bool bo4 = ok4 and nb4 and (n4 or o4) and not p4
 alertcondition(ch1 or ch2 or ch3 or ch4, "CHoCH auf einer Zeitebene", "Trade Check: Richtungswechsel (CHoCH) auf {{ticker}}")
 alertcondition(bo1 or bo2 or bo3 or bo4, "BOS auf einer Zeitebene", "Trade Check: Strukturbruch (BOS) auf {{ticker}}")
 alertcondition((ok1 and nb1 and (a1 or b1)) or (ok2 and nb2 and (a2 or b2)) or (ok3 and nb3 and (a3 or b3)) or (ok4 and nb4 and (a4 or b4)), "Neues Fair Value Gap", "Trade Check: neues FVG auf {{ticker}}")
+alertcondition(sw1 or sw2 or sw3 or sw4, "Sweep (Liquidität geholt, Schluss zurück)", "Trade Check: Sweep auf {{ticker}}")
 alertcondition((ok1 and nb1 and (s1 or t1)) or (ok2 and nb2 and (s2 or t2)) or (ok3 and nb3 and (s3 or t3)) or (ok4 and nb4 and (s4 or t4)), "Neuer Order Block", "Trade Check: neuer Order Block auf {{ticker}}")
