@@ -784,15 +784,16 @@ function scanSetups(c, opt){
         }
         if (g){
           var a = a14[i] || (g.hi - g.lo);
-          var entry = (g.lo + g.hi) / 2, stop = s.ext - s.dir * a * 0.1, risk = (entry - stop) * s.dir;
-          if (risk > a * 0.3 && risk < a * 4 && i >= from){
+          // Stop-Puffer hinter dem Sweep (Standard 0,1 ATR; der SMC-Leitfaden empfiehlt 1,5 bis 2 ATR) und Mindest-CRV zum Liquiditaetsziel
+          var sb = opt.stopBuf != null ? opt.stopBuf : 0.1, entry = (g.lo + g.hi) / 2, stop = s.ext - s.dir * a * sb, risk = (entry - stop) * s.dir;
+          if (risk > a * 0.3 && risk < a * (4 + sb) && i >= from){
             var cands = s.dir > 0 ? [dd.ahi, pd && pd.hi, s.dayHi] : [dd.alo, pd && pd.lo, s.dayLo];
             var tgt = null;
-            cands.filter(function(x){ return x && isFinite(x); }).map(function(x){ return { p: x, rr: (x - entry) * s.dir / risk }; }).filter(function(x){ return x.rr >= 2 && x.rr <= 6; }).sort(function(x, y){ return x.rr - y.rr; }).slice(0, 1).forEach(function(x){ tgt = x; });
+            cands.filter(function(x){ return x && isFinite(x); }).map(function(x){ return { p: x, rr: (x - entry) * s.dir / risk }; }).filter(function(x){ return x.rr >= (opt.minRR || 2) && x.rr <= 6; }).sort(function(x, y){ return x.rr - y.rr; }).slice(0, 1).forEach(function(x){ tgt = x; });
             var target = tgt ? tgt.p : entry + s.dir * risk * 2.5;
             if (!biasCache[day]) biasCache[day] = biasAt(opt.d1, day) || 'x';
             var bias = biasCache[day] === 'x' ? 0 : biasCache[day];
-            out.push({ k: instr && instr.k, type: 'sweep', i: i, t: c[i].t + bar, day: day, dir: s.dir, entry: entry, stop: stop, target: target, rr: (target - entry) * s.dir / risk, risk: risk,
+            if (!(opt.needLiq && !tgt)) out.push({ k: instr && instr.k, type: 'sweep', i: i, t: c[i].t + bar, day: day, dir: s.dir, entry: entry, stop: stop, target: target, rr: (target - entry) * s.dir / risk, risk: risk,
               sweep: s.name, level: s.level, liqTarget: !!tgt, bias: bias, withBias: bias === s.dir, fvg: [g.lo, g.hi], expires: c[i].t + bar + 3 * 3600e3,
               gapAtr: (g.hi - g.lo) / a, depthAtr: Math.abs(s.ext - s.level) / a, session: s.min < 720 ? 'London' : 'New York', prevDay: /Vortag/.test(s.name) });
           }
@@ -1451,7 +1452,7 @@ function simulate(sig, c, cost){
 }
 // Rueckrechnung fuer ein Instrument: Signale finden, durchspielen, Ampel zum Signalzeitpunkt bestimmen
 function backtest(p){
-  var bar = p.bar || 15 * 60e3, c = p.m15, res = [], o = { instr: p.instr, d1: p.d1, bar: bar, any: p.any };
+  var bar = p.bar || 15 * 60e3, c = p.m15, res = [], o = { instr: p.instr, d1: p.d1, bar: bar, any: p.any, stopBuf: p.stopBuf, minRR: p.minRR, needLiq: p.needLiq };
   var sigs = p.setup === 'all' ? scanAll(c, o) : (SETUPS[p.setup || 'sweep'] || SETUPS.sweep).fn(c, o).map(function(s){ s.type = s.type || p.setup || 'sweep'; return s; });
   // Variante mit naeherem Ziel (z. B. 0,5 R): hohe Trefferquote, kleinere Gewinne
   if (p.conf) sigs.forEach(function(s){ var cf = confluence(s, c.slice(Math.max(0, s.i - 300), s.i + 1)); if (cf){ s.conf = cf.score; s.cOte = cf.ote; s.cEw = cf.ew; s.cOb = cf.ob; s.cFib = cf.fib; s.cPd = cf.pd; } });
