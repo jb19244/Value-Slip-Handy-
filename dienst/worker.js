@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '39be46f8e8';
+const WORKER_VER = 'a680185a52';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -1920,6 +1920,36 @@ function eurPer(ccy, rates){
   if (ccy === 'CHF') return rates.USDCHF > 0 ? 1 / (rates.EURUSD * rates.USDCHF) : null;
   return null;
 }
+// Knock-out-Rechner: Preise des Scheins aus den Marken im Basiswert.
+// Scheinpreis = (Basiswert - KO-Schwelle) x Bezugsverhaeltnis x Wechselkurs (Put: umgekehrt), plus Aufgeld.
+// Das Aufgeld wird aus dem echten Kaufkurs geeicht, wenn er eingetragen ist (Kaufkurs minus innerer Wert beim aktuellen Basiswert).
+function koCalc(p){
+  var dir = p.dir > 0 ? 1 : -1, e = +p.entry, s = +p.stop, t = +p.target, ko = +p.ko, ratio = +p.ratio, conv = +p.conv;
+  if (!(e > 0) || !(ko > 0) || !(ratio > 0) || !(conv > 0)) return { error: 'fehlt' };
+  if ((e - ko) * dir <= 0) return { error: dir > 0 ? 'Bei Long muss die KO-Schwelle unter dem Einstieg liegen.' : 'Bei Short muss die KO-Schwelle über dem Einstieg liegen.' };
+  var inner = function(lv){ return Math.max(0, (lv - ko) * dir) * ratio * conv; };
+  var ask = +p.ask > 0 ? +p.ask : null, ref = +p.now > 0 ? +p.now : e, prem = ask != null && inner(ref) > 0 ? ask - inner(ref) : 0;
+  var price = function(lv){ var x = inner(lv); return x > 0 ? Math.max(0, x + prem) : 0; };
+  var pe = price(e), out = { dir: dir, prem: prem, premPct: pe > 0 ? prem / pe : 0, calibrated: ask != null, entry: { lv: e, cert: pe }, ko: { lv: ko, cert: 0 }, leverage: pe > 0 ? e * ratio * conv / pe : null, koDist: Math.abs(e - ko) / e, rows: [] };
+  var row = function(key, lv){ if (!(lv > 0)) return null; var c = price(lv), d = c - pe; return { key: key, lv: lv, cert: c, diff: d, pct: pe > 0 ? d / pe : null }; };
+  var risk = s > 0 ? (e - s) * dir : null;
+  if (s > 0){ if (risk <= 0) return { error: dir > 0 ? 'Bei Long muss der Stop unter dem Einstieg liegen.' : 'Bei Short muss der Stop über dem Einstieg liegen.' };
+    out.stop = row('stop', s); out.koBeforeStop = (s - ko) * dir <= 0; out.stopKoDist = Math.abs(s - ko) / Math.abs(e - s);
+    out.tp1 = row('tp1', e + dir * risk); }
+  if (t > 0 && (t - e) * dir > 0){ out.target = row('target', t); if (risk > 0) out.rr = (t - e) * dir / risk; }
+  // Stueckzahl nach Risiko in Euro, Ergebnis je Ausgang (mit Ordergebuehren)
+  var riskEur = +p.account > 0 && +p.riskPct > 0 ? p.account * p.riskPct : null, fee = +p.fee > 0 ? +p.fee : 0;
+  if (out.stop && pe > 0){ var lossPer = pe - out.stop.cert;
+    var qty = +p.qty > 0 ? Math.floor(+p.qty) : (riskEur != null && lossPer > 0 ? Math.floor(riskEur / lossPer) : null);
+    if (qty != null && qty > 0){ var half = Math.floor(qty / 2), rest = qty - half;
+      out.qty = qty; out.half = half; out.invest = qty * pe; out.riskEur = riskEur;
+      out.atStop = -qty * lossPer - 2 * fee;
+      // Gebuehren im Verhaeltnis zum Risiko: ab 20 % frisst die Ordergebuehr den Trade, darunter steht die Mindest-Stueckzahl fuer hoechstens 10 %
+      out.fees = 2 * fee; out.feeShare = lossPer > 0 ? 2 * fee / (qty * lossPer) : null; out.qtyMin = lossPer > 0 && fee > 0 ? Math.ceil(2 * fee / (0.1 * lossPer)) : null;
+      if (out.tp1) out.atTp1Half = half * out.tp1.diff - (half > 0 ? 2 : 1) * fee; // Haelfte bei TP1 verkauft, Rest auf Einstand ausgestoppt
+      if (out.target){ out.atTarget = qty * out.target.diff - 2 * fee; if (out.tp1) out.atPlan = half * out.tp1.diff + rest * out.target.diff - (half > 0 ? 3 : 2) * fee; } } }
+  return out;
+}
 // Positionsgroesse: Risiko in Euro geteilt durch Verlust je Einheit bis zum Stop; optional Knock-out mit Bezugsverhaeltnis
 function positionSize(p){
   var dist = Math.abs(p.entry - p.stop), conv = p.conv;
@@ -3219,7 +3249,7 @@ async function tradeRoute(request, headers, env, nowMs) {
       scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix', 'creme'].includes(b.quality) ? b.quality : 'creme',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
-      swing: b.swing !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, tight: !!b.tight, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
+      swing: b.swing !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, tight: !!b.tight, ibsMax1: !!b.ibsMax1, ibsCand: t.ibsCand || null, ibsPick: t.ibsPick || null, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null) };
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
@@ -3314,6 +3344,19 @@ async function calCfg(env, nowMs) {
       Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win }; });
       const groups = {}; ['ibs:laender'].forEach((k) => { if (j.sets && j.sets[k] && j.sets[k].syms) groups[k] = j.sets[k].syms; });
       return { passed: j.passed || [], stats, groups };
+    });
+    return c.data || {};
+  } catch (e) { return {}; }
+}
+// Aktien-Korb (backtest-stocks.json): die 10 staerksten DAX-Aktien, wird am Monatsanfang neu gerechnet
+async function korbCfg(env, nowMs) {
+  try {
+    const c = await cachedKV(env, 'mkt:korb', 3 * 3600e3, nowMs, async () => {
+      if (!env.PAGES_URL) return {};
+      const r = await fetch(env.PAGES_URL + 'dienst/backtest-stocks.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA });
+      if (!r.ok) return {};
+      const k = (await r.json()).korb;
+      return k && k.top ? { day: k.day, month: k.month, passed: !!k.passed, top: k.top.map((x) => x.name), in: k.in || [], out: k.out || [], perf: k.perf ? { s: k.perf.s, b: k.perf.b } : null } : {};
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -3734,7 +3777,13 @@ async function runTrade(env, nowMs) {
       const d3On = (qc.passed || []).includes('mr:down3'), pwOf = (key2) => cs[key2] && cs[key2].n ? { n: cs[key2].n, win: cs[key2].win } : null;
       const stTxt = (x) => x && x.n ? x.n + ' Trades, ' + Math.round(x.win * 100) + ' % Gewinner, Ø +' + x.mean.toFixed(2).replace('.', ',') + ' % nach Kosten' : '';
       let budget = 10;
+      // Hoechstens 1 Abend-Signal: erst alle Maerkte pruefen und Kandidaten sammeln, dann nur das staerkste melden (nach Ø-Ergebnis der Rueckrechnung, dann tieferer IBS)
+      const max1 = !!t.ibsMax1 && win; if (max1 && (!t.ibsCand || t.ibsCand.day !== dayKey)) { t.ibsCand = { day: dayKey, list: [] }; dirty = true; }
+      const picked = (k) => t.ibsPick && t.ibsPick.day === dayKey && t.ibsPick.k === k;
+      const pickNote = (k) => { if (!picked(k)) return ''; const o = t.ibsPick.others || []; return ' ⭐ Stärkstes von ' + (o.length + 1) + ' Abend-Signalen heute, du nimmst höchstens eins.' + (o.length ? ' Ebenfalls am Tagestief: ' + o.slice(0, 5).join(', ') + '.' : ''); };
+      const runLoop = async (only) => {
       for (const ins of uni) {
+        if (only && ins.k !== only) continue;
         const k = ins.k, pos = t.ibsPos.find((p) => p.k === k && p.state === 'offen');
         if (!win && !pos) continue;
         if (!pos && t.ibsSent[k] === dayKey) continue;
@@ -3779,20 +3828,34 @@ async function runTrade(env, nowMs) {
         const prev = d1[d1.length - 2], isIbs = last.c > sma && ib < 0.2, isTT = ttOn && TT.includes(ins.y) && last.c < prev.c && ib < 0.3;
         const isD3 = d3On && !ins.land && last.c > sma && last.c < prev.c && prev.c < d1[d1.length - 3].c && d1[d1.length - 3].c < d1[d1.length - 4].c;
         if (!atr || !(isIbs || isTT || isD3)) continue;
+        if (max1 && !picked(k)) { // nur vormerken
+          const rsQ = TL.rsiSeries(d1, 2).pop(), dblQ = isIbs && rsQ != null && rsQ < 10, mOf = (key2) => cs[key2] && cs[key2].n ? cs[key2].mean : 0;
+          const mean = isIbs ? (ins.land ? mOf('ibs:laender') : dblQ ? mOf('mr:both') : ib < 0.1 ? mOf('ibs:t00_10') : mOf('ibs:t10_20')) : isTT ? mOf('tt:hold_us') : mOf('mr:down3');
+          t.ibsCand.list.push({ k, name: ins.name, mean, ib }); dirty = true; continue; }
         if (!isIbs && !isTT) { // nur drei Verlusttage in Folge im Aufwaertstrend: Verkauf, sobald ein Schluss ueber dem 5-Tage-Schnitt liegt (max. 7 Tage)
           const idD = k + ':d3:' + dayKey, stD = last.c - 3 * atr, pwD = pwOf('mr:down3');
           t.ibsPos.push({ id: idD, kind: 'd3', k, name: ins.name, entry: last.c, stop: stD, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', pw: pwD });
-          await send('b:' + idD, { pw: pwD, d: { k, dir: 1, entry: last.c, stop: stD, kind: 'd3' }, title: 'Drei Verlusttage · ' + ins.name, body: ins.name + ' Long (Drei Verlusttage): dritter schwächerer Schluss in Folge im Aufwärtstrend. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stD, k) + '. Verkauft wird, sobald ein Tag über dem 5-Tage-Schnitt schließt, spätestens nach 7 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (cs['mr:down3'] ? ' Ø +' + cs['mr:down3'].mean.toFixed(2).replace('.', ',') + ' % je Trade nach Kosten.' : ''), tag: 'ibs-' + k, url: './' });
+          await send('b:' + idD, { pw: pwD, d: { k, dir: 1, entry: last.c, stop: stD, kind: 'd3' }, title: 'Drei Verlusttage · ' + ins.name, body: ins.name + ' Long (Drei Verlusttage): dritter schwächerer Schluss in Folge im Aufwärtstrend. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stD, k) + '. Verkauft wird, sobald ein Tag über dem 5-Tage-Schnitt schließt, spätestens nach 7 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (cs['mr:down3'] ? ' Ø +' + cs['mr:down3'].mean.toFixed(2).replace('.', ',') + ' % je Trade nach Kosten.' : '') + pickNote(k), tag: 'ibs-' + k, url: './' });
           continue; }
         if (!isIbs) { // nur Turnaround Tuesday: schwacher Montag, Verkauf sobald ein Schluss ueber dem Vortageshoch liegt (max. 4 Tage)
           const idT = k + ':tt:' + dayKey, stT = last.c - 3 * atr;
           t.ibsPos.push({ id: idT, kind: 'tt', k, name: ins.name, entry: last.c, stop: stT, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', pw: pwOf('tt:hold_us') });
-          await send('b:' + idT, { pw: pwOf('tt:hold_us'), d: { k, dir: 1, entry: last.c, stop: stT, kind: 'tt' }, title: 'Turnaround Tuesday · ' + ins.name, body: ins.name + ' Long (Turnaround Tuesday): schwacher Montag, Schluss im unteren Drittel der Tagesspanne (IBS ' + ib.toFixed(2).replace('.', ',') + '). Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stT, k) + '. Verkauft wird, sobald ein Tag über dem Hoch des Vortags schließt, spätestens nach 4 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (stTxt(cs['tt:hold_us']) ? ' Rückrechnung: ' + stTxt(cs['tt:hold_us']) + '.' : ''), tag: 'ibs-' + k, url: './' });
+          await send('b:' + idT, { pw: pwOf('tt:hold_us'), d: { k, dir: 1, entry: last.c, stop: stT, kind: 'tt' }, title: 'Turnaround Tuesday · ' + ins.name, body: ins.name + ' Long (Turnaround Tuesday): schwacher Montag, Schluss im unteren Drittel der Tagesspanne (IBS ' + ib.toFixed(2).replace('.', ',') + '). Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stT, k) + '. Verkauft wird, sobald ein Tag über dem Hoch des Vortags schließt, spätestens nach 4 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (stTxt(cs['tt:hold_us']) ? ' Rückrechnung: ' + stTxt(cs['tt:hold_us']) + '.' : '') + pickNote(k), tag: 'ibs-' + k, url: './' });
           continue; }
         const rs2 = TL.rsiSeries(d1, 2).pop(), dbl = rs2 != null && rs2 < 10, deep = ib < 0.1, strong = deep || dbl;
         const id = k + ':ibs:' + dayKey, stop = last.c - 3 * atr;
         t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', dbl, pw: pwOf(ins.land ? 'ibs:laender' : (dbl ? 'mr:both' : (deep ? 'ibs:t00_10' : 'ibs:t10_20'))) || (s0 && s0.n ? { n: s0.n, win: s0.win } : null) });
-        await send('b:' + id, { pw: t.ibsPos[t.ibsPos.length - 1].pw, d: { k, dir: 1, entry: last.c, stop, kind: 'ibs', q: strong ? 'stark' : 'leicht' }, title: (dbl ? '⭐ Doppelsignal · ' : (deep ? 'IBS-Signal (tief) · ' : 'IBS-Signal (leicht) · ')) + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + (dbl ? ' ⭐ Zusätzlich RSI-2 unter 10: die stärkere Variante' + (stTxt(cs['mr:both']) ? ' (' + stTxt(cs['mr:both']) + ')' : '') + '. Wenn das Risikobudget knapp ist, diese zuerst.' : '') + (isTT ? ' Dazu schwacher Montag (Turnaround Tuesday).' : '') + (isD3 ? ' Dazu der dritte Verlusttag in Folge.' : '') + (!strong && cs['ibs:t10_20'] ? ' Leichte Variante (IBS 0,1 bis 0,2): im Schnitt nur Ø +' + cs['ibs:t10_20'].mean.toFixed(2).replace('.', ',') + ' %, kaum mehr als einfach investiert zu sein. Halbe Größe oder auslassen.' : '') + (deep && !dbl && cs['ibs:t00_10'] ? ' Tiefe Variante (IBS unter 0,1): ' + stTxt(cs['ibs:t00_10']) + '.' : '') + (ins.land ? ' Länder-ETF: ' + (stTxt(cs['ibs:laender']) || 'als Gruppe geprüft') + '. Nur kaufen, wenn die Spanne zwischen Kauf- und Verkaufskurs unter 0,15 % liegt, sonst frisst sie den Vorteil.' : ''), tag: 'ibs-' + k, url: './' });
+        await send('b:' + id, { pw: t.ibsPos[t.ibsPos.length - 1].pw, d: { k, dir: 1, entry: last.c, stop, kind: 'ibs', q: strong ? 'stark' : 'leicht' }, title: (dbl ? '⭐ Doppelsignal · ' : (deep ? 'IBS-Signal (tief) · ' : 'IBS-Signal (leicht) · ')) + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + (dbl ? ' ⭐ Zusätzlich RSI-2 unter 10: die stärkere Variante' + (stTxt(cs['mr:both']) ? ' (' + stTxt(cs['mr:both']) + ')' : '') + '. Wenn das Risikobudget knapp ist, diese zuerst.' : '') + (isTT ? ' Dazu schwacher Montag (Turnaround Tuesday).' : '') + (isD3 ? ' Dazu der dritte Verlusttag in Folge.' : '') + (!strong && cs['ibs:t10_20'] ? ' Leichte Variante (IBS 0,1 bis 0,2): im Schnitt nur Ø +' + cs['ibs:t10_20'].mean.toFixed(2).replace('.', ',') + ' %, kaum mehr als einfach investiert zu sein. Halbe Größe oder auslassen.' : '') + (deep && !dbl && cs['ibs:t00_10'] ? ' Tiefe Variante (IBS unter 0,1): ' + stTxt(cs['ibs:t00_10']) + '.' : '') + (ins.land ? ' Länder-ETF: ' + (stTxt(cs['ibs:laender']) || 'als Gruppe geprüft') + '. Nur kaufen, wenn die Spanne zwischen Kauf- und Verkaufskurs unter 0,15 % liegt, sonst frisst sie den Vorteil.' : '') + pickNote(k), tag: 'ibs-' + k, url: './' });
+      }
+      };
+      await runLoop(null);
+      if (max1 && !(t.ibsPick && t.ibsPick.day === dayKey)) {
+        const allDone = uni.every((i) => t.ibsSent[i.k] === dayKey || t.ibsPos.some((p) => p.k === i.k && p.state === 'offen')), late = ny >= 15 * 60 + 50, L2 = t.ibsCand.list;
+        if (L2.length && (allDone || late)) {
+          L2.sort((a, b) => (b.mean - a.mean) || (a.ib - b.ib)); const best = L2[0];
+          t.ibsPick = { day: dayKey, k: best.k, others: L2.slice(1).map((c) => c.name) }; dirty = true; delete t.ibsSent[best.k]; budget = 3;
+          await runLoop(best.k);
+        }
       }
     }
     t.ibsPos = t.ibsPos.filter((p) => p.state === 'offen' || nowMs - (p.exitAt || p.at) < 3 * 86400e3);
@@ -3852,6 +3915,16 @@ async function runTrade(env, nowMs) {
             await send('eomx:' + mk, { title: 'Monatsende · US-Anleihen verkaufen', body: 'Letzter Handelstag des Monats: US-Anleihen jetzt zum Schluss verkaufen.' + (pc != null ? ' TLT seit dem Kauf: ' + (pc >= 0 ? '+' : '−') + Math.abs(pc).toFixed(2).replace('.', ',') + ' % (in Dollar).' : ''), tag: 'eom', url: './' }); }
         }
       }
+    }
+  }
+  // 10c) Aktien-Korb: am Monatsanfang die 10 staerksten DAX-Aktien, Meldung um 8:30 Uhr mit den Wechseln
+  if (t.depotOn !== false && weekday && clk.min >= 8 * 60 + 30 && clk.min < 8 * 60 + 45) {
+    const kb = await korbCfg(env, nowMs);
+    if (kb.passed && kb.day && t.korbDay !== kb.day && nowMs - Date.parse(kb.day) < 12 * 86400e3) {
+      const first = !t.korbDay, pf = kb.perf, pc = (x) => String(x).replace('.', ','); t.korbDay = kb.day; dirty = true;
+      const chg = first || (!kb.in.length && !kb.out.length) ? '' : 'Verkaufen: ' + (kb.out.join(', ') || 'nichts') + '. Kaufen: ' + (kb.in.join(', ') || 'nichts') + '. ';
+      await send('korb:' + kb.day, { title: 'Aktien-Korb · ' + (first ? 'Start' : kb.in.length ? kb.in.length + ' Wechsel' : 'keine Änderung'),
+        body: (first ? 'Die 10 stärksten DAX-Aktien der letzten 12 Monate, gleich gewichtet: ' : chg + 'Der Korb für diesen Monat: ') + kb.top.join(', ') + '. Heute zum Xetra-Handel (ab 9 Uhr) umsetzen, bis zum nächsten Monatsanfang halten. Ohne Hebel, als Aktie bei Trade Republic.' + (pf && pf.s && pf.b ? ' Rückrechnung seit 2010: +' + pc(pf.s.cagr) + ' % pro Jahr gegenüber +' + pc(pf.b.cagr) + ' % für alle DAX-Aktien gleich gewichtet, größter Rückgang ' + pf.s.maxDD + ' %.' : ''), tag: 'korb', url: './', d: { kind: 'korb', top: kb.top, in: kb.in, out: kb.out } });
     }
   }
   // 11) Morgen-Briefing (07:45) und Abend-Bilanz (22:15) an Werktagen: Lage, Termine, offene Positionen, Ergebnis des Tages

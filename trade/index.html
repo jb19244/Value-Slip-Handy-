@@ -137,6 +137,7 @@ details.more[open] summary::after{content:"−"}
 .cpill{display:inline-block;margin-top:3px;padding:2px 7px;border-radius:7px;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
 .cpill.good{background:var(--good-bg);color:var(--good)} .cpill.bad{background:var(--bad-bg);color:var(--bad)}
 .mini{width:64px;height:28px;display:block}
+.kb{list-style:none;margin:10px 0 4px;padding:0;counter-reset:kb}.kb li{counter-increment:kb;display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line,rgba(128,128,128,.18));font-size:15px}.kb li:last-child{border-bottom:0}.kb-n:before{content:counter(kb);display:inline-block;width:22px;color:var(--muted,#888);font-variant-numeric:tabular-nums;font-size:13px}.kb-n em{font-style:normal;font-size:11px;font-weight:600;padding:2px 6px;border-radius:6px;margin-left:6px;background:rgba(48,180,110,.16);color:#22a565}.kb-m{font-variant-numeric:tabular-nums;font-weight:600}.kb-chg{display:flex;flex-direction:column;gap:2px;font-size:13px;margin:6px 0 0}.kb-pf{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0 2px}.kb-pf div{display:flex;flex-direction:column;gap:2px}.kb-pf b{font-size:17px;font-variant-numeric:tabular-nums}
 .depot{padding:6px 0 4px}
 .depot .bigpx{font-size:40px}
 .lv .acts{display:flex;gap:4px}
@@ -2311,7 +2312,7 @@ function viewHeute(){
   h += radarCard() + inboxCard() + briefCard() + dayCard;
   h += viewCockpit();
   h += trainCard();
-  h += viewDepot();
+  h += viewDepot() + viewKorb();
   h += '<section class="card"><div class="row"><h2>Termine</h2><button class="link small" data-act="tab" data-t="markt">alle</button></div>' +  (V.cal ? viewCal(4) : '<div class="loading"><span class="spin"></span> lädt …</div>') + '</section>';
   // Papierkonto
   h += '<section class="card"><div class="row"><h2>Papierkonto</h2><span class="muted small">alle Signale mit ' + fmt(S.cfg.risk, 1) + ' % Risiko</span></div>' +
@@ -2417,7 +2418,7 @@ function briefCard(){
 }
 // ================= Meldungen: jede Push-Meldung in voller Laenge, Antippen oeffnet sie direkt =================
 function msgIcon(m){ var d = m.d || {}, t = (m.title || '') + ' ' + (m.t || '');
-  return d.kind === 'fill' ? '🎯' : d.kind === 'finder' ? '🔎' : d.kind === 'd3' ? '📈' : d.kind === 'intra' || d.kind === 'orb' ? '⚡' : d.kind === 'ibs' || d.kind === 'tt' || d.kind === 'swing' ? '📈' : /Briefing/.test(t) ? '☀️' : /Bilanz|Wochenbericht/.test(t) ? '📊' : /TP1|Ziel erreicht|✅/.test(t) ? '✅' : /Stop|❌/.test(t) ? '❌' : /Termin|In \d+ Min/.test(t) ? '📅' : '🔔'; }
+  return d.kind === 'fill' ? '🎯' : d.kind === 'finder' ? '🔎' : d.kind === 'korb' ? '🧺' : d.kind === 'd3' ? '📈' : d.kind === 'intra' || d.kind === 'orb' ? '⚡' : d.kind === 'ibs' || d.kind === 'tt' || d.kind === 'swing' ? '📈' : /Briefing/.test(t) ? '☀️' : /Bilanz|Wochenbericht/.test(t) ? '📊' : /TP1|Ziel erreicht|✅/.test(t) ? '✅' : /Stop|❌/.test(t) ? '❌' : /Termin|In \d+ Min/.test(t) ? '📅' : '🔔'; }
 function msgTitle(m){ return m.title && m.title !== 'Trade Check' ? m.title : (String(m.t || '').split(/[:.]/)[0] || 'Meldung').slice(0, 60); }
 // Radar: Wie nah ist jeder US-Markt am IBS-Signal, und was fehlt der Intraday-Stufe? Der Dienst rechnet stuendlich waehrend der US-Sitzung.
 function radarCard(){
@@ -2483,6 +2484,7 @@ function evid(k){
   if (k === 'd3') return daily(s['mr:down3']);
   if (k === 'creme' || k === 'bplus' || k === 'finder') return 'probe';
   if (k === 'depot') return 'stark';
+  if (k === 'korb') return V.bk && V.bk.korb && V.bk.korb.passed ? 'mittel' : null;
   return null;
 }
 function evidPill(k){ var e = evid(k); return e ? '<span class="evb evb-' + e + '">' + ({ stark: 'Beleg stark', mittel: 'Beleg mittel', probe: 'in Bewährung' })[e] + '</span>' : ''; }
@@ -3101,6 +3103,30 @@ function viewDepot(){
       '<div class="muted small">' + fmt(d.all.cagr, 1) + ' % pro Jahr, größter Verlust −' + fmt(d.all.maxdd, 0) + ' % · Kaufen und Halten (' + esc(d.bench === 'SPY' ? 'S&P 500' : (DEPOT_NAMES[d.bench] || d.bench)) + '): ' + fmt(d.bh.cagr, 1) + ' % pro Jahr, −' + fmt(d.bh.maxdd, 0) + ' %' + (d.note ? ' · ' + esc(d.note) : '') + '</div></div>'; }).join('') +
     '</section>';
 }
+// ================= Aktien-Korb: die 10 staerksten DAX-Aktien, monatlicher Tausch =================
+function viewKorb(){
+  var k = V.bk && V.bk.korb; if (!k || !k.passed || !k.top) return '';
+  var mon = function(m){ if (!m) return ''; var p = m.split('-'); return ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'][+p[1] - 1] + ' ' + p[0]; };
+  var pf = k.perf || {}, a = pf.s, b = pf.b, acct = +S.cfg.account || 0, per = acct ? acct / 10 : 0;
+  var h = '<section class="card" id="korb"><div class="row"><h2>Aktien-Korb</h2><span class="evb evb-mittel">Beleg mittel</span></div>' +
+    '<p class="rd-sum"><b>' + esc(mon(k.month)) + ':</b> die 10 stärksten DAX-Aktien, je ein Zehntel. Am Monatsanfang tauschen, sonst nichts tun.</p>';
+  if ((k.in && k.in.length) || (k.out && k.out.length)) h += '<div class="kb-chg"><span class="good">Neu: ' + esc((k.in || []).join(', ') || '–') + '</span><span class="bad">Raus: ' + esc((k.out || []).join(', ') || '–') + '</span></div>';
+  h += '<ol class="kb">' + k.top.map(function(x){ var neu = (k.in || []).indexOf(x.name) >= 0; return '<li><span class="kb-n">' + esc(x.name) + (neu ? ' <em>neu</em>' : '') + '</span><span class="kb-m ' + (x.m >= 0 ? 'good' : 'bad') + '">' + sgn(x.m, 0) + ' %</span></li>'; }).join('') + '</ol>';
+  if (a && b) h += '<div class="kb-pf"><div><span class="muted small">Korb pro Jahr</span><b class="good">+' + fmt(a.cagr, 1) + ' %</b></div><div><span class="muted small">Alle DAX-Aktien</span><b>+' + fmt(b.cagr, 1) + ' %</b></div><div><span class="muted small">Größter Rückgang</span><b>−' + fmt(a.maxDD, 0) + ' %</b></div></div>';
+  h += more('Prozent = Kursgewinn der letzten 12 Monate ohne den jüngsten Monat. Als Aktie kaufen, ohne Hebel.' + (per && per < 500 ? ' Bei ' + eur(per) + ' je Aktie kostet die Gebühr von 1 € spürbar: besser nur die ersten 5 nehmen oder seltener tauschen.' : ''),
+    'Regel aus der Forschung (Momentum, Jegadeesh und Titman): Aktien, die 12 Monate stark waren, bleiben im Schnitt noch Monate stark. Gerechnet mit den DAX-Mitgliedern von 2010 ab 2010, also auch mit späteren Verlierern, mit Kosten bei jedem Tausch. Besser als alle DAX-Aktien gleich gewichtet in allen drei Zeitabschnitten, auch mit 8 oder 12 Aktien, mit 9 Monaten Rückblick und mit dreifachen Kosten. Mit US-Aktien hat dieselbe Regel nicht bestanden, kurzfristige Signale auf Einzelaktien ebenfalls nicht. Der Korb fällt in einem Crash mit dem Markt: Rückgänge von einem Viertel kamen vor.' + (k.day ? ' Stand der Rangliste: ' + esc(k.day.split('-').reverse().join('.')) + '.' : ''));
+  return h + '</section>';
+}
+function viewKorbSets(){
+  var b = V.bk; if (!b || !b.basket) return '';
+  var ks = Object.keys(b.basket).sort(function(x, y){ return (b.basket[y].passed ? 1 : 0) - (b.basket[x].passed ? 1 : 0); });
+  var st = Object.keys(b.sets || {}).filter(function(k){ return /:close$/.test(k); });
+  return '<div class="label" style="margin-top:14px">Einzelaktien (Index-Mitglieder von 2010, getestet ab 2010)</div><table class="st"><tr><th>&nbsp;</th><th>% p. a.</th><th>Vergleich</th><th>Rückgang</th></tr>' + ks.map(function(k){ var x = b.basket[k], a = x.all || {}, c = x.bh || {};
+    return '<tr><td>' + (x.passed ? '✅ ' : '') + esc(x.name) + (/teuer/.test(k) ? ' (dreifache Kosten)' : /k6/.test(k) ? ' (6 Monate Rückblick)' : /k9/.test(k) ? ' (9 Monate Rückblick)' : '') + '</td><td class="' + (a.cagr > c.cagr ? 'good' : 'bad') + '">' + sgn(a.cagr, 1) + '</td><td class="muted">' + sgn(c.cagr, 1) + '</td><td class="muted">−' + fmt(a.maxDD, 0) + ' %</td></tr>'; }).join('') + '</table>' +
+    (st.length ? '<table class="st" style="margin-top:8px"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø %</th><th>Jahre +</th></tr>' + st.map(function(k){ var x = b.sets[k], a = x.all || {};
+      return '<tr><td>' + (x.passed ? '✅ ' : '') + esc(x.name) + '</td><td>' + (a.n || 0) + '</td><td>' + (a.n ? fmt(a.win * 100, 0) + ' %' : '–') + '</td><td class="' + ((a.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (a.n ? sgn(a.mean, 2) : '–') + '</td><td class="muted">' + (x.yearsN ? x.yearsUp + '/' + x.yearsN : '–') + '</td></tr>'; }).join('') + '</table>' : '') +
+    '<p class="hint">Vergleich = alle Aktien des Index gleich gewichtet. ✅ beim Korb = mehr Rendite und bessere Rendite pro Risiko in allen drei Zeitabschnitten. Live ist der Korb aus den 10 stärksten DAX-Aktien. Die kurzfristigen Signale (RSI-2, IBS, Verlusttage, Ausbruch) haben auf Einzelaktien keinen Zeitraum-festen Vorteil gezeigt und bleiben aus.</p>';
+}
 function viewProSets(){
   var b = V.bp; if (!b || !b.sets) return '';
   var nm = { 'pairs:daily': 'Pairs Trading (20 Paare, Tageskerzen)', 'smallcap:gapgo': 'Small-Cap Gap and Go', 'smallcap:gapgoR': 'Small-Cap Gap and Go (R)' }, u = function(k){ return /pairs/.test(k) ? ' %' : ' R'; };
@@ -3113,7 +3139,7 @@ function viewResearch(){
   return '<section class="card"><div class="row"><h2>Strategien aus der Forschung</h2><span class="muted small">' + esc(dm(Date.parse(b.at))) + '</span></div>' +
     '<p class="hint" style="margin-top:4px">ORB „Stocks in Play“ (5 Min, ' + (b.orbDays || 0) + ' Handelstage, 45 US-Aktien), Connors RSI-2 auf Tageskerzen (bis 10 Jahre), News-Fehlausbruch und -Momentum (15 Min). Mit Kosten, Prüfung in drei Zeiträumen. ✅ = in allen dreien mindestens +0,05 R.</p>' +
     '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
-    viewMoreSets() + viewCalSets() + viewScalpSets() + viewFxSets() + viewProSets() +
+    viewMoreSets() + viewCalSets() + viewKorbSets() + viewScalpSets() + viewFxSets() + viewProSets() +
     (b.orbGross && b.orbGross.n ? '<p class="hint">ORB Top 3 ohne Kosten: Ø ' + sgn(b.orbGross.mean, 2) + ' R. Der Unterschied zeigt, wie viel Spread und Gebühren bei so engen Stops kosten.</p>' : '') + '</section>';
 }
 function viewBt(){
@@ -3212,9 +3238,10 @@ function viewMehr(){
       '<label class="switch"><span>ORB „Stocks in Play“ (US-Eröffnung)</span><input type="checkbox" data-push="orb"' + (p.orb !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Swing RSI-2 (abends, Haltedauer Tage)</span><input type="checkbox" data-push="swing"' + (p.swing !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>IBS-Mean-Reversion (US-Märkte, kurz vor Schluss)</span><input type="checkbox" data-push="ibs"' + (p.ibs !== false ? ' checked' : '') + '></label>' +
+      '<label class="switch"><span>Abends höchstens 1 Signal (das stärkste aus IBS, Doppelsignal, Turnaround Tuesday, Drei Verlusttage)</span><input type="checkbox" data-push="ibsMax1"' + (p.ibsMax1 !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Nur Märkte mit engem Spread (Index-Knock-outs, keine ETF-Signale)</span><input type="checkbox" data-push="tight"' + (p.tight ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Trade Finder ab 16 Uhr (unbelegt, bis 5 am Tag)</span><input type="checkbox" data-push="finder"' + (p.finder !== false ? ' checked' : '') + '></label>' +
-      '<label class="switch"><span>Depot-Strategien (monatlich)</span><input type="checkbox" data-push="depot"' + (p.depot !== false ? ' checked' : '') + '></label>' +
+      '<label class="switch"><span>Depot-Strategien und Aktien-Korb (monatlich)</span><input type="checkbox" data-push="depot"' + (p.depot !== false ? ' checked' : '') + '></label>' +
       '<p class="hint">Diese Strategien melden sich nur, solange sie die Rückrechnung bestehen (siehe Tagebuch → Strategien aus der Forschung).</p>' +
       '<label class="switch"><span>Hauptzeiten (08:00 und 14:30)</span><input type="checkbox" data-push="kz"' + (p.kz ? ' checked' : '') + '></label>' +
       '<div class="label" style="margin-top:6px">News-Warnung vorher</div><div class="seg" style="margin-top:6px">' + [10, 15, 30].map(function(m){ return '<button data-act="lead" data-m="' + m + '" aria-pressed="' + (p.lead === m) + '">' + m + ' Min</button>'; }).join('') + '</div>' +
@@ -3237,7 +3264,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -3382,6 +3409,7 @@ render = function(){ _render(); bind($('#page')); };
 try { var qs = new URLSearchParams(location.search).get('sig'); if (qs) V.wantSig = qs; } catch (e) {}
 fetch('../dienst/backtest-fx.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.tf){ V.bf = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-scalp.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bs = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
+fetch('../dienst/backtest-stocks.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.korb){ V.bk = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-cal.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bc = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-pro.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bp = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-more.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bm = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
