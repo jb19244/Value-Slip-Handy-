@@ -90,7 +90,7 @@ for (const [reg, list, ix] of [['us', out.uni.us, '^GSPC'], ['de', out.uni.de, '
   const I = D[ix], days = I.filter((x) => x.t >= Date.parse('2008-06-01')).map((x) => L.dayOf(x.t)), ii = idxOfDay(I);
   const P = {}; list.forEach((s) => { const m = idxOfDay(D[s]); let last = null; P[s] = days.map((d) => { if (m[d] != null) last = D[s][m[d]].c; return last; }); });
   const ends = []; for (let k = 0; k < days.length - 1; k++) if (days[k].slice(0, 7) !== days[k + 1].slice(0, 7)) ends.push(k);
-  for (const [nm, N, filt, lb, cst] of [['mom5', 5, true, 252, COST_ST], ['mom10', 10, true, 252, COST_ST], ['mom5roh', 5, false, 252, COST_ST], ['mom8', 8, true, 252, COST_ST], ['mom12', 12, true, 252, COST_ST], ['mom10k6', 10, true, 126, COST_ST], ['mom8k6', 8, true, 126, COST_ST], ['mom10k9', 10, true, 189, COST_ST], ['mom10teuer', 10, true, 252, 0.4], ['mom10roh', 10, false, 252, COST_ST]]) {
+  for (const [nm, N, filt, lb, cst] of [['mom5', 5, true, 252, COST_ST], ['mom10', 10, true, 252, COST_ST], ['mom5roh', 5, false, 252, COST_ST], ['mom8', 8, true, 252, COST_ST], ['mom12', 12, true, 252, COST_ST], ['mom10k6', 10, true, 126, COST_ST], ['mom8k6', 8, true, 126, COST_ST], ['mom10k9', 10, true, 189, COST_ST], ['mom10teuer', 10, true, 252, 0.4], ['mom10roh', 10, false, 252, COST_ST], ['mom8roh', 8, false, 252, COST_ST], ['mom12roh', 12, false, 252, COST_ST], ['mom10rohk6', 10, false, 126, COST_ST], ['mom10rohk9', 10, false, 189, COST_ST], ['mom5rohk6', 5, false, 126, COST_ST], ['mom10rohteuer', 10, false, 252, 0.5], ['mom5rohteuer', 5, false, 252, 0.5]]) {
     const rs = [], bs = [], ms = []; let prev = [];
     for (let e = 0; e < ends.length - 1; e++) { const t = ends[e], t2 = ends[e + 1]; if (t < 252 || days[t] < '2010-01-01') continue;
       const cand = list.filter((s) => P[s][t - 252] && P[s][t - 21] && P[s][t] && P[s][t2]).map((s) => ({ s, m: P[s][t - 21] / P[s][t - lb] - 1, r: P[s][t2] / P[s][t] - 1 }));
@@ -104,6 +104,7 @@ for (const [reg, list, ix] of [['us', out.uni.us, '^GSPC'], ['de', out.uni.de, '
     const th = Math.floor(rs.length / 3), parts = [[0, th], [th, 2 * th], [2 * th, rs.length]].map(([x, y]) => ({ s: perf(rs.slice(x, y)), b: perf(bs.slice(x, y)), from: ms[x], to: ms[y - 1] }));
     const o = { name: (reg === 'us' ? 'US-Aktien' : 'DAX-Aktien') + ': die ' + N + ' stärksten der letzten 12 Monate, monatlicher Tausch' + (filt ? ', nur wenn der Index über dem 200-Tage-Schnitt liegt' : ''), all: perf(rs), bh: perf(bs), parts };
     o.passed = !!(o.all && o.all.sharpe > o.bh.sharpe && o.all.cagr > o.bh.cagr && parts.every((p) => p.s && p.b && p.s.sharpe > p.b.sharpe));
+    { const t = ends[ends.length - 1], c2 = list.filter((s) => P[s][t - lb] && P[s][t - 21] && P[s][t]).map((s) => ({ s, m: +((P[s][t - 21] / P[s][t - lb] - 1) * 100).toFixed(1) })).sort((x, y) => y.m - x.m); o.now = { day: days[t], top: c2.slice(0, N) }; }
     out.basket[reg + ':' + nm] = o;
     console.log((o.passed ? 'KORB OK ' : 'KORB -- ') + (reg + ':' + nm).padEnd(12), 'Strategie', JSON.stringify(o.all), '| alle gleich gewichtet', JSON.stringify(o.bh), '|', parts.map((p) => p.from + ' S ' + p.s.sharpe + '/' + p.b.sharpe + ' R ' + p.s.cagr + '/' + p.b.cagr).join(' | '));
   }
