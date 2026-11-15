@@ -1658,11 +1658,11 @@ function riskBudget(open, y, cfg){
   return { cluster: c, risk: Math.max(0, Math.round(room * 100) / 100), full: room < riskP * 0.25, why: why, same: same, tot: Math.round(tot * 100) / 100, cl: Math.round(cl * 100) / 100, capC: capC, heat: heat, riskP: riskP };
 }
 // ================= Strategie-Gruppen fuer Schatten-Bot und Live-Pruefung =================
-var GROUP_NAMES = { ibs: 'IBS (US)', laender: 'IBS Länder-ETFs', tt: 'Turnaround Tuesday', d3: 'Drei Verlusttage', rsi2: 'Swing RSI-2', creme: 'Crème (Intraday)', bplus: 'B+ (Intraday)', intra: 'Intraday', finder: 'Trade Finder', orb: 'ORB', auto: 'Neu entdeckt' };
+var GROUP_NAMES = { dtb: 'DAX-Trend-Ausbruch', ibs: 'IBS (US)', laender: 'IBS Länder-ETFs', tt: 'Turnaround Tuesday', d3: 'Drei Verlusttage', rsi2: 'Swing RSI-2', creme: 'Crème (Intraday)', bplus: 'B+ (Intraday)', intra: 'Intraday', finder: 'Trade Finder', orb: 'ORB', auto: 'Neu entdeckt' };
 function groupOf(x){
   if (x.g) return x.g;
   var c = String(x.cls || '');
-  return c === 'IBS' ? 'ibs' : c === 'Turnaround Tuesday' ? 'tt' : c === 'Drei Verlusttage' ? 'd3' : /^Swing/.test(c) ? 'rsi2' : c === 'Finder' ? 'finder' : c === 'ORB' ? 'orb' : /Crème|Creme/.test(c) ? 'creme' : c === 'B+' ? 'bplus' : 'intra';
+  return c === 'DAX-Ausbruch' ? 'dtb' : c === 'IBS' ? 'ibs' : c === 'Turnaround Tuesday' ? 'tt' : c === 'Drei Verlusttage' ? 'd3' : /^Swing/.test(c) ? 'rsi2' : c === 'Finder' ? 'finder' : c === 'ORB' ? 'orb' : /Crème|Creme/.test(c) ? 'creme' : c === 'B+' ? 'bplus' : 'intra';
 }
 function groupName(g, x){ return /^auto:/.test(g) ? 'Neu: ' + ((x && x.gn) || g.slice(5)) : (GROUP_NAMES[g] || g); }
 function dailyGroup(g){ return /^(ibs|laender|tt|d3|rsi2)$/.test(g) || /^auto:/.test(g); }
@@ -2568,6 +2568,8 @@ function openCard(ts){
     rows.push('<div class="trade"><div class="row"><span>' + pill(p, p.kind === 'tt' ? 'Turnaround' : p.kind === 'd3' ? 'Verlusttage' : 'IBS') + '<b>' + esc(p.name) + '</b></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : (p.skip ? 'ausgelassen' : 'offen')) + '</span></div><div class="muted small">Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + ' · ' + exitOf(p) + '</div></div>'); });
   (V.swingPos || []).filter(function(p){ return p.state === 'wartet' || p.state === 'offen' || now - (p.exitAt || p.at) < 86400e3; }).forEach(function(p){ var i = instr(p.k) || { dec: 2 };
     rows.push('<div class="trade"><div class="row"><span>' + pill(p, 'Swing') + '<b>' + esc(p.name) + '</b></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Kauf zur Eröffnung' : 'offen')) + '</span></div><div class="muted small">' + (p.entry ? 'Einstieg ' + fmt(p.entry, i.dec) + ' · ' : 'zuletzt ' + fmt(p.ref, i.dec) + ' · ') + 'Stop ' + fmt(p.stop, i.dec) + ' · Verkauf über dem 5-Tage-Schnitt, spätestens nach 10 Tagen</div></div>'); });
+  (V.dtPos || []).filter(function(p){ return (p.state === 'wartet' || p.state === 'offen') || (p.exitAt && now - p.exitAt < 12 * 3600e3); }).forEach(function(p){
+    rows.push('<div class="trade"><div class="row"><span><span class="pill good">DAX-Ausbruch</span> <b>DAX</b> <span class="' + (p.dir > 0 ? 'good' : 'bad') + '">' + (p.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Order wartet' : 'offen')) + '</span></div><div class="muted small">' + (p.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') + fmt(p.px, 1) + ' · Stop ' + fmt(p.stop, 1) + (p.state === 'wartet' ? ' · gilt bis 12:35' : '') + ' · schließen um 17:25</div></div>'); });
   (V.autoPos || []).filter(function(p){ return p.state === 'offen' || now - (p.exitAt || p.at) < 86400e3; }).forEach(function(p){ var i = instr(p.k) || { dec: 2 };
     rows.push('<div class="trade"><div class="row"><span><span class="pill warn">Neu</span> <b>' + esc(p.name) + '</b></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : 'offen') + '</span></div><div class="muted small">' + esc(p.gn || '') + ' · Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + '</div></div>'); });
   if (!rows.length) return '';
@@ -2582,6 +2584,7 @@ function openRiskList(){
   (V.ibsPos || []).forEach(function(p){ if (p.state === 'offen') add(p, p.kind === 'tt' ? 'Turnaround Tuesday' : p.kind === 'd3' ? 'Drei Verlusttage' : 'IBS'); });
   (V.swingPos || []).forEach(function(p){ if (p.state === 'offen' || p.state === 'wartet') add(p, 'Swing'); });
   (V.autoPos || []).forEach(function(p){ if (p.state === 'offen') add(p, 'Neu entdeckt'); });
+  (V.dtPos || []).forEach(function(p){ if (p.state === 'offen' || p.state === 'wartet') add(p, 'DAX-Ausbruch'); });
   (V.track || []).forEach(function(x){ if ((x.state === 'wartet' || x.state === 'offen') && !sigIds[x.id]) add(x, x.cls); });
   return out;
 }
@@ -2792,7 +2795,7 @@ function briefCard(){
 }
 // ================= Meldungen: jede Push-Meldung in voller Laenge, Antippen oeffnet sie direkt =================
 function msgIcon(m){ var d = m.d || {}, t = (m.title || '') + ' ' + (m.t || '');
-  return d.kind === 'fill' ? '🎯' : d.kind === 'finder' ? '🔎' : d.kind === 'korb' ? '🧺' : d.kind === 'news' ? '📰' : d.kind === 'auto' ? '🧪' : /^⏸/.test(m.title || '') ? '⏸' : /Kursdaten|GitHub|Dienst:/.test(m.title || '') ? '🛡️' : /pausiert|Wieder im Rahmen/.test(m.title || '') ? '📏' : /Neue Strategie/.test(m.title || '') ? '🧪' : d.kind === 'd3' ? '📈' : d.kind === 'intra' || d.kind === 'orb' ? '⚡' : d.kind === 'ibs' || d.kind === 'tt' || d.kind === 'swing' ? '📈' : /Briefing/.test(t) ? '☀️' : /Bilanz|Wochenbericht/.test(t) ? '📊' : /TP1|Ziel erreicht|✅/.test(t) ? '✅' : /Stop|❌/.test(t) ? '❌' : /Termin|In \d+ Min/.test(t) ? '📅' : '🔔'; }
+  return d.kind === 'fill' ? '🎯' : d.kind === 'finder' ? '🔎' : d.kind === 'korb' ? '🧺' : d.kind === 'dtb' ? '⚡' : d.kind === 'news' ? '📰' : d.kind === 'auto' ? '🧪' : /^⏸/.test(m.title || '') ? '⏸' : /Kursdaten|GitHub|Dienst:/.test(m.title || '') ? '🛡️' : /pausiert|Wieder im Rahmen/.test(m.title || '') ? '📏' : /Neue Strategie/.test(m.title || '') ? '🧪' : d.kind === 'd3' ? '📈' : d.kind === 'intra' || d.kind === 'orb' ? '⚡' : d.kind === 'ibs' || d.kind === 'tt' || d.kind === 'swing' ? '📈' : /Briefing/.test(t) ? '☀️' : /Bilanz|Wochenbericht/.test(t) ? '📊' : /TP1|Ziel erreicht|✅/.test(t) ? '✅' : /Stop|❌/.test(t) ? '❌' : /Termin|In \d+ Min/.test(t) ? '📅' : '🔔'; }
 function msgTitle(m){ return m.title && m.title !== 'Trade Check' ? m.title : (String(m.t || '').split(/[:.]/)[0] || 'Meldung').slice(0, 60); }
 // Radar: Wie nah ist jeder US-Markt am IBS-Signal, und was fehlt der Intraday-Stufe? Der Dienst rechnet stuendlich waehrend der US-Sitzung.
 function radarCard(){
@@ -2858,6 +2861,7 @@ function evid(k){
   if (k === 'd3') return daily(s['mr:down3']);
   if (k === 'creme' || k === 'bplus' || k === 'finder') return 'probe';
   if (k === 'depot') return 'stark';
+  if (k === 'dtb') return V.bdf && V.bdf.best && V.bdf.best.some(function(b){ return b.id === 'orb_15_trend_range__1045_v20' && b.all.t >= 3; }) ? 'mittel' : null;
   if (k === 'korb') return V.bk && V.bk.korb && V.bk.korb.passed ? 'mittel' : null;
   if (k === 'auto') return V.bq && V.bq.live && V.bq.live.length ? 'probe' : null;
   return null;
@@ -3496,6 +3500,7 @@ function viewCockpit(){
   var eo = cs['eom:tlt5']; if (eo) row('US-Anleihen zum Monatsende', !!eo.passed, eo.passed ? eo.all.win : null, null, 'ETF, 5 Handelstage · Ø ' + sgn(eo.all.mean, 2) + ' %', '12/Jahr', 'eom');
   var orb = bx.sets && bx.sets['orbplay:top3_rvol2']; if (orb) row('ORB Stocks in Play', (bx.passed || []).some(function(k){ return /^orbplay:/.test(k); }), (bx.passed || []).some(function(k){ return /^orbplay:/.test(k); }) ? orb.all.win : null, null, '15:45 · wenige große Gewinner');
   row('Trade Finder (ab 16 Uhr)', S.cfg.push.finder !== false, null, null, 'beste aktuelle Setups ohne geprüfte Stufe · zum Selbstprüfen', 'bis 5/Tag', 'finder');
+  if (V.bdf && V.bdf.best){ var db0 = V.bdf.best.filter(function(b){ return b.id === 'orb_15_trend_range__1045_v20'; })[0]; if (db0) row('DAX-Trend-Ausbruch (Daytrading)', S.cfg.push.dtb !== false, db0.all.win, null, 'Signal gegen 9:35, schließen 17:25 · Ø ' + sgn(db0.all.mean, 2) + ' R je Trade', null, 'dtb'); }
   if (V.bq && V.bq.week) row('Neu entdeckt (Sonntags-Suche)', (V.bq.live || []).length > 0, null, null, (V.bq.live || []).length ? (V.bq.live || []).length + ((V.bq.live || []).length === 1 ? ' Regel' : ' Regeln') + ' in Bewährung, halbe Größe' : 'bisher keine Regel hat alle Hürden genommen', null, 'auto');
   if (bm.depotPassed) row('Depot-Strategien', bm.depotPassed.length > 0, null, null, bm.depotPassed.length + (bm.depotPassed.length === 1 ? ' Regel' : ' Regeln') + ' · Wechsel am Monatsanfang', null, 'depot');
   if (!rows.length) return '';
@@ -3538,6 +3543,14 @@ function viewKorbSets(){
     '<p class="hint">Vergleich = alle Aktien des Index gleich gewichtet. ✅ beim Korb = mehr Rendite und bessere Rendite pro Risiko in allen drei Zeitabschnitten. Live ist der Korb aus den 10 stärksten DAX-Aktien. Die kurzfristigen Signale (RSI-2, IBS, Verlusttage, Ausbruch) haben auf Einzelaktien keinen Zeitraum-festen Vorteil gezeigt und bleiben aus.</p>';
 }
 // ================= Woechentliche Strategiesuche =================
+function viewDaySets(){
+  var b = V.bd, f = V.bdf; if (!b && !f) return '';
+  var h = '<div class="label" style="margin-top:14px">Daytrading (5-Min-Kerzen seit 2013, passend zu deinem Arbeitstag)</div>';
+  if (b) h += '<p class="small">' + fmt(b.tested, 0) + ' Regeln auf DAX, Nasdaq, S&P, Dow, Gold, EUR/USD und GBP/USD: Eröffnungsspannen, Asien-Spanne, Gaps, Noise-Band (Zarattini 2024), Intraday-Momentum (Gao 2018). Order erst 10 Minuten nach dem Signal, Stop und Ziel als Order, mit Kosten. ' + (b.passed && b.passed.length ? b.passed.length + ' bestanden.' : 'Keine nahm in der breiten Suche die Hürde t ≥ 3.') + ' Probelauf auf vertauschten Kursen: ' + b.placebo.tested + ' Regeln, ' + b.placebo.passed + ' bestanden.</p>';
+  if (f && f.best) { var L2 = f.best.slice().sort(function(x, y){ return y.all.t - x.all.t; }).slice(0, 6);
+    h += '<table class="st" style="margin-top:8px"><tr><th>Gegenprobe DAX, mit Verspätung</th><th>Trades</th><th>Ø R</th><th>t</th></tr>' + L2.map(function(x){ return '<tr><td>' + (x.id === 'orb_15_trend_range__1045_v20' ? '✅ ' : '') + esc(x.name.replace(', raus DAX-Schluss', '')) + '<div class="muted tiny">Zeiträume ' + x.p.map(function(v){ return sgn(v, 2); }).join(' / ') + ' · Härtetest ' + sgn(x.stress, 2) + ' · Jahre ' + esc(x.years) + '</div></td><td>' + x.all.n + '</td><td class="' + (x.all.mean >= 0 ? 'good' : 'bad') + '">' + sgn(x.all.mean, 2) + '</td><td>' + fmt(x.all.t, 1) + '</td></tr>'; }).join('') + '</table>'; }
+  return h + more('Live ist der DAX-Trend-Ausbruch: Spanne 9:00 bis 9:15, nur in Trendrichtung, Order ab 9:35, Stop auf der anderen Seite, Schluss 17:25.', 'Er lag in der breiten Suche knapp unter der Hürde (t 2,3 bis 2,9 je nach Variante). In der vorher festgelegten Gegenprobe mit 20 und 30 Minuten Verspätung, wie sie bei verzögerten Kursen und dem Eintippen im Büro realistisch ist, lag er bei t 3,6 und 3,1, in allen drei Zeiträumen und im Härtetest im Plus. Weil diese Variante nach der breiten Suche gewählt wurde, gilt sie als „Beleg mittel“ und läuft mit Live-Prüfung: Liegt sie deutlich unter der Rückrechnung, wird sie pausiert.');
+}
 function viewSearchSets(){
   var b = V.bq; if (!b || !b.week) return '';
   var pc = function(v){ return v == null ? '–' : fmt(v * 100, 0) + ' %'; };
@@ -3559,7 +3572,7 @@ function viewResearch(){
   return '<section class="card"><div class="row"><h2>Strategien aus der Forschung</h2><span class="muted small">' + esc(dm(Date.parse(b.at))) + '</span></div>' +
     '<p class="hint" style="margin-top:4px">ORB „Stocks in Play“ (5 Min, ' + (b.orbDays || 0) + ' Handelstage, 45 US-Aktien), Connors RSI-2 auf Tageskerzen (bis 10 Jahre), News-Fehlausbruch und -Momentum (15 Min). Mit Kosten, Prüfung in drei Zeiträumen. ✅ = in allen dreien mindestens +0,05 R.</p>' +
     '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
-    viewMoreSets() + viewCalSets() + viewKorbSets() + viewSearchSets() + viewScalpSets() + viewFxSets() + viewProSets() +
+    viewMoreSets() + viewCalSets() + viewKorbSets() + viewDaySets() + viewSearchSets() + viewScalpSets() + viewFxSets() + viewProSets() +
     (b.orbGross && b.orbGross.n ? '<p class="hint">ORB Top 3 ohne Kosten: Ø ' + sgn(b.orbGross.mean, 2) + ' R. Der Unterschied zeigt, wie viel Spread und Gebühren bei so engen Stops kosten.</p>' : '') + '</section>';
 }
 function viewBt(){
@@ -3700,6 +3713,7 @@ function viewMehr(){
       (p.scan !== false ? '<p class="hint">Gemeldet wird automatisch alles, was in der Rückrechnung profitabel ist und mindestens 60 % Gewinner hat (mit Teilgewinn bei TP1), und zwar nur, solange es auch im Härtetest im Plus bleibt. Jede Woche neu geprüft, du musst nichts auswählen.</p>' : '') +
       (true ? '<label class="switch"><span>' + ((p.quality || 'creme') === 'creme' ? 'B+ ab 16:00 (nur Stufen mit mind. 50 % Gewinnern)' : 'B-Setups ab 16:00: nur Ampel grün + Premium/Discount + Liquiditätsziel + CRV ab 2') + '</span><input type="checkbox" data-push="bgreen"' + (p.bgreen !== false ? ' checked' : '') + '></label>' : '') +
       '<label class="switch"><span>ORB „Stocks in Play“ (US-Eröffnung)</span><input type="checkbox" data-push="orb"' + (p.orb !== false ? ' checked' : '') + '></label>' +
+      '<label class="switch"><span>DAX-Trend-Ausbruch (Daytrading, Signal gegen 9:35)</span><input type="checkbox" data-push="dtb"' + (p.dtb !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Swing RSI-2 (abends, Haltedauer Tage)</span><input type="checkbox" data-push="swing"' + (p.swing !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>IBS-Mean-Reversion (US-Märkte, kurz vor Schluss)</span><input type="checkbox" data-push="ibs"' + (p.ibs !== false ? ' checked' : '') + '></label>' +
       '<label class="switch"><span>Abends höchstens 1 Signal (das stärkste aus IBS, Doppelsignal, Turnaround Tuesday, Drei Verlusttage)</span><input type="checkbox" data-push="ibsMax1"' + (p.ibsMax1 !== false ? ' checked' : '') + '></label>' +
@@ -3730,7 +3744,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, dtb: S.cfg.push.dtb !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -3739,7 +3753,7 @@ function syncTrade(extra){
     var hits = {}, deads = {}; (j.alerts || []).forEach(function(a){ if (a.hit) hits[a.id] = a; if (a.dead) deads[a.id] = a.dead; });
     var changed = false;
     S.alerts.forEach(function(a){ if (hits[a.id] && !a.hit){ a.hit = hits[a.id].hit; a.hitPx = hits[a.id].hitPx; changed = true; } if (deads[a.id] && !a.dead){ a.dead = deads[a.id]; changed = true; } });
-    V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || []; V.ibsPos = j.ibsPos || []; V.brief = j.brief || null; V.log = j.log || []; V.radar = j.radar || null; V.autoPos = j.autoPos || []; V.news = j.news || []; V.newsStat = j.newsStat || null; V.lc = j.lc || null; V.wd = j.wd || null; V.proto = j.proto || null; if (j.bak && j.bak.at && (!S.bakInfo || !S.bakInfo.at)) { S.bakInfo = { at: j.bak.at }; } V.syncErr = ''; appBadge();
+    V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || []; V.ibsPos = j.ibsPos || []; V.brief = j.brief || null; V.log = j.log || []; V.radar = j.radar || null; V.autoPos = j.autoPos || []; V.dtPos = j.dtPos || []; V.news = j.news || []; V.newsStat = j.newsStat || null; V.lc = j.lc || null; V.wd = j.wd || null; V.proto = j.proto || null; if (j.bak && j.bak.at && (!S.bakInfo || !S.bakInfo.at)) { S.bakInfo = { at: j.bak.at }; } V.syncErr = ''; appBadge();
     if (V.wantSig){ var w = V.wantSig; V.wantSig = null; useSignal(w); return j; }
     if (changed || S.tab === 'markt' || S.tab === 'buch' || S.tab === 'check'){ if (changed) save(); rerender(); }
     return j;
@@ -3896,6 +3910,8 @@ render = function(){ _render(); bind($('#page')); };
 try { var qs = new URLSearchParams(location.search).get('sig'); if (qs) V.wantSig = qs; } catch (e) {}
 fetch('../dienst/backtest-fx.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.tf){ V.bf = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-scalp.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bs = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
+fetch('../dienst/backtest-daytrade.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.tested){ V.bd = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
+fetch('../dienst/backtest-daytrade-focus.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.best){ V.bdf = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-suche.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.week){ V.bq = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-stocks.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.korb){ V.bk = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-cal.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bc = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
