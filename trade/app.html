@@ -138,6 +138,16 @@ details.more[open] summary::after{content:"−"}
 .cpill.good{background:var(--good-bg);color:var(--good)} .cpill.bad{background:var(--bad-bg);color:var(--bad)}
 .mini{width:64px;height:28px;display:block}
 .kb{list-style:none;margin:10px 0 4px;padding:0;counter-reset:kb}.kb li{counter-increment:kb;display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line,rgba(128,128,128,.18));font-size:15px}.kb li:last-child{border-bottom:0}.kb-n:before{content:counter(kb);display:inline-block;width:22px;color:var(--muted,#888);font-variant-numeric:tabular-nums;font-size:13px}.kb-n em{font-style:normal;font-size:11px;font-weight:600;padding:2px 6px;border-radius:6px;margin-left:6px;background:rgba(48,180,110,.16);color:#22a565}.kb-m{font-variant-numeric:tabular-nums;font-weight:600}.kb-chg{display:flex;flex-direction:column;gap:2px;font-size:13px;margin:6px 0 0}.kb-pf{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0 2px}.kb-pf div{display:flex;flex-direction:column;gap:2px}.kb-pf b{font-size:17px;font-variant-numeric:tabular-nums}
+.fold{padding:0}.fold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:14px 16px;min-height:52px;-webkit-tap-highlight-color:transparent}.fold>summary::-webkit-details-marker{display:none}
+.fold>summary::after{content:"";width:7px;height:7px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);margin:-4px 2px 0 4px;flex:none;transition:transform .15s}.fold[open]>summary::after{transform:rotate(-135deg);margin-top:3px}
+.fold-t{font-weight:650;font-size:16px;letter-spacing:-.01em;white-space:nowrap}.fold-s{margin-left:auto;font-size:13px;color:var(--muted);text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fold-b{padding:0 16px 14px}.fold-b>.card{background:transparent;border:0;border-radius:0;padding:12px 0 0;margin:0}.fold-b>.card+.card{border-top:1px solid var(--line);margin-top:12px}.fold-b>.card h2{font-size:15px}
+.fold-b .spk{margin-left:0;margin-right:0}.fold-lbl{margin:6px 4px -4px}
+.todo{display:flex;align-items:flex-start;gap:10px;padding:11px 0 2px;border-top:1px solid var(--line);margin-top:10px;font-size:14px;line-height:1.4}.todo-i{font-size:18px;line-height:1.2;flex:none}.todo>span:nth-child(2){flex:1;min-width:0}.todo .btn{flex:none;align-self:center}
+.rk{margin:8px 0 6px;padding:11px 12px;border-radius:14px;background:var(--surface2)}.rk-bar{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:8px 0}.rk-bar i{display:block;height:100%;border-radius:99px;background:var(--good)}.rk-bar i.warn{background:var(--warn)}.rk-bar i.bad{background:var(--bad)}
+.rk-cl{display:flex;flex-wrap:wrap;gap:6px}.rk-cl .chip{padding:4px 9px;font-size:12px}.chip.warn{border-color:var(--warn);color:var(--warn)}
+.wb{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border-radius:14px;background:var(--bad-bg);color:var(--bad);font-size:14px;border-left:3px solid var(--bad)}.wb.warn{background:var(--warn-bg);color:var(--warn);border-left-color:var(--warn)}.wb span{color:var(--fg);opacity:.86;font-size:13px;line-height:1.4}
+.lvl{list-style:none;margin:8px 0 0;padding:0}.lvl li{padding:10px 0;border-top:1px solid var(--line)}.lvl li:first-child{border-top:0}.lv-n{display:grid;grid-template-columns:auto 1fr 1fr;gap:12px;margin-top:6px;font-variant-numeric:tabular-nums;font-size:14px}.lv-n span{display:flex;flex-direction:column;gap:1px}.lv-n small{font-size:11px;color:var(--muted)}.lv-n em{font-style:normal;color:var(--muted);font-size:12px}.sr-rule{padding:10px 0;border-top:1px solid var(--line)}.sr-rule:first-child{border-top:0}
 .depot{padding:6px 0 4px}
 .depot .bigpx{font-size:40px}
 .lv .acts{display:flex;gap:4px}
@@ -569,7 +579,7 @@ function viewResult(r){
   var order = { contra: 0, warn: 1, pro: 2, neutral: 3 };
   var items = r.items.slice().sort(function(a, b){ return (b.block - a.block) || (order[a.verdict] - order[b.verdict]); }).map(function(it){ return '<li class="item"><i class="' + it.verdict + '">' + ICON[it.verdict] + '</i><b>' + esc(it.title) + '</b><span>' + esc(it.text) + '</span></li>'; }).join('');
   var h = '<section class="card" style="padding:0;overflow:hidden"><div class="verdict ' + r.ampel + '"><div class="lamp"><svg viewBox="0 0 24 24">' + lampIcon + '</svg></div><div><div class="big">' + word + '</div><p>' + esc(sub) + ' CRV ' + fmt(r.rr, 1) + ' : 1 · Score ' + fmt(r.score, 1) + '</p></div></div>' +
-    viewProb(r) + viewSpread(r) + '<div style="padding:0 14px 6px"><ul class="items">' + items + '</ul>' + (r.offset ? '<p class="hint">Rohstoffe: Die Daten kommen vom Future, dein Kurs vom Kassamarkt. Den Abstand von ' + fmt(r.offset, i.dec) + ' rechne ich heraus.</p>' : '') + '</div></section>';
+    viewProb(r) + viewSpread(r) + viewBundle(r) + '<div style="padding:0 14px 6px"><ul class="items">' + items + '</ul>' + (r.offset ? '<p class="hint">Rohstoffe: Die Daten kommen vom Future, dein Kurs vom Kassamarkt. Den Abstand von ' + fmt(r.offset, i.dec) + ' rechne ich heraus.</p>' : '') + '</div></section>';
   h += viewConf(r);
   h += viewDossier(r);
   h += viewSize(r);
@@ -893,41 +903,146 @@ function viewHeute(){
   var now = Date.now(), b = berlinParts(now), s = sessionInfo(now, instr(S.form.k) || INSTRUMENTS[0]), ts = todayState(), ctx = V.ctx;
   var next = [{ n: 'London', a: 480 }, { n: 'New York', a: 870 }].filter(function(x){ return x.a > b.min; })[0];
   var weekend = b.wd === 'Sat' || (b.wd === 'Sun' && b.min < 23 * 60);
-  var paper = paperStats();
   var dep = depotValue();
   var h = '<div class="depot"><div class="muted small">Trading-Konto</div><div class="bigpx">' + eur(dep.value) + '</div><div class="chg ' + (dep.today >= 0 ? 'good' : 'bad') + '">' + (dep.today >= 0 ? '▲ ' : '▼ ') + sgn(dep.today, 2) + ' € heute' + (dep.open ? ' · offen ' + sgn(dep.open, 2) + ' €' : '') + '</div>' + (dep.curve.length > 2 ? spark(dep.curve) : '') + '</div>';
   var dayCard = '<section class="card"><div class="row"><h2>' + esc(new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(now))) + '</h2><span class="pill ' + (s.q > 0 ? 'good' : (s.q < 0 ? 'warn' : '')) + '">' + esc(s.label) + '</span></div>' +
     '<p class="hint" style="margin-top:4px">' + (weekend ? 'Wochenende. Der Scanner startet Montag mit London um 8 Uhr.' : (next ? 'Nächste Hauptzeit: ' + next.n + ' in ' + dur((next.a - b.min) * 60000) + '.' : 'Hauptzeiten für heute vorbei. Offene Trades spätestens 21:45 schließen.')) + '</p>' +
     '<dl class="hero"><div><dt>VIX</dt><dd class="' + (ctx && ctx.vix >= 20 ? 'warn' : '') + '">' + (ctx && ctx.vix ? fmt(ctx.vix, 1) : '…') + '</dd></div><div><dt>Dollar</dt><dd>' + (ctx && ctx.dxyDir ? (ctx.dxyDir > 0 ? '↑ stark' : '↓ schwach') : '…') + '</dd></div><div><dt>Heute</dt><dd class="' + (ts.r >= 0 ? 'good' : 'bad') + '">' + (ts.n ? sgn(ts.r, 1) + 'R' : '–') + '</dd></div></dl>' +
     (ctx && ctx.vix ? '<p class="hint">' + (ctx.vix >= 20 ? 'Unruhiger Markt: Die Intraday-Stufen sind aktiv.' : 'Ruhiger Markt: Intraday-Signale sind selten, die Tages-Strategien laufen normal.') + '</p>' : '') +
-    '<div class="guard ' + (ts.stop ? 'stop' : 'ok') + '">' + esc(ts.stop || 'Tagesrisiko im Rahmen: ' + ts.n + ' von ' + (S.cfg.maxTrades || 2) + ' Trades, Verlustgrenze ' + fmt(S.cfg.maxLossR || 2, 0) + 'R.') + '</div></section>';
-  // Reihenfolge: erst was jetzt zu tun ist (Signale, offene Trades), dann Lage und Briefing, dann Hintergrund
-  var act = allSignals().filter(function(g){ return now < g.expires && !g.status && (sigTier(g) || g.cls === 'ORB'); });
-  var trk = (V.track || []).filter(function(x){ return x.state === 'wartet' || x.state === 'offen'; });
-  h += '<section class="card"><div class="row"><h2>Jetzt handeln?</h2><span class="muted small">' + act.length + ' aktiv</span></div>' +
-    (act.length ? act.map(function(g){ var i = instr(g.k) || { dec: 2 }; return '<button class="sig" data-act="usesig" data-id="' + esc(g.id) + '"><span>' + tierPill(g) + '<b>' + esc(g.name) + '</b> <span class="' + (g.dir > 0 ? 'good' : 'bad') + '">' + (g.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="pill warn">bis ' + hm(g.expires) + '</span><span class="sub">' + (ts.stop ? 'Tageslimit erreicht, nur ansehen' : 'Tippen für Dossier und Orders') + '</span><span></span></button>'; }).join('')
-      : '<p class="hint">Gerade kein Setup, das die Hürde nimmt. Das ist gut so: Kein Trade ist besser als ein schlechter. ' + (S.cfg.push.on ? 'Du bekommst eine Mitteilung, sobald eins kommt.' : '<button class="link" data-act="tab" data-t="mehr">Benachrichtigungen einschalten</button>, dann kommt es zu dir.') + '</p>') + '</section>';
-  // offene Positionen
-  var open = ts.open;
-  if (open.length || trk.length){
-    h += '<section class="card"><div class="row"><h2>Offen</h2><span class="muted small">live</span></div>' + open.map(function(t){ var r = liveR(t), i = instr(t.instr) || { dec: 2 }; return '<div class="trade"><div class="row"><span><b>' + esc(t.name) + '</b> <span class="' + (t.dir > 0 ? 'good' : 'bad') + '">' + (t.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="num ' + (r == null ? 'muted' : (r >= 0 ? 'good' : 'bad')) + '" style="font-size:20px">' + (r == null ? '…' : sgn(r, 2) + 'R · ' + sgn(r * ((t.size && t.size.risk) || riskEur()), 0) + ' €') + '</span></div><div class="muted small">SL ' + fmt(t.stop, i.dec) + ' · TP ' + fmt(t.target, i.dec) + '</div>' + tevBanner(t) + '</div>'; }).join('') +
-      trk.filter(function(x){ return !open.some(function(t){ return t.sig === x.id; }); }).map(function(x){ return '<div class="trade"><div class="row"><span><span class="pill good">' + esc(x.cls) + '</span> <b>' + esc(x.name) + '</b></span><span class="muted small">' + (x.state === 'offen' ? 'Signal läuft' : 'Order wartet') + '</span></div><div class="muted small">verfolgt, nicht im Tagebuch</div></div>'; }).join('') + '</section>';
-  }
-  // Termine heute
-  var swp = (V.swingPos || []).filter(function(p){ return p.state === 'wartet' || p.state === 'offen' || Date.now() - (p.exitAt || p.at) < 86400e3; });
-  if (swp.length) h += '<section class="card"><div class="row"><h2>Swing RSI-2</h2><span class="muted small">Tageskerzen</span></div>' + swp.map(function(p){ var i = instr(p.k) || { dec: 2 }; return '<div class="trade"><div class="row"><span><b>' + esc(p.name) + '</b> <span class="good">Long</span></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Kauf zur Eröffnung' : 'offen')) + '</span></div><div class="muted small">' + (p.entry ? 'Einstieg ' + fmt(p.entry, i.dec) + ' · ' : 'zuletzt ' + fmt(p.ref, i.dec) + ' · ') + 'Stop ' + fmt(p.stop, i.dec) + ' · Verkauf über dem 5-Tage-Schnitt, spätestens nach 10 Tagen</div></div>'; }).join('') + '</section>';
-  var ibp = (V.ibsPos || []).filter(function(p){ return p.state === 'offen' || Date.now() - (p.exitAt || p.at) < 86400e3; });
-  if (ibp.length) h += '<section class="card"><div class="row"><h2>IBS-Trades</h2><span class="muted small">1 bis 5 Tage</span></div>' + ibp.map(function(p){ var i = instr(p.k) || { dec: 1 }; return '<div class="trade"><div class="row"><span><b>' + esc(p.name) + '</b> <span class="good">Long</span></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : 'offen') + '</span></div><div class="muted small">Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + ' · Verkauf bei Schluss im oberen Fünftel, spätestens nach 5 Tagen</div></div>'; }).join('') + '</section>';
-  h += radarCard() + inboxCard() + briefCard() + dayCard;
-  h += viewCockpit();
-  h += trainCard();
-  h += viewDepot() + viewKorb();
-  h += '<section class="card"><div class="row"><h2>Termine</h2><button class="link small" data-act="tab" data-t="markt">alle</button></div>' +  (V.cal ? viewCal(4) : '<div class="loading"><span class="spin"></span> lädt …</div>') + '</section>';
-  // Papierkonto
-  h += '<section class="card"><div class="row"><h2>Papierkonto</h2><span class="muted small">alle Signale mit ' + fmt(S.cfg.risk, 1) + ' % Risiko</span></div>' +
-    (paper.n ? '<dl class="hero"><div><dt>Signale</dt><dd>' + paper.n + '</dd></div><div><dt>Ergebnis</dt><dd class="' + (paper.eur >= 0 ? 'good' : 'bad') + '">' + sgn(paper.eur, 0) + ' €</dd></div><div><dt>Treffer</dt><dd>' + fmt(paper.win * 100, 0) + ' %</dd></div></dl>' + spark(paper.curve)
-      : '<p class="hint">Hier siehst du, was du verdient oder verloren hättest, wenn du jedes gemeldete Signal mit deiner Positionsgröße gehandelt hättest. Es füllt sich mit dem ersten Signal.</p>') + '</section>';
+    (ts.stop ? '' : '<div class="guard ok">' + esc('Tagesrisiko im Rahmen: ' + ts.n + ' von ' + (S.cfg.maxTrades || 2) + ' Trades, Verlustgrenze ' + fmt(S.cfg.maxLossR || 2, 0) + 'R.') + '</div>') + '</section>';
+  // 1) Waechter: Probleme mit Dienst, Daten oder GitHub stehen ganz oben
+  h += watchBanner();
+  // 2) Jetzt zu tun: nur was heute eine Handlung braucht
+  h += todoCard(ts);
+  // 3) Offene Positionen aller Strategien mit Konto-Risiko
+  h += openCard(ts);
+  // 4) Alles andere eingeklappt, mit Kurzfassung in der Titelzeile
+  var sh = shadowRun(V.trackLog || [], shadowCfg()), lc = liveCheck(V.trackLog || []), pz = Object.keys((V.lc && V.lc.paused) || {});
+  var lcBad = lc.filter(function(q){ return q.status === 'warnung' || q.status === 'beobachten'; }).length + pz.filter(function(g){ return !lc.some(function(q){ return q.g === g && (q.status === 'warnung' || q.status === 'beobachten'); }); }).length;
+  var r = V.radar, hot = r && r.day === b.key ? r.items.filter(function(x){ return x.up && x.ibs < 0.2; }).length : null;
+  var kb = V.bk && V.bk.korb, cal = (V.cal || []).filter(function(e){ var t = Date.parse(e.date); return e.impact === 'High' && berlinParts(t).key === b.key && t > now; });
+  h += '<div class="label fold-lbl">Mehr</div>';
+  h += fold('markt', 'Markt heute', (hot != null ? (hot ? hot + (hot === 1 ? ' Markt' : ' Märkte') + ' am Tagestief' : 'kein Markt am Tagestief') + ' · ' : '') + (ctx && ctx.vix ? 'VIX ' + fmt(ctx.vix, 1) : esc(s.label)), radarCard() + briefCard() + dayCard);
+  h += fold('schatten', 'Schatten-Bot', sh.n ? '<span class="' + (sh.net >= 0 ? 'good' : 'bad') + '">' + sgn(sh.net, 0) + ' €</span> · ' + sh.n + ' Trades' : 'startet mit dem ersten Signal', viewShadow(sh));
+  h += fold('live', 'Live gegen Rückrechnung', lc.length ? (lcBad ? '<span class="warn">' + lcBad + ' auffällig</span>' : 'alles im Rahmen') : 'sammelt Trades', viewLiveCheck(lc));
+  h += fold('meld', 'Meldungen', (V.log || []).length ? (V.log || []).length + ' zuletzt' : 'noch keine', inboxCard() || '<p class="hint">Hier erscheint jede Push-Meldung in voller Länge.</p>');
+  h += fold('strat', 'Strategien', 'Beleg und Stand je Strategie', viewCockpit());
+  h += fold('depot', 'Depot und Aktien-Korb', kb && kb.passed && kb.top ? 'Korb ' + esc(kb.top.slice(0, 3).map(function(x){ return x.name; }).join(', ')) + ' …' : 'monatlich', viewDepot() + viewKorb());
+  h += fold('termine', 'Termine', cal.length ? cal.length + ' wichtige heute, nächster ' + hm(Date.parse(cal[0].date)) : 'heute nichts Wichtiges mehr', '<section class="card"><div class="row"><h2>Termine</h2><button class="link small" data-act="tab" data-t="markt">alle</button></div>' + (V.cal ? viewCal(4) : '<div class="loading"><span class="spin"></span> lädt …</div>') + '</section>');
+  h += fold('train', 'Training', 'echte Setups, Ausgang verdeckt', trainCard());
   return h;
+}
+// Eingeklappter Bereich; offen/zu bleibt gemerkt
+function fold(key, title, sum, body){
+  S.fold = S.fold || {};
+  return '<details class="card fold" data-fold="' + key + '"' + (S.fold[key] ? ' open' : '') + '><summary><span class="fold-t">' + esc(title) + '</span><span class="fold-s">' + sum + '</span></summary><div class="fold-b">' + body + '</div></details>';
+}
+// ================= Jetzt zu tun =================
+function todoCard(ts){
+  var now = Date.now(), b = berlinParts(now), items = [];
+  var act = allSignals().filter(function(g){ return now < g.expires && !g.status && (sigTier(g) || g.cls === 'ORB'); });
+  if (ts.stop) items.push('<div class="guard stop">' + esc(ts.stop) + '</div>');
+  act.forEach(function(g){ items.push('<button class="sig" data-act="usesig" data-id="' + esc(g.id) + '"><span>' + tierPill(g) + '<b>' + esc(g.name) + '</b> <span class="' + (g.dir > 0 ? 'good' : 'bad') + '">' + (g.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="pill warn">bis ' + hm(g.expires) + '</span><span class="sub">' + (ts.stop ? 'Tageslimit erreicht, nur ansehen' : 'Tippen für Dossier und Orders') + '</span><span></span></button>'); });
+  // pausierte Strategien
+  Object.keys((V.lc && V.lc.paused) || {}).forEach(function(g){ items.push('<div class="todo"><span class="todo-i">⏸</span><span><b>' + esc(groupName(g, (V.trackLog || []).filter(function(x){ return groupOf(x) === g; })[0])) + ' pausiert.</b> Liegt live deutlich unter der Rückrechnung. Ihre Signale nicht handeln, bis sie wieder im Rahmen liegt.</span></div>'); });
+  // Aktien-Korb am Monatsanfang
+  var kb = V.bk && V.bk.korb, mk = b.key.slice(0, 7); S.korbDone = S.korbDone || {};
+  if (kb && kb.passed && kb.month === mk && +b.key.slice(8) <= 7 && !S.korbDone[mk] && ((kb.in || []).length || (kb.out || []).length))
+    items.push('<div class="todo"><span class="todo-i">🧺</span><span><b>Aktien-Korb tauschen.</b> Raus: ' + esc((kb.out || []).join(', ') || '–') + '. Rein: ' + esc((kb.in || []).join(', ') || '–') + '.</span><button class="btn sm ghost" data-act="korbdone">Erledigt</button></div>');
+  // abgeschlossene Signale ohne Angabe
+  var ask = (V.trackLog || []).filter(function(x){ return x.r != null && !S.real[x.id] && now - (x.x || x.t) < 7 * 86400e3; }).length;
+  if (ask) items.push('<div class="todo"><span class="todo-i">✍️</span><span><b>' + ask + (ask === 1 ? ' Signal' : ' Signale') + ' abgeschlossen.</b> Hast du ' + (ask === 1 ? 'es' : 'sie') + ' gehandelt? Trag Kauf- und Verkaufskurs ein, dann siehst du deine echten Kosten.</span><button class="btn sm ghost" data-act="tab" data-t="buch">Eintragen</button></div>');
+  var none = !items.length;
+  return '<section class="card todo-c"><div class="row"><h2>Jetzt zu tun</h2><span class="muted small">' + (none ? 'nichts offen' : items.length + (items.length === 1 ? ' Punkt' : ' Punkte')) + '</span></div>' +
+    (none ? '<p class="hint">Gerade nichts zu tun. Kein Trade ist besser als ein schlechter. ' + (S.cfg.push.on ? 'Du bekommst eine Mitteilung, sobald ein Signal kommt.' : '<button class="link" data-act="tab" data-t="mehr">Benachrichtigungen einschalten</button>, dann kommt es zu dir.') + '</p>' : items.join('')) + '</section>';
+}
+// ================= Offene Positionen aller Strategien =================
+function openCard(ts){
+  var open = ts.open, now = Date.now(), rows = [];
+  var trk = (V.track || []).filter(function(x){ return (x.state === 'wartet' || x.state === 'offen') && !open.some(function(t){ return t.sig === x.id || (t.sig && t.sig.id === x.id); }); });
+  open.forEach(function(t){ var r = liveR(t), i = instr(t.instr) || { dec: 2 }; rows.push('<div class="trade"><div class="row"><span><b>' + esc(t.name) + '</b> <span class="' + (t.dir > 0 ? 'good' : 'bad') + '">' + (t.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="num ' + (r == null ? 'muted' : (r >= 0 ? 'good' : 'bad')) + '" style="font-size:20px">' + (r == null ? '…' : sgn(r, 2) + 'R · ' + sgn(r * ((t.size && t.size.risk) || riskEur()), 0) + ' €') + '</span></div><div class="muted small">Tagebuch · SL ' + fmt(t.stop, i.dec) + ' · TP ' + fmt(t.target, i.dec) + '</div>' + tevBanner(t) + '</div>'); });
+  trk.forEach(function(x){ rows.push('<div class="trade"><div class="row"><span><span class="pill good">' + esc(x.cls) + '</span> <b>' + esc(x.name) + '</b></span><span class="muted small">' + (x.state === 'offen' ? 'Signal läuft' : 'Order wartet') + '</span></div><div class="muted small">' + (x.skip ? 'Limit voll: ausgelassen' : 'verfolgt, nicht im Tagebuch') + '</div></div>'); });
+  var exitOf = function(p){ return p.kind === 'tt' ? 'Verkauf bei Schluss über dem Vortageshoch, spätestens nach 4 Tagen' : p.kind === 'd3' ? 'Verkauf bei Schluss über dem 5-Tage-Schnitt, spätestens nach 7 Tagen' : 'Verkauf bei Schluss im oberen Fünftel, spätestens nach 5 Tagen'; };
+  var pill = function(p, lbl){ return '<span class="pill">' + esc(lbl) + '</span> '; };
+  (V.ibsPos || []).filter(function(p){ return p.state === 'offen' || now - (p.exitAt || p.at) < 86400e3; }).forEach(function(p){ var i = instr(p.k) || { dec: 1 };
+    rows.push('<div class="trade"><div class="row"><span>' + pill(p, p.kind === 'tt' ? 'Turnaround' : p.kind === 'd3' ? 'Verlusttage' : 'IBS') + '<b>' + esc(p.name) + '</b></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : (p.skip ? 'ausgelassen' : 'offen')) + '</span></div><div class="muted small">Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + ' · ' + exitOf(p) + '</div></div>'); });
+  (V.swingPos || []).filter(function(p){ return p.state === 'wartet' || p.state === 'offen' || now - (p.exitAt || p.at) < 86400e3; }).forEach(function(p){ var i = instr(p.k) || { dec: 2 };
+    rows.push('<div class="trade"><div class="row"><span>' + pill(p, 'Swing') + '<b>' + esc(p.name) + '</b></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Kauf zur Eröffnung' : 'offen')) + '</span></div><div class="muted small">' + (p.entry ? 'Einstieg ' + fmt(p.entry, i.dec) + ' · ' : 'zuletzt ' + fmt(p.ref, i.dec) + ' · ') + 'Stop ' + fmt(p.stop, i.dec) + ' · Verkauf über dem 5-Tage-Schnitt, spätestens nach 10 Tagen</div></div>'); });
+  (V.autoPos || []).filter(function(p){ return p.state === 'offen' || now - (p.exitAt || p.at) < 86400e3; }).forEach(function(p){ var i = instr(p.k) || { dec: 2 };
+    rows.push('<div class="trade"><div class="row"><span><span class="pill warn">Neu</span> <b>' + esc(p.name) + '</b></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : 'offen') + '</span></div><div class="muted small">' + esc(p.gn || '') + ' · Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + '</div></div>'); });
+  if (!rows.length) return '';
+  return '<section class="card" id="offen"><div class="row"><h2>Offene Positionen</h2><span class="muted small">' + rows.length + '</span></div>' + viewRisk() + rows.join('') + '</section>';
+}
+// ================= Konto-Risiko =================
+function openRiskList(){
+  var rp = +S.cfg.risk || 1, acct = +S.cfg.account || 0, out = [], sigIds = {};
+  var add = function(p, src){ if (p.skip) return; out.push({ y: p.y || logSym(p), risk: p.risk != null ? +p.risk : rp, name: p.name, src: src, id: p.id }); };
+  S.trades.filter(function(t){ return t.status === 'open'; }).forEach(function(t){ if (t.sig) sigIds[t.sig.id || t.sig] = 1; var i = instr(t.instr);
+    out.push({ y: i ? i.y : String(t.instr || ''), risk: t.size && t.size.risk && acct ? t.size.risk / acct * 100 : rp, name: t.name, src: 'Tagebuch', id: t.id }); });
+  (V.ibsPos || []).forEach(function(p){ if (p.state === 'offen') add(p, p.kind === 'tt' ? 'Turnaround Tuesday' : p.kind === 'd3' ? 'Drei Verlusttage' : 'IBS'); });
+  (V.swingPos || []).forEach(function(p){ if (p.state === 'offen' || p.state === 'wartet') add(p, 'Swing'); });
+  (V.autoPos || []).forEach(function(p){ if (p.state === 'offen') add(p, 'Neu entdeckt'); });
+  (V.track || []).forEach(function(x){ if ((x.state === 'wartet' || x.state === 'offen') && !sigIds[x.id]) add(x, x.cls); });
+  return out;
+}
+function viewRisk(){
+  var L = openRiskList(); if (!L.length) return '';
+  var heat = +S.cfg.heat || 5, capC = (+S.cfg.risk || 1) * 1.5, tot = 0, cl = {};
+  L.forEach(function(p){ tot += p.risk; var c = riskCluster(p.y), q = cl[c.id] = cl[c.id] || { name: c.name, risk: 0, n: 0 }; q.risk += p.risk; q.n++; });
+  var lvl = tot >= heat - 1e-9 ? 'bad' : tot >= heat * 0.7 ? 'warn' : 'good';
+  return '<div class="rk" id="risk"><div class="row"><span class="small"><b>Konto-Risiko ' + fmt(tot, 1) + ' %</b> <span class="muted">von höchstens ' + fmt(heat, 1) + ' %</span></span></div><div class="rk-bar"><i class="' + lvl + '" style="width:' + Math.min(100, tot / heat * 100) + '%"></i></div>' +
+    '<div class="rk-cl">' + Object.keys(cl).map(function(k){ var c = cl[k]; return '<span class="chip' + (c.risk >= capC - 1e-9 ? ' warn' : '') + '">' + esc(c.name) + ' ' + fmt(c.risk, 1) + ' %' + (c.n > 1 ? ' · ' + c.n + ' Positionen, eine Wette' : '') + '</span>'; }).join('') + '</div></div>';
+}
+// Hinweis im Check: gleiche Wette wie eine offene Position?
+function viewBundle(r){
+  var i = instr(r.k); if (!i) return '';
+  var b = riskBudget(openRiskList(), i.y, { riskP: +S.cfg.risk || 1, heat: +S.cfg.heat || 5 }); if (!b.same.length && b.risk >= b.riskP) return '';
+  var acct = +S.cfg.account || 0;
+  return '<div class="spk ' + (b.full ? 'bad' : 'warn') + '" id="bundle"><b>' + (b.full ? (b.why === 'heat' ? 'Gesamtlimit voll' : 'Bündel voll') : (b.same.length ? 'Gleiche Wette wie eine offene Position' : 'Gesamtlimit fast voll')) + '</b><span>' +
+    (b.same.length ? 'Schon offen im Bündel ' + esc(b.cluster.name) + ': ' + esc(b.same.map(function(q){ return q.name; }).join(', ')) + '. Märkte, die zusammen laufen, sind im Kern eine Wette. ' : '') +
+    (b.full ? 'Dieser Trade würde das Risiko über die Grenze heben: auslassen oder erst nach einem Ausstieg.' : 'Nimm ihn nur mit ' + fmt(b.risk, 2) + ' % Risiko' + (acct ? ' (' + eur(acct * b.risk / 100) + ')' : '') + ' statt ' + fmt(b.riskP, 1) + ' %.') + '</span></div>';
+}
+// ================= Waechter =================
+function watchBanner(){
+  var w = V.wd || null, out = [];
+  if (S.cfg.push.on && V.syncErr) out.push(['bad', 'Push-Dienst nicht erreichbar', 'Der letzte Abgleich ist fehlgeschlagen (' + V.syncErr + '). Solange können Meldungen ausbleiben.']);
+  if (w){
+    var age = w.hb ? (Date.now() - w.hb) / 60e3 : null;
+    if (age != null && age > 45) out.push(['bad', 'Dienst seit ' + dur(age * 60e3) + ' still', 'Der Push-Dienst hat sich zuletzt um ' + hm(w.hb) + ' Uhr gemeldet. Stille heißt gerade nicht „kein Signal“.']);
+    if (w.dataSince) out.push(['bad', 'Kursdaten fehlen seit ' + hm(w.dataSince) + ' Uhr', 'Der Dienst bekommt keine Kurse. Solange können Signale ausbleiben.']);
+    (w.gh || []).forEach(function(g){ out.push(['warn', 'GitHub: ' + (/pages build/i.test(g.name) ? 'Website (App-Updates)' : g.name) + (g.c === 'hängt' ? ' hängt' : ' fehlgeschlagen'), /pages build/i.test(g.name) ? 'App-Updates und frische Daten kommen verspätet. Deine Signale laufen über Cloudflare normal weiter.' : 'Diese Rückrechnung ist nicht aktuell, die App rechnet mit dem letzten Stand. Signale laufen normal weiter.']); });
+  }
+  return out.map(function(x){ return '<div class="wb ' + x[0] + '" role="alert"><b>' + esc(x[1]) + '</b><span>' + esc(x[2]) + '</span></div>'; }).join('');
+}
+// ================= Schatten-Bot =================
+function shadowCfg(){ return { cap: +S.cfg.shadow || 1000, riskP: +S.cfg.risk || 1, fee: S.cfg.fee != null ? +S.cfg.fee : 1, heat: +S.cfg.heat || 5 }; }
+function viewShadow(sh){
+  var c = shadowCfg(); sh = sh || shadowRun(V.trackLog || [], c);
+  var h = '<section class="card" id="shadow"><div class="row"><h2>Schatten-Bot</h2><span class="muted small">virtuell bei Trade Republic</span></div>';
+  var setting = '<div class="fields f2" style="margin-top:10px"><label class="field"><span>Startkapital (€)</span><input inputmode="decimal" data-cfg="shadow" value="' + esc(fmtIn(c.cap, 0)) + '"></label><label class="field"><span>Risiko je Trade</span><input disabled value="' + esc(fmt(c.riskP, 1)) + ' % (wie Konto)"></label></div>';
+  var how = more('Handelt jedes gemeldete Signal virtuell, mit ' + fmt(c.riskP, 1) + ' % Risiko je Trade, ' + eur(c.fee) + ' Gebühr je Order und denselben Grenzen wie du.',
+    'Größe nach Risiko: Kapital mal ' + fmt(c.riskP, 1) + ' %, geteilt durch den Abstand zum Stop. Märkte, die zusammen laufen, zählen als ein Bündel (höchstens das 1,5-fache Einzelrisiko), alle offenen Positionen zusammen höchstens ' + fmt(c.heat, 1) + ' %. Ist das Limit voll, lässt der Bot das Signal aus. Kosten: Ordergebühr für Kauf und Verkauf, Spread (Knock-out 0,03 %, ETF 0,10 %, Länder-ETF 0,15 % vom Gegenwert) und die Finanzierung der Knock-outs über Nacht (4,5 % im Jahr). Depot-Regeln und Aktien-Korb laufen nicht im Schatten-Konto, die sind für das Depot.');
+  if (!sh.n) return h + '<p class="hint">Hier siehst du, was die App verdient hätte, wenn jedes Signal sauber nach Regel gehandelt worden wäre: mit echten Gebühren, Spread und denselben Risikogrenzen. Er startet mit dem ersten abgeschlossenen Signal.</p>' + setting + how + '</section>';
+  var costs = sh.fees + sh.spread + sh.fin, share = sh.gross > 0 ? costs / sh.gross * 100 : null;
+  h += '<div class="real-hero"><div><small>Kapital</small><b>' + eur(sh.eq) + '</b></div><div><small>Ergebnis</small><b class="' + (sh.net >= 0 ? 'good' : 'bad') + '">' + sgn(sh.net, 0) + ' € (' + sgn(sh.ret, 1) + ' %)</b></div></div>' +
+    '<dl class="kv"><div><dt>Trades</dt><dd>' + sh.n + (sh.skipped ? ' <span class="muted small">+' + sh.skipped + ' ausgelassen</span>' : '') + '</dd></div><div><dt>Treffer</dt><dd>' + fmt(sh.win * 100, 0) + ' %</dd></div><div><dt>Max. Rückgang</dt><dd class="bad">−' + fmt(sh.maxDD, 1) + ' %</dd></div></dl>' + spark(sh.curve) +
+    '<div class="label" style="margin-top:12px">Woher das Ergebnis kommt</div><table class="st"><tr><td>Brutto aus den Kursbewegungen</td><td class="' + (sh.gross >= 0 ? 'good' : 'bad') + '">' + sgn(sh.gross, 2) + ' €</td></tr><tr><td>Ordergebühren</td><td class="bad">−' + fmt(sh.fees, 2) + ' €</td></tr><tr><td>Spread</td><td class="bad">−' + fmt(sh.spread, 2) + ' €</td></tr><tr><td>Finanzierung über Nacht</td><td class="bad">−' + fmt(sh.fin, 2) + ' €</td></tr><tr><td><b>Netto</b></td><td class="' + (sh.net >= 0 ? 'good' : 'bad') + '"><b>' + sgn(sh.net, 2) + ' €</b></td></tr></table>' +
+    (share != null && share > 30 ? '<p class="hint">Die Kosten fressen ' + fmt(share, 0) + ' % des Bruttogewinns, vor allem die feste Gebühr je Order. Mit größerem Risiko in Euro je Trade sinkt der Anteil, mit mehr Trades bei kleinem Konto steigt er.</p>' : '');
+  if (sh.groups.length > 1) h += '<div class="label" style="margin-top:12px">Je Strategie</div><table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Euro</th></tr>' + sh.groups.map(function(q){ return '<tr><td>' + esc(q.name) + '</td><td>' + q.n + '</td><td>' + fmt(q.w / q.n * 100, 0) + ' %</td><td class="' + (q.net >= 0 ? 'good' : 'bad') + '">' + sgn(q.net, 0) + ' €</td></tr>'; }).join('') + '</table>';
+  h += '<details class="real-list"><summary>Letzte Trades (' + sh.trades.length + ')</summary><ul class="list-plain">' + sh.trades.slice().reverse().slice(0, 40).map(function(o){ return '<li><div class="row"><span>' + esc(o.name) + ' <span class="muted small">' + dm(o.t) + ' · ' + esc(groupName(o.g, o)) + (o.cut ? ' · ' + fmt(o.risk, 2) + ' % Risiko' : '') + '</span></span><span class="num ' + (o.skip ? 'muted' : (o.net >= 0 ? 'good' : 'bad')) + '">' + (o.skip ? esc(o.why) : sgn(o.net, 2) + ' €') + '</span></div></li>'; }).join('') + '</ul></details>';
+  return h + setting + how + '</section>';
+}
+// ================= Live gegen Rueckrechnung =================
+function viewLiveCheck(lc){
+  lc = lc || liveCheck(V.trackLog || []); var paused = (V.lc && V.lc.paused) || {};
+  var h = '<section class="card" id="live"><div class="row"><h2>Live gegen Rückrechnung</h2><span class="muted small">je Strategie</span></div>';
+  if (!lc.length) return h + '<p class="hint">Sobald Signale abgeschlossen sind, steht hier je Strategie, ob die echten Ergebnisse im erwarteten Bereich der Rückrechnung liegen.</p></section>';
+  var u = function(v, unit){ return v == null ? '–' : sgn(v, 2) + (unit === 'R' ? ' R' : ' %'); };
+  var pill = function(q){ return paused[q.g] ? '<span class="pill bad">pausiert</span>' : q.status === 'warnung' ? '<span class="pill bad">Warnung</span>' : q.status === 'beobachten' ? '<span class="pill warn">beobachten</span>' : q.status === 'ok' ? '<span class="pill good">im Rahmen</span>' : '<span class="pill">sammelt</span>'; };
+  h += '<ul class="lvl">' + lc.map(function(q){
+    return '<li><div class="row"><b>' + esc(q.name) + '</b>' + pill(q) + '</div><div class="lv-n"><span><small>Trades</small>' + q.n + '</span><span><small>Treffer live / Soll</small>' + (q.win != null ? fmt(q.win * 100, 0) + ' %' : '–') + (q.expWin != null ? ' <em>/ ' + fmt(q.expWin * 100, 0) + ' %</em>' : '') + '</span><span><small>Ø live / Soll</small>' + u(q.mean, q.unit) + (q.expMean != null ? ' <em>/ ' + u(q.expMean, q.unit) + '</em>' : '') + '</span></div></li>'; }).join('') + '</ul>';
+  return h + more('Live / Soll: links das echte Ergebnis, rechts die Erwartung aus der Rückrechnung. Ab 10 Trades wird gerechnet, ab 15 kann eine Strategie pausiert werden.',
+    'Jeder Trade trägt die Erwartung seiner Variante vom Zeitpunkt des Signals. Geprüft wird, ob Trefferquote und Durchschnitt so weit darunter liegen, dass normales Pech es kaum erklärt (mehr als 2,5 Standardabweichungen). Dann pausiert die Strategie: Ihre Signale kommen weiter, aber mit „Pausiert“, und der Schatten-Bot verfolgt sie. Liegt sie wieder im Rahmen, hebt der Dienst die Pause auf und meldet sich. „Beobachten“ heißt: schwächer als erwartet, aber noch im Bereich normaler Schwankung.') + '</section>';
 }
 // Depotwert: Kontogroesse + Ergebnis der Tagebuch-Trades (in Euro) + offene Positionen live
 function depotValue(){
@@ -1027,7 +1142,7 @@ function briefCard(){
 }
 // ================= Meldungen: jede Push-Meldung in voller Laenge, Antippen oeffnet sie direkt =================
 function msgIcon(m){ var d = m.d || {}, t = (m.title || '') + ' ' + (m.t || '');
-  return d.kind === 'fill' ? '🎯' : d.kind === 'finder' ? '🔎' : d.kind === 'korb' ? '🧺' : d.kind === 'd3' ? '📈' : d.kind === 'intra' || d.kind === 'orb' ? '⚡' : d.kind === 'ibs' || d.kind === 'tt' || d.kind === 'swing' ? '📈' : /Briefing/.test(t) ? '☀️' : /Bilanz|Wochenbericht/.test(t) ? '📊' : /TP1|Ziel erreicht|✅/.test(t) ? '✅' : /Stop|❌/.test(t) ? '❌' : /Termin|In \d+ Min/.test(t) ? '📅' : '🔔'; }
+  return d.kind === 'fill' ? '🎯' : d.kind === 'finder' ? '🔎' : d.kind === 'korb' ? '🧺' : d.kind === 'auto' ? '🧪' : /^⏸/.test(m.title || '') ? '⏸' : /Kursdaten|GitHub|Dienst:/.test(m.title || '') ? '🛡️' : /pausiert|Wieder im Rahmen/.test(m.title || '') ? '📏' : /Neue Strategie/.test(m.title || '') ? '🧪' : d.kind === 'd3' ? '📈' : d.kind === 'intra' || d.kind === 'orb' ? '⚡' : d.kind === 'ibs' || d.kind === 'tt' || d.kind === 'swing' ? '📈' : /Briefing/.test(t) ? '☀️' : /Bilanz|Wochenbericht/.test(t) ? '📊' : /TP1|Ziel erreicht|✅/.test(t) ? '✅' : /Stop|❌/.test(t) ? '❌' : /Termin|In \d+ Min/.test(t) ? '📅' : '🔔'; }
 function msgTitle(m){ return m.title && m.title !== 'Trade Check' ? m.title : (String(m.t || '').split(/[:.]/)[0] || 'Meldung').slice(0, 60); }
 // Radar: Wie nah ist jeder US-Markt am IBS-Signal, und was fehlt der Intraday-Stufe? Der Dienst rechnet stuendlich waehrend der US-Sitzung.
 function radarCard(){
@@ -1094,6 +1209,7 @@ function evid(k){
   if (k === 'creme' || k === 'bplus' || k === 'finder') return 'probe';
   if (k === 'depot') return 'stark';
   if (k === 'korb') return V.bk && V.bk.korb && V.bk.korb.passed ? 'mittel' : null;
+  if (k === 'auto') return V.bq && V.bq.live && V.bq.live.length ? 'probe' : null;
   return null;
 }
 function evidPill(k){ var e = evid(k); return e ? '<span class="evb evb-' + e + '">' + ({ stark: 'Beleg stark', mittel: 'Beleg mittel', probe: 'in Bewährung' })[e] + '</span>' : ''; }
@@ -1234,11 +1350,42 @@ function realGroup(c){ c = String(c || ''); if (/Turnaround/.test(c)) return 'Tu
 function realRows(){
   var rows = [], re = riskEur(), cost = (+S.cfg.fee || 0) * 2, seen = {};
   (V.trackLog || []).forEach(function(x){ var m = S.real[x.id]; if (!m || !m.traded) return; seen[x.id] = 1;
-    rows.push({ t: x.t, name: x.name, grp: realGroup(x.cls), eur: m.eur != null ? m.eur : (x.r != null ? x.r * re - cost : 0), r: x.r, src: 'Signal', est: m.eur == null }); });
+    rows.push({ id: x.id, t: x.t, name: x.name, grp: realGroup(x.cls), eur: m.eur != null ? m.eur : (x.r != null ? x.r * re - cost : 0), r: x.r, src: 'Signal', est: m.eur == null }); });
   S.trades.filter(function(t){ return t.status === 'closed' && !(t.sig && seen[t.sig.id]); }).forEach(function(t){ var r = tradeR(t) || 0;
     rows.push({ t: t.closedAt || t.at, name: t.name, grp: t.sig ? realGroup(t.sig.cls) : 'Eigene Trades', eur: t.eur != null ? t.eur : r * ((t.size && t.size.risk) || re) - cost, r: r, src: 'Tagebuch', est: t.eur == null }); });
   (S.imp || []).forEach(function(x){ rows.push({ t: x.t, name: x.name, grp: 'Import', eur: x.eur, r: null, src: 'Import' }); });
   return rows.sort(function(a, b){ return a.t - b.t; });
+}
+// ================= Echte Ausfuehrungspreise: was Spread, Timing und Gebuehren wirklich kosten =================
+// Knock-out: fairer Scheinpreis aus dem Basiswert (Long (Kurs - KO) / Bezugsverhaeltnis, Short umgekehrt) beim Signal-Einstieg und -Ausstieg.
+// Plan = was der Schein bei den Signalkursen gebracht haette. Einstieg/Ausstieg = wie weit dein Kauf/Verkauf davon weg lag (Spread, Aufgeld, Timing).
+function execUx(x){ if (x.xp) return x.xp; return x.e && x.sp && x.r != null ? x.e * (1 + (x.dir || 1) * x.r * x.sp) : null; }
+function execCost(x, m){
+  if (!m || !(m.buy > 0 && m.sell > 0 && m.qty > 0)) return null;
+  var fee = 2 * (m.fee != null ? m.fee : (+S.cfg.fee || 0)), act = (m.sell - m.buy) * m.qty - fee, ue = x.e, ux = execUx(x), dir = x.dir || 1;
+  if (!(ue > 0 && ux > 0)) return { act: act, fee: fee, plan: null };
+  if (m.prod === 'ko'){
+    if (!(m.ratio > 0 && m.ko > 0)) return { act: act, fee: fee, plan: null };
+    var cb = dir * (ue - m.ko) / m.ratio, cs = dir * (ux - m.ko) / m.ratio;
+    if (!(cb > 0 && cs > 0)) return { act: act, fee: fee, plan: null };
+    return { act: act, fee: fee, plan: (cs - cb) * m.qty, entry: (m.buy - cb) * m.qty, exit: (cs - m.sell) * m.qty, lev: ue / (m.ratio * cb) };
+  }
+  var plan = m.buy * m.qty * dir * (ux / ue - 1);
+  return { act: act, fee: fee, plan: plan, slip: plan - act - fee };
+}
+function viewExec(){
+  var L2 = (V.trackLog || []).filter(function(x){ var m = S.real[x.id]; return m && m.traded && m.buy > 0; }); if (!L2.length) return '';
+  var re = riskEur(), n = 0, s = { act: 0, plan: 0, entry: 0, exit: 0, fee: 0, slip: 0 }, nSplit = 0, rows = [];
+  L2.forEach(function(x){ var c = execCost(x, S.real[x.id]); if (!c || c.plan == null) return; n++; s.act += c.act; s.plan += c.plan; s.fee += c.fee;
+    if (c.entry != null){ nSplit++; s.entry += c.entry; s.exit += c.exit; } else s.slip += c.slip;
+    rows.push('<li><div class="row"><span>' + esc(x.name) + ' <span class="muted small">' + dm(x.t) + (c.lev ? ' · Hebel ' + fmt(c.lev, 1) : '') + '</span></span><span class="num ' + (c.act >= 0 ? 'good' : 'bad') + '">' + sgn(c.act, 2) + ' €</span></div><div class="muted small">Plan ' + sgn(c.plan, 2) + ' € · Kosten ' + fmt(c.plan - c.act, 2) + ' €' + (c.entry != null ? ' (Einstieg ' + fmt(c.entry, 2) + ', Ausstieg ' + fmt(c.exit, 2) + ', Gebühren ' + fmt(c.fee, 2) + ')' : ' (davon Gebühren ' + fmt(c.fee, 2) + ')') + '</div></li>'); });
+  if (!n) return '<div class="label" style="margin-top:12px">Ausführung</div><p class="hint">Für Knock-outs brauche ich noch Bezugsverhältnis und KO-Schwelle, dann kann ich Plan und echte Ausführung vergleichen.</p>';
+  var cost = s.plan - s.act, per = cost / n, neg = function(v){ return (v > 0 ? '−' : '+') + fmt(Math.abs(v), 2) + ' €'; };
+  return '<div class="label" style="margin-top:12px">Ausführung (' + n + (n === 1 ? ' Trade' : ' Trades') + ' mit Preisen)</div><div class="real-hero" id="exec"><div><small>Kosten je Trade</small><b class="' + (per > 0 ? 'bad' : 'good') + '">' + neg(per) + '</b></div><div><small>in R</small><b>' + (re ? fmt(per / re, 2) + ' R' : '–') + '</b></div></div>' +
+    '<table class="st"><tr><td>Plan zu Signalkursen</td><td class="' + (s.plan >= 0 ? 'good' : 'bad') + '">' + sgn(s.plan, 2) + ' €</td></tr>' + (nSplit ? '<tr><td>Einstieg (Spread, Aufgeld, Timing)</td><td class="' + (s.entry > 0 ? 'bad' : 'good') + '">' + neg(s.entry) + '</td></tr><tr><td>Ausstieg (Spread, Timing)</td><td class="' + (s.exit > 0 ? 'bad' : 'good') + '">' + neg(s.exit) + '</td></tr>' : '') +
+    (n > nSplit ? '<tr><td>Spread und Timing (ETF, Aktie)</td><td class="' + (s.slip > 0 ? 'bad' : 'good') + '">' + neg(s.slip) + '</td></tr>' : '') + '<tr><td>Ordergebühren</td><td class="bad">−' + fmt(s.fee, 2) + ' €</td></tr><tr><td><b>Echt</b></td><td class="' + (s.act >= 0 ? 'good' : 'bad') + '"><b>' + sgn(s.act, 2) + ' €</b></td></tr></table>' +
+    '<p class="hint">' + (re && per / re > 0.15 ? 'Die Ausführung kostet dich ' + fmt(per / re, 2) + ' R je Trade, das frisst einen großen Teil des Vorteils. Größere Positionen (die feste Gebühr fällt weniger ins Gewicht) und Limit-Orders nah am Signalkurs helfen.' : 'Die Ausführung liegt im Rahmen.') + '</p>' +
+    '<details class="real-list"><summary>Je Trade</summary><ul class="list-plain">' + rows.reverse().join('') + '</ul></details>';
 }
 function viewReal(){
   var rows = realRows(), L2 = (V.trackLog || []).filter(function(x){ return x.r != null; });
@@ -1268,8 +1415,9 @@ function viewReal(){
       (sk.length ? 'Die ' + sk.length + ' ausgelassenen hätten <b class="' + (skE >= 0 ? 'good' : 'bad') + '">' + sgn(skE, 0) + ' €</b> gebracht' + (skE >= 0 ? '.' : ', gut gefiltert.') + ' ' : '') +
       (tr.some(function(x){ return S.real[x.id].eur != null; }) ? 'Bei den gehandelten liegst du <b class="' + (slip >= 0 ? 'good' : 'bad') + '">' + sgn(slip, 0) + ' €</b> ' + (slip >= 0 ? 'über' : 'unter') + ' dem Plan (Einstieg, Ausstieg, Spread).' : '') + '</p>';
   }
+  h += viewExec();
   if (asked.length) h += '<div class="label" style="margin-top:12px">Hast du die gehandelt?</div>' + asked.map(function(x){ return '<div class="ask"><span><b>' + esc(x.name) + '</b> <span class="' + (x.dir > 0 ? 'good' : 'bad') + '">' + (x.dir > 0 ? 'Long' : 'Short') + '</span> <span class="muted small">' + dm(x.t) + ' · Signal ' + sgn(x.r, 2) + ' R</span></span><span class="btns"><button class="btn sm" data-act="realyes" data-id="' + esc(x.id) + '">Ja</button><button class="btn sm ghost" data-act="realno" data-id="' + esc(x.id) + '">Nein</button></span></div>'; }).join('');
-  if (rows.length) h += '<details class="real-list"><summary>Alle Einträge (' + rows.length + ')</summary><ul class="list-plain">' + rows.slice().reverse().slice(0, 60).map(function(x){ return '<li><div class="row"><span>' + esc(x.name) + ' <span class="muted small">' + dm(x.t) + ' · ' + esc(x.src) + (x.est ? ' · geschätzt' : '') + '</span></span><span class="num ' + (x.eur >= 0 ? 'good' : 'bad') + '">' + sgn(x.eur, 2) + ' €</span></div></li>'; }).join('') + '</ul>' + ((S.imp || []).length ? '<button class="link tiny" data-act="realclr">Importierte Zeilen entfernen</button>' : '') + '</details>';
+  if (rows.length) h += '<details class="real-list"><summary>Alle Einträge (' + rows.length + ')</summary><ul class="list-plain">' + rows.slice().reverse().slice(0, 60).map(function(x){ return '<li><div class="row"><span>' + esc(x.name) + ' <span class="muted small">' + dm(x.t) + ' · ' + esc(x.src) + (x.est ? ' · geschätzt' : '') + '</span>' + (x.id ? ' <button class="link tiny" data-act="realyes" data-id="' + esc(x.id) + '">Preise</button>' : '') + '</span><span class="num ' + (x.eur >= 0 ? 'good' : 'bad') + '">' + sgn(x.eur, 2) + ' €</span></div></li>'; }).join('') + '</ul>' + ((S.imp || []).length ? '<button class="link tiny" data-act="realclr">Importierte Zeilen entfernen</button>' : '') + '</details>';
   return h + '<input type="file" id="realfile" accept=".csv,text/csv,text/plain" hidden></section>';
 }
 // CSV: Trennzeichen, Kopfzeile und Spalten selbst erkennen (Datum, Name, Ergebnis in Euro)
@@ -1288,6 +1436,7 @@ function parseTradeCsv(txt){
   lines.slice(1).forEach(function(l){ var c = csvSplit(l, d), t = dateAny(c[iD]), v = iP >= 0 ? numDE(c[iP]) : (numDE(c[iR]) != null ? numDE(c[iR]) * re : null); if (t == null || v == null) return; rows.push({ t: t, name: iN >= 0 ? (c[iN] || 'Import').slice(0, 40) : 'Import', eur: Math.round(v * 100) / 100 }); });
   return { rows: rows, cols: { datum: lines[0] && csvSplit(lines[0], d)[iD], name: iN >= 0 ? csvSplit(lines[0], d)[iN] : null, ergebnis: csvSplit(lines[0], d)[iP >= 0 ? iP : iR] } };
 }
+document.addEventListener('toggle', function(ev){ var d = ev.target; if (d && d.dataset && d.dataset.fold){ S.fold = S.fold || {}; if (d.open) S.fold[d.dataset.fold] = 1; else delete S.fold[d.dataset.fold]; save(); } }, true);
 document.addEventListener('change', function(ev){ var fi = ev.target; if (fi && fi.id === 'realfile' && fi.files && fi.files[0]){ realImport(fi.files[0]); fi.value = ''; } });
 function realImport(file){
   var rd = new FileReader();
@@ -1696,6 +1845,7 @@ function viewCockpit(){
   var eo = cs['eom:tlt5']; if (eo) row('US-Anleihen zum Monatsende', !!eo.passed, eo.passed ? eo.all.win : null, null, 'ETF, 5 Handelstage · Ø ' + sgn(eo.all.mean, 2) + ' %', '12/Jahr', 'eom');
   var orb = bx.sets && bx.sets['orbplay:top3_rvol2']; if (orb) row('ORB Stocks in Play', (bx.passed || []).some(function(k){ return /^orbplay:/.test(k); }), (bx.passed || []).some(function(k){ return /^orbplay:/.test(k); }) ? orb.all.win : null, null, '15:45 · wenige große Gewinner');
   row('Trade Finder (ab 16 Uhr)', S.cfg.push.finder !== false, null, null, 'beste aktuelle Setups ohne geprüfte Stufe · zum Selbstprüfen', 'bis 5/Tag', 'finder');
+  if (V.bq && V.bq.week) row('Neu entdeckt (Sonntags-Suche)', (V.bq.live || []).length > 0, null, null, (V.bq.live || []).length ? (V.bq.live || []).length + ((V.bq.live || []).length === 1 ? ' Regel' : ' Regeln') + ' in Bewährung, halbe Größe' : 'bisher keine Regel hat alle Hürden genommen', null, 'auto');
   if (bm.depotPassed) row('Depot-Strategien', bm.depotPassed.length > 0, null, null, bm.depotPassed.length + (bm.depotPassed.length === 1 ? ' Regel' : ' Regeln') + ' · Wechsel am Monatsanfang', null, 'depot');
   if (!rows.length) return '';
   return '<section class="card"><div class="row"><h2>Deine Strategien</h2><span class="muted small">Treffer mit Kosten</span></div>' + rows.join('') +
@@ -1736,6 +1886,16 @@ function viewKorbSets(){
       return '<tr><td>' + (x.passed ? '✅ ' : '') + esc(x.name) + '</td><td>' + (a.n || 0) + '</td><td>' + (a.n ? fmt(a.win * 100, 0) + ' %' : '–') + '</td><td class="' + ((a.mean || 0) >= 0 ? 'good' : 'bad') + '">' + (a.n ? sgn(a.mean, 2) : '–') + '</td><td class="muted">' + (x.yearsN ? x.yearsUp + '/' + x.yearsN : '–') + '</td></tr>'; }).join('') + '</table>' : '') +
     '<p class="hint">Vergleich = alle Aktien des Index gleich gewichtet. ✅ beim Korb = mehr Rendite und bessere Rendite pro Risiko in allen drei Zeitabschnitten. Live ist der Korb aus den 10 stärksten DAX-Aktien. Die kurzfristigen Signale (RSI-2, IBS, Verlusttage, Ausbruch) haben auf Einzelaktien keinen Zeitraum-festen Vorteil gezeigt und bleiben aus.</p>';
 }
+// ================= Woechentliche Strategiesuche =================
+function viewSearchSets(){
+  var b = V.bq; if (!b || !b.week) return '';
+  var pc = function(v){ return v == null ? '–' : fmt(v * 100, 0) + ' %'; };
+  var h = '<div class="label" style="margin-top:14px">Strategiesuche (jeden Sonntag)</div><p class="small" id="suche">Woche ' + esc(b.week) + ': <b>' + b.batch + '</b> neue Regeln geprüft, insgesamt ' + fmt(b.testedTotal, 0) + ' von ' + fmt(b.space, 0) + '. ' + ((b.found || []).length ? '<b class="good">' + b.found.length + ' bestanden.</b>' : 'Keine hat alle Hürden genommen.') + '</p>';
+  if ((b.live || []).length) h += '<div class="label" style="margin-top:8px">In Bewährung</div>' + b.live.map(function(l){ return '<div class="sr-rule"><b>' + esc(l.name) + '</b> <span class="evb evb-probe">in Bewährung</span><div class="small">' + esc(l.text) + '</div><div class="muted small">' + l.stats.n + ' Trades seit 2000, ' + pc(l.stats.win) + ' Gewinner, Ø ' + sgn(l.stats.mean, 2) + ' % nach Kosten · t-Wert ' + fmt(l.tval, 1) + ' · seit ' + esc(l.since || '') + '</div></div>'; }).join('');
+  if ((b.top || []).length) h += '<table class="st" style="margin-top:8px"><tr><th>Beste Kandidaten</th><th>Trades</th><th>Ø %</th><th>t</th><th>&nbsp;</th></tr>' + b.top.slice(0, 8).map(function(x){ return '<tr><td>' + (x.status === 'bestanden' ? '✅ ' : '') + esc(x.name) + '<div class="muted tiny">' + esc(x.grp) + (x.why ? ' · ' + esc(x.why) : '') + '</div></td><td>' + x.n + '</td><td class="' + (x.mean >= 0 ? 'good' : 'bad') + '">' + sgn(x.mean, 2) + '</td><td>' + fmt(x.tval, 1) + '</td><td class="muted small">' + esc(x.status) + '</td></tr>'; }).join('') + '</table>';
+  return h + more('Bausteine: Aufwärtstrend, Schwäche-Auslöser (IBS, RSI-2, Verlusttage, Tiefs, Rücksetzer, Gap, Spannen, Bollinger, Wochentag) und Ausstiege. Getestet auf US-Indizes und US-Sektoren seit 2000, mit Kosten.',
+    'Bestanden heißt alles zugleich: die normale Hürde (mind. 100 Trades, alle drei Zeiträume im Plus, nach Handelstagen gebündelt sicher über null, besser als einfach investiert), dazu wegen der vielen Kandidaten ein t-Wert von mindestens 3 statt 2, im Plus in mind. 75 % der Märkte, auch mit doppelten Kosten, in mind. 60 % der Jahre, mind. 5 Trades im Jahr, die Nachbar-Einstellungen halten ebenfalls, und höchstens die Hälfte der Signale fällt auf Tage, an denen schon eine laufende Strategie kauft. Probelauf auf reinen Zufallskursen: über 33.000 Prüfungen, keine bestanden. Eine versteckte echte Regel in Testdaten wird gefunden. Was besteht, läuft live mit halber Größe in Bewährung und wird pausiert, wenn es live deutlich hinter der Rückrechnung bleibt.');
+}
 function viewProSets(){
   var b = V.bp; if (!b || !b.sets) return '';
   var nm = { 'pairs:daily': 'Pairs Trading (20 Paare, Tageskerzen)', 'smallcap:gapgo': 'Small-Cap Gap and Go', 'smallcap:gapgoR': 'Small-Cap Gap and Go (R)' }, u = function(k){ return /pairs/.test(k) ? ' %' : ' R'; };
@@ -1748,7 +1908,7 @@ function viewResearch(){
   return '<section class="card"><div class="row"><h2>Strategien aus der Forschung</h2><span class="muted small">' + esc(dm(Date.parse(b.at))) + '</span></div>' +
     '<p class="hint" style="margin-top:4px">ORB „Stocks in Play“ (5 Min, ' + (b.orbDays || 0) + ' Handelstage, 45 US-Aktien), Connors RSI-2 auf Tageskerzen (bis 10 Jahre), News-Fehlausbruch und -Momentum (15 Min). Mit Kosten, Prüfung in drei Zeiträumen. ✅ = in allen dreien mindestens +0,05 R.</p>' +
     '<table class="st"><tr><th>&nbsp;</th><th>Trades</th><th>Treffer</th><th>Ø R</th><th>Härtetest</th></tr>' + Object.keys(b.sets).map(function(k){ return row(b.sets[k]); }).join('') + '</table>' +
-    viewMoreSets() + viewCalSets() + viewKorbSets() + viewScalpSets() + viewFxSets() + viewProSets() +
+    viewMoreSets() + viewCalSets() + viewKorbSets() + viewSearchSets() + viewScalpSets() + viewFxSets() + viewProSets() +
     (b.orbGross && b.orbGross.n ? '<p class="hint">ORB Top 3 ohne Kosten: Ø ' + sgn(b.orbGross.mean, 2) + ' R. Der Unterschied zeigt, wie viel Spread und Gebühren bei so engen Stops kosten.</p>' : '') + '</section>';
 }
 function viewBt(){
@@ -1873,7 +2033,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: +S.cfg.risk || 0, heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -1882,11 +2042,11 @@ function syncTrade(extra){
     var hits = {}, deads = {}; (j.alerts || []).forEach(function(a){ if (a.hit) hits[a.id] = a; if (a.dead) deads[a.id] = a.dead; });
     var changed = false;
     S.alerts.forEach(function(a){ if (hits[a.id] && !a.hit){ a.hit = hits[a.id].hit; a.hitPx = hits[a.id].hitPx; changed = true; } if (deads[a.id] && !a.dead){ a.dead = deads[a.id]; changed = true; } });
-    V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || []; V.ibsPos = j.ibsPos || []; V.brief = j.brief || null; V.log = j.log || []; V.radar = j.radar || null; appBadge();
+    V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || []; V.ibsPos = j.ibsPos || []; V.brief = j.brief || null; V.log = j.log || []; V.radar = j.radar || null; V.autoPos = j.autoPos || []; V.lc = j.lc || null; V.wd = j.wd || null; V.syncErr = ''; appBadge();
     if (V.wantSig){ var w = V.wantSig; V.wantSig = null; useSignal(w); return j; }
     if (changed || S.tab === 'markt' || S.tab === 'buch' || S.tab === 'check'){ if (changed) save(); rerender(); }
     return j;
-  }).catch(function(e){ V.pushMsg = 'Fehler beim Abgleich: ' + e.message; return null; });
+  }).catch(function(e){ V.pushMsg = 'Fehler beim Abgleich: ' + e.message; V.syncErr = e.message; if (S.tab === 'heute') rerender(); return null; });
 }
 function pushOn(){
   V.pushMsg = 'Einen Moment …'; rerender();
@@ -1918,7 +2078,7 @@ function bind(root){
   $$('[data-act]', root).forEach(function(el){ el.addEventListener('click', onAct); });
   $$('input[data-f]', root).forEach(function(el){ el.addEventListener('input', function(){ S.form[el.dataset.f] = el.value; if (el.dataset.f === 'ratio') S.ko[S.form.k] = el.value; save();
     if (el.dataset.f === 'entry' || el.dataset.f === 'stop'){ var kb = $('.kobox:not(.calc)'), i = instr(S.form.k); if (kb && i){ var w = document.createElement('div'); w.innerHTML = viewKo(S.form, i); var nb = w.firstChild; kb.replaceWith(nb); bind(nb); } } calcRefresh(); }); });
-  $$('input[data-cfg]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.cfg; if (k === 'url'){ S.cfg.url = el.value.trim(); mem = {}; } else { var v = pnum(el.value); if (v >= 0) S.cfg[k] = v; } save(); if (['account', 'risk', 'heat'].indexOf(k) >= 0) syncTrade().catch(function(){}); rerender(); }); });
+  $$('input[data-cfg]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.cfg; if (k === 'url'){ S.cfg.url = el.value.trim(); mem = {}; } else { var v = pnum(el.value); if (v >= 0) S.cfg[k] = v; } save(); if (['account', 'risk', 'heat', 'shadow', 'fee'].indexOf(k) >= 0) syncTrade().catch(function(){}); rerender(); }); });
   $$('input[data-watch]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.watch, i = S.watch.indexOf(k); if (el.checked && i < 0) S.watch.push(k); if (!el.checked && i >= 0) S.watch.splice(i, 1); save(); syncTrade(); }); });
   $$('input[data-push]', root).forEach(function(el){ el.addEventListener('change', function(){ S.cfg.push[el.dataset.push] = el.checked; save(); syncTrade(); }); });
   $$('input[data-fib]', root).forEach(function(el){ el.addEventListener('input', function(){ S.fib[el.dataset.fib] = el.value; save(); }); });
@@ -1951,9 +2111,21 @@ function onAct(e){
   if (a === 'usesig') return useSignal(el.dataset.id);
   if (a === 'finder') return finderLoad(true);
   if (a === 'realyes'){ var tl = (V.trackLog || []).filter(function(x){ return x.id === el.dataset.id; })[0]; if (!tl) return;
-    sheet('<h2>' + esc(tl.name) + ' gehandelt</h2><p class="hint">Signal ' + sgn(tl.r, 2) + ' R, nach Plan etwa ' + sgn(tl.r * riskEur() - (+S.cfg.fee || 0) * 2, 0) + ' €. Trag dein echtes Ergebnis ein, oder lass das Feld leer, dann zählt der Planwert.</p><div class="fields f2"><label class="field"><span>Ergebnis in €</span><input inputmode="decimal" id="realeur" placeholder="z. B. 42,50 oder -20"></label></div><div class="btns"><button class="btn block" data-act="realsave" data-id="' + esc(tl.id) + '">Speichern</button></div>');
+    var m0 = S.real[tl.id] || {}, pr0 = trProduct(logSym(tl)), isKo = m0.prod ? m0.prod === 'ko' : !pr0.etf, fk = function(v, d){ return v != null ? esc(fmtIn(v, d)) : ''; };
+    sheet('<h2>' + esc(tl.name) + ' gehandelt</h2><p class="hint">Signal ' + sgn(tl.r, 2) + ' R' + (tl.e ? ', Einstieg ' + fmt(tl.e, 2) + (execUx(tl) ? ', Ausstieg ' + fmt(execUx(tl), 2) : '') + ' im Basiswert' : '') + '. Trag Kauf- und Verkaufskurs deines Scheins ein, dann rechnet die App dein echtes Ergebnis und was Spread, Timing und Gebühren gekostet haben.</p>' +
+      '<div class="seg" style="margin:10px 0 4px" id="realprod"><button data-act="realprod" data-p="ko" aria-pressed="' + isKo + '">Knock-out</button><button data-act="realprod" data-p="etf" aria-pressed="' + !isKo + '">ETF oder Aktie</button></div>' +
+      '<div class="fields f2"><label class="field"><span>Kaufkurs je Stück (€)</span><input inputmode="decimal" id="realbuy" value="' + fk(m0.buy, 3) + '" placeholder="z. B. 12,34"></label><label class="field"><span>Verkaufskurs je Stück (€)</span><input inputmode="decimal" id="realsell" value="' + fk(m0.sell, 3) + '" placeholder="z. B. 13,10"></label>' +
+      '<label class="field"><span>Stück</span><input inputmode="decimal" id="realqty" value="' + fk(m0.qty, 0) + '" placeholder="z. B. 40"></label>' +
+      '<label class="field ko-only"' + (isKo ? '' : ' hidden') + '><span>Bezugsverhältnis</span><input inputmode="decimal" id="realratio" value="' + fk(m0.ratio, 2) + '" placeholder="z. B. 100"></label><label class="field ko-only"' + (isKo ? '' : ' hidden') + '><span>KO-Schwelle</span><input inputmode="decimal" id="realko" value="' + fk(m0.ko, 2) + '" placeholder="Basiswert-Punkte"></label></div>' +
+      '<details class="more"><summary>Nur das Ergebnis eintragen</summary><div class="fields f2" style="margin-top:8px"><label class="field"><span>Ergebnis in €</span><input inputmode="decimal" id="realeur" value="' + (m0.eur != null && m0.buy == null ? esc(fmtIn(m0.eur, 2)) : '') + '" placeholder="z. B. 42,50 oder -20"></label></div></details>' +
+      '<div class="btns"><button class="btn block" data-act="realsave" data-id="' + esc(tl.id) + '">Speichern</button></div>');
     return; }
-  if (a === 'realsave'){ var ve = $('#realeur') ? String($('#realeur').value).trim() : ''; S.real[el.dataset.id] = { traded: true, eur: ve === '' ? null : numDE(ve) }; save(); closeSheet(); toast('Gespeichert'); return rerender(); }
+  if (a === 'realprod'){ $$('#realprod button').forEach(function(b){ b.setAttribute('aria-pressed', String(b === el)); }); $$('.ko-only').forEach(function(f){ f.hidden = el.dataset.p !== 'ko'; }); return; }
+  if (a === 'realsave'){ var vv = function(id){ var e2 = $('#' + id); return e2 ? pnum(e2.value) : null; }, ve = $('#realeur') ? String($('#realeur').value).trim() : '';
+    var prod = ($('#realprod [aria-pressed=true]') || { dataset: { p: 'ko' } }).dataset.p, m = { traded: true, prod: prod, buy: vv('realbuy'), sell: vv('realsell'), qty: vv('realqty'), ratio: prod === 'ko' ? vv('realratio') : null, ko: prod === 'ko' ? vv('realko') : null, fee: +S.cfg.fee || 0 };
+    if (m.buy > 0 && m.sell > 0 && m.qty > 0) m.eur = Math.round(((m.sell - m.buy) * m.qty - 2 * m.fee) * 100) / 100; else { m.buy = m.sell = m.qty = null; m.eur = ve === '' ? null : numDE(ve); }
+    S.real[el.dataset.id] = m; save(); closeSheet(); toast(m.eur != null ? 'Gespeichert: ' + sgn(m.eur, 2) + ' €' : 'Gespeichert'); return rerender(); }
+  if (a === 'korbdone'){ var kb0 = V.bk && V.bk.korb; S.korbDone = S.korbDone || {}; if (kb0) S.korbDone[kb0.month] = 1; save(); toast('Korb erledigt'); return rerender(); }
   if (a === 'realno'){ S.real[el.dataset.id] = { traded: false }; save(); return rerender(); }
   if (a === 'realimp'){ var fi = $('#realfile'); if (fi) fi.click(); return; }
   if (a === 'realclr'){ S.imp = []; save(); return rerender(); }
@@ -2018,6 +2190,7 @@ render = function(){ _render(); bind($('#page')); };
 try { var qs = new URLSearchParams(location.search).get('sig'); if (qs) V.wantSig = qs; } catch (e) {}
 fetch('../dienst/backtest-fx.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.tf){ V.bf = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-scalp.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bs = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});
+fetch('../dienst/backtest-suche.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.week){ V.bq = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-stocks.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.korb){ V.bk = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-cal.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bc = b; if (S.tab === 'buch' || S.tab === 'heute') rerender(); } }).catch(function(){});
 fetch('../dienst/backtest-pro.json', { cache: 'no-cache' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(b){ if (b && b.sets){ V.bp = b; if (S.tab === 'buch') rerender(); } }).catch(function(){});

@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'a680185a52';
+const WORKER_VER = 'b7879e67a6';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3122,7 +3122,135 @@ var TR_PRODUCT = {
   EFA: { none: true }, EWG: { ko: 'DAX' }, EWY: { etf: 'iShares MSCI Korea UCITS ETF' }, EWT: { etf: 'iShares MSCI Taiwan UCITS ETF' }, INDA: { etf: 'iShares MSCI India UCITS ETF' }, EWW: { etf: 'Xtrackers MSCI Mexico UCITS ETF' }
 };
 function trProduct(y){ return TR_PRODUCT[y] || { ko: null }; }
-  return { trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
+// ================= Konto-Risiko: Maerkte, die zusammen laufen, sind eine einzige Wette =================
+// IBS am selben Abend auf S&P, Nasdaq, Dow und Russell sind vier Trades, aber fast dasselbe Risiko. Je Buendel hoechstens 1,5-faches Einzelrisiko,
+// alle offenen Positionen zusammen hoechstens das Gesamtlimit (heat, % vom Konto).
+var CLUSTER_NAMES = { us: 'US-Aktien', eu: 'Europa-Aktien', intl: 'Aktien Asien und Schwellenländer', metal: 'Edelmetalle', oil: 'Energie', bond: 'Anleihen', crypto: 'Krypto', usd: 'Dollar-Paare', jpy: 'Yen-Paare', fx: 'Devisen', copper: 'Kupfer' };
+function riskCluster(y){
+  y = String(y || '');
+  var id = /^(\^GDAXI|\^MDAXI|\^STOXX50E|\^FCHI|\^FTSE|\^AEX|\^IBEX|\^SSMI|FTSEMIB\.MI|EWG|EZU|FEZ|DAX)$/.test(y) || /\.DE$/.test(y) ? 'eu'
+    : /^(EEM|EWZ|EWJ|FXI|EWY|EWT|INDA|EWW|EFA|\^N225|\^HSI|\^AXJO)$/.test(y) ? 'intl'
+    : /^(GC=F|SI=F|PL=F|GLD|SLV|GDX|XAUUSD|XAGUSD)$/.test(y) ? 'metal'
+    : /^(CL=F|BZ=F|NG=F|USO|XLE|XOP|OIH|WTI|BRENT)$/.test(y) ? 'oil'
+    : /^(TLT|IEF|\^TNX|ZB=F|ZN=F)$/.test(y) ? 'bond'
+    : /^HG=F$|^COPPER$/.test(y) ? 'copper'
+    : /-USD$/.test(y) ? 'crypto'
+    : /^(EURUSD|GBPUSD|AUDUSD|NZDUSD)=X$|^(JPY|CAD|CHF)=X$/.test(y) ? 'usd'
+    : /JPY=X$/.test(y) ? 'jpy'
+    : /=X$/.test(y) ? 'fx' : 'us';
+  return { id: id, name: CLUSTER_NAMES[id] };
+}
+// open: [{ y, risk }] mit risk in % vom Konto; cfg: { riskP, heat }
+function riskBudget(open, y, cfg){
+  var c = riskCluster(y), tot = 0, cl = 0, same = [], riskP = +cfg.riskP || 1, heat = +cfg.heat || 5, capC = riskP * 1.5;
+  (open || []).forEach(function(p){ var r = p.risk != null ? +p.risk : riskP; tot += r; if (riskCluster(p.y).id === c.id){ cl += r; same.push(p); } });
+  var room = Math.min(riskP, heat - tot, capC - cl), why = room === riskP ? '' : (heat - tot <= capC - cl ? 'heat' : 'cluster');
+  return { cluster: c, risk: Math.max(0, Math.round(room * 100) / 100), full: room < riskP * 0.25, why: why, same: same, tot: Math.round(tot * 100) / 100, cl: Math.round(cl * 100) / 100, capC: capC, heat: heat, riskP: riskP };
+}
+// ================= Strategie-Gruppen fuer Schatten-Bot und Live-Pruefung =================
+var GROUP_NAMES = { ibs: 'IBS (US)', laender: 'IBS Länder-ETFs', tt: 'Turnaround Tuesday', d3: 'Drei Verlusttage', rsi2: 'Swing RSI-2', creme: 'Crème (Intraday)', bplus: 'B+ (Intraday)', intra: 'Intraday', finder: 'Trade Finder', orb: 'ORB', auto: 'Neu entdeckt' };
+function groupOf(x){
+  if (x.g) return x.g;
+  var c = String(x.cls || '');
+  return c === 'IBS' ? 'ibs' : c === 'Turnaround Tuesday' ? 'tt' : c === 'Drei Verlusttage' ? 'd3' : /^Swing/.test(c) ? 'rsi2' : c === 'Finder' ? 'finder' : c === 'ORB' ? 'orb' : /Crème|Creme/.test(c) ? 'creme' : c === 'B+' ? 'bplus' : 'intra';
+}
+function groupName(g, x){ return /^auto:/.test(g) ? 'Neu: ' + ((x && x.gn) || g.slice(5)) : (GROUP_NAMES[g] || g); }
+function dailyGroup(g){ return /^(ibs|laender|tt|d3|rsi2)$/.test(g) || /^auto:/.test(g); }
+function logSym(x){ if (x.y) return x.y; var i = instrumentByKey(x.k); return i ? i.y : String(x.k || '').replace(/^B:/, ''); }
+// ================= Schatten-Bot: jedes gemeldete Signal virtuell bei Trade Republic gehandelt =================
+// Groesse nach Risiko (Kapital x Risiko %), dieselben Buendel- und Gesamtlimits wie oben. Kosten: Ordergebuehr fuer Kauf und Verkauf,
+// Spread (Knock-out eng, ETF weiter), Finanzierung der Knock-outs ueber Nacht (ca. 4,5 % p. a. auf den Gegenwert).
+function shadowCost(y){ var p = trProduct(y), etf = !!p.etf; return { etf: etf, spread: etf ? (/^(EEM|EWZ|EWJ|FXI|EWY|EWT|INDA|EWW)$/.test(y) ? 0.0015 : 0.001) : 0.0003, fin: etf ? 0 : 0.045 }; }
+function shadowRun(log, cfg){
+  cfg = cfg || {}; var cap = +cfg.cap > 0 ? +cfg.cap : 1000, riskP = +cfg.riskP > 0 ? +cfg.riskP : 1, fee = cfg.fee != null && cfg.fee !== '' ? +cfg.fee : 1, heat = +cfg.heat > 0 ? +cfg.heat : 5;
+  var L = (log || []).filter(function(x){ return x && x.r != null && isFinite(x.r) && x.t > 0; }).slice().sort(function(a, b){ return a.t - b.t || (a.id < b.id ? -1 : 1); });
+  var out = [];
+  L.forEach(function(x){
+    var g = groupOf(x), y = logSym(x), xt = Math.max(x.x || x.t, x.t);
+    var realized = cap, open = [];
+    out.forEach(function(o){ if (o.skip) return; if (o.x <= x.t) realized += o.net; else open.push({ y: o.y, risk: o.risk }); });
+    var b = riskBudget(open, y, { riskP: riskP, heat: heat });
+    if (b.full || realized <= 0){ out.push({ id: x.id, g: g, name: x.name, y: y, t: x.t, x: xt, r: x.r, skip: true, why: realized <= 0 ? 'Konto leer' : (b.why === 'heat' ? 'Gesamtlimit voll' : 'Bündel ' + b.cluster.name + ' voll'), net: 0 }); return; }
+    var sp = x.sp > 0 ? x.sp : (dailyGroup(g) ? 0.04 : 0.004), c = shadowCost(y), days = Math.max(0, (xt - x.t) / 864e5);
+    var rEur = realized * b.risk / 100, N = rEur / sp, gross = rEur * x.r, f = 2 * fee, s = N * c.spread, fi = N * c.fin * days / 365;
+    out.push({ id: x.id, g: g, gn: x.gn, name: x.name, y: y, t: x.t, x: xt, r: x.r, risk: b.risk, cut: b.risk < riskP, rEur: rEur, N: N, gross: gross, fee: f, spread: s, fin: fi, net: gross - f - s - fi });
+  });
+  var tr = out.filter(function(o){ return !o.skip; }), byX = tr.slice().sort(function(a, b){ return a.x - b.x; }), eq = cap, peak = cap, dd = 0, curve = [cap], gr = {};
+  byX.forEach(function(o){ eq += o.net; curve.push(eq); peak = Math.max(peak, eq); dd = Math.max(dd, (peak - eq) / peak); });
+  var sum = function(k){ return tr.reduce(function(a, o){ return a + o[k]; }, 0); };
+  tr.forEach(function(o){ var q = gr[o.g] = gr[o.g] || { g: o.g, name: groupName(o.g, o), n: 0, w: 0, net: 0 }; q.n++; if (o.net > 0) q.w++; q.net += o.net; });
+  return { cap: cap, eq: eq, ret: (eq / cap - 1) * 100, n: tr.length, skipped: out.length - tr.length, win: tr.length ? tr.filter(function(o){ return o.net > 0; }).length / tr.length : 0,
+    gross: sum('gross'), fees: sum('fee'), spread: sum('spread'), fin: sum('fin'), net: sum('net'), maxDD: dd * 100, curve: curve, groups: Object.keys(gr).map(function(k){ return gr[k]; }).sort(function(a, b){ return b.net - a.net; }), trades: out };
+}
+// ================= Live gegen Rueckrechnung =================
+// Jeder Trade traegt die Erwartung seiner Variante zum Zeitpunkt des Signals (ex: Trefferquote, Ø und Streuung je Trade).
+// Trefferquote: Binomialtest mit je Trade eigener Wahrscheinlichkeit. Ø: Summe der Abweichungen gegen die Streuung der Rueckrechnung.
+// Warnung erst bei deutlicher Abweichung (z unter -2,5, mind. 15 Trades), damit normale Pechstraehnen keinen Alarm ausloesen.
+function liveCheck(log){
+  var G = {};
+  (log || []).forEach(function(x){
+    if (!x || x.r == null || !isFinite(x.r)) return;
+    var g = groupOf(x), q = G[g] = G[g] || { g: g, name: groupName(g, x), n: 0, w: 0, nt: 0, ep: 0, vp: 0, nm: 0, dm: 0, vm: 0, sv: 0, se: 0, unit: null }, e = x.ex, win = x.r > 0;
+    q.n++; if (win) q.w++;
+    if (!e || !(e.win > 0 && e.win < 1)) return;
+    q.nt++; q.ep += e.win; q.vp += e.win * (1 - e.win);
+    var v = e.unit === 'R' ? x.r : x.pct;
+    if (e.mean != null && e.sd > 0 && v != null && isFinite(v)){ q.nm++; q.dm += v - e.mean; q.vm += e.sd * e.sd; q.sv += v; q.se += e.mean; q.unit = e.unit; }
+  });
+  return Object.keys(G).map(function(k){
+    var q = G[k], zW = q.nt && q.vp > 0 ? (q.w - q.ep) / Math.sqrt(q.vp) : null, zM = q.nm >= 10 && q.vm > 0 ? q.dm / Math.sqrt(q.vm) : null;
+    var z = zW == null ? zM : (zM == null ? zW : Math.min(zW, zM)), st = q.nt < 10 || z == null ? 'sammelt' : (z <= -2.5 && q.nt >= 15 ? 'warnung' : (z <= -1.65 ? 'beobachten' : 'ok'));
+    return { g: q.g, name: q.name, n: q.n, nt: q.nt, win: q.n ? q.w / q.n : null, expWin: q.nt ? q.ep / q.nt : null, mean: q.nm ? q.sv / q.nm : null, expMean: q.nm ? q.se / q.nm : null, unit: q.unit,
+      zW: zW == null ? null : Math.round(zW * 100) / 100, zM: zM == null ? null : Math.round(zM * 100) / 100, z: z == null ? null : Math.round(z * 100) / 100, status: st };
+  }).sort(function(a, b){ return b.n - a.n; });
+}
+// Erwartung aus einer Rueckrechnungs-Zeile { n, win, mean, lo }: Streuung je Trade aus dem 95-%-Band (lo = Ø - 1,96 · sd / Wurzel n)
+function expOf(st, unit){ if (!st || !(st.n > 0) || st.win == null) return null; var sd = st.lo != null && st.mean != null && st.mean > st.lo ? (st.mean - st.lo) * Math.sqrt(st.n) / 1.96 : null; return { win: st.win, mean: st.mean != null ? st.mean : null, sd: sd, unit: unit || '%', n: st.n }; }
+// ================= Regel-Engine fuer die woechentliche Strategiesuche =================
+// Eine Regel ist reine Daten: Einstiegsbedingungen (alle muessen gelten) und ein Ausstieg. Einstieg zum Schluss, Notstop 3 ATR, hoechstens max Tage.
+// Dieselbe Funktion rechnet in der Rueckrechnung und live im Dienst. Jede Bedingung nutzt nur Kerzen bis einschliesslich Tag i.
+function ruleSeries(d1){ return { atr: atrSeries(d1), rsi2: rsiSeries(d1, 2), sm: {} }; }
+function smaSeries(d1, S, n){ S.sm = S.sm || {}; if (!S.sm[n]){ var a = [], s = 0; for (var i = 0; i < d1.length; i++){ s += d1[i].c; if (i >= n) s -= d1[i - n].c; a.push(i >= n - 1 ? s / n : null); } S.sm[n] = a; } return S.sm[n]; }
+function ruleCond(d1, i, c, S){
+  var x = d1[i], p = d1[i - 1], k, n;
+  switch (c[0]){
+    case 'trend': n = c[1] || 200; var sm = smaSeries(d1, S, n); return sm[i] != null && x.c > sm[i];
+    case 'ibs': return ibs(x) < c[1];
+    case 'rsi2': return S.rsi2[i] != null && S.rsi2[i] < c[1];
+    case 'down': n = c[1]; if (i < n) return false; for (k = 0; k < n; k++) if (!(d1[i - k].c < d1[i - k - 1].c)) return false; return true;
+    case 'low': n = c[1]; if (i < n) return false; for (k = 1; k < n; k++) if (d1[i - k].c <= x.c) return false; return true;
+    case 'ret': n = c[1]; return i >= n && (x.c / d1[i - n].c - 1) * 100 < c[2];
+    case 'gap': return !!p && (x.o / p.c - 1) * 100 < c[1];
+    case 'wide': return S.atr[i - 1] != null && (x.h - x.l) > c[1] * S.atr[i - 1];
+    case 'nr': n = c[1]; if (i < n) return false; for (k = 1; k < n; k++) if ((d1[i - k].h - d1[i - k].l) <= (x.h - x.l)) return false; return true;
+    case 'bb': n = c[1] || 20; if (i < n) return false; var m = smaAt(d1, i, n), v = 0; for (k = i - n + 1; k <= i; k++) v += (d1[k].c - m) * (d1[k].c - m); return x.c < m - (c[2] || 2) * Math.sqrt(v / n);
+    case 'wd': return new Date(x.t + 3 * 3600e3).getUTCDay() === c[1];
+    case 'insideDn': return !!p && x.h < p.h && x.l > p.l && x.c < x.o;
+  }
+  return false;
+}
+function ruleHit(d1, i, rule, S){ if (i < 201 || !S.atr[i]) return false; for (var j = 0; j < rule.c.length; j++) if (!ruleCond(d1, i, rule.c[j], S)) return false; return true; }
+// Ausstieg am Tag k (Schluss), Einstieg am Tag i0
+function ruleExit(d1, k, rule, S){
+  var e = rule.x || ['sma', 5], x = d1[k];
+  switch (e[0]){
+    case 'sma': var s5 = smaSeries(d1, S, e[1] || 5); return s5[k] != null && x.c > s5[k];
+    case 'ibs': return ibs(x) > (e[1] || 0.8);
+    case 'ph': return x.c > d1[k - 1].h;
+    case 'rsi2': return S.rsi2[k] != null && S.rsi2[k] > (e[1] || 70);
+    case 'up': return x.c > d1[k - 1].c;
+    case 'days': return false;
+  }
+  return false;
+}
+var COND_NAMES = { trend: function(c){ return 'über dem ' + (c[1] || 200) + '-Tage-Schnitt'; }, ibs: function(c){ return 'IBS unter ' + String(c[1]).replace('.', ','); }, rsi2: function(c){ return 'RSI-2 unter ' + c[1]; },
+  down: function(c){ return c[1] + ' Verlusttage in Folge'; }, low: function(c){ return 'tiefster Schluss seit ' + c[1] + ' Tagen'; }, ret: function(c){ return String(c[2]).replace('.', ',') + ' % in ' + c[1] + ' Tagen'; },
+  gap: function(c){ return 'Eröffnung ' + String(c[1]).replace('.', ',') + ' % unter Vortag'; }, wide: function(c){ return 'Spanne über ' + String(c[1]).replace('.', ',') + ' ATR'; }, nr: function(c){ return 'engste Spanne seit ' + c[1] + ' Tagen'; },
+  bb: function(c){ return 'unter dem unteren Bollinger-Band'; }, wd: function(c){ return ['', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag'][c[1]]; }, insideDn: function(){ return 'Innenstab mit rotem Schluss'; } };
+var EXIT_NAMES = { sma: function(e){ return 'Schluss über dem ' + (e[1] || 5) + '-Tage-Schnitt'; }, ibs: function(e){ return 'IBS über ' + String(e[1] || 0.8).replace('.', ','); }, ph: function(){ return 'Schluss über dem Vortageshoch'; }, rsi2: function(e){ return 'RSI-2 über ' + (e[1] || 70); }, up: function(){ return 'erster Tag im Plus'; }, days: function(){ return 'nur Zeit'; } };
+function ruleText(rule){ return 'Kauf zum Schluss bei ' + rule.c.filter(function(c){ return c[0] !== 'trend'; }).map(function(c){ return COND_NAMES[c[0]] ? COND_NAMES[c[0]](c) : c[0]; }).join(' und ') + (rule.c.some(function(c){ return c[0] === 'trend'; }) ? ' im Aufwärtstrend' : '') + '. Verkauf bei ' + EXIT_NAMES[(rule.x || ['sma'])[0]](rule.x || ['sma', 5]) + ', spätestens nach ' + (rule.max || 10) + ' Tagen. Notstop 3 ATR.'; }
+function ruleId(rule){ return rule.c.map(function(c){ return c.join('_'); }).join('+') + '>' + (rule.x || ['sma', 5]).join('_') + '@' + (rule.max || 10); }
+  return { riskCluster, riskBudget, groupOf, groupName, dailyGroup, logSym, shadowRun, shadowCost, liveCheck, expOf, ruleSeries, ruleHit, ruleExit, ruleText, ruleId, smaAt, ibs, trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
 const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
@@ -3229,6 +3357,10 @@ async function tradeRoute(request, headers, env, nowMs) {
   if (!env.VS) return json(500, 'KV-Speicher fehlt', headers);
   const path = new URL(request.url).pathname;
   if (path === '/trade/key' && request.method === 'GET') return jsonData({ key: (await vapidKeys(env)).pub }, headers);
+  if (path === '/trade/health' && request.method === 'GET') {
+    const h = (await env.VS.get('trade', 'json')) || {}, age = h.hb ? Math.round((nowMs - h.hb) / 60e3) : null, wd = h.wd || {};
+    return jsonData({ ok: age != null && age < 45 && !wd.dataSent, age, push: !!(h.on && validSub(h.sub)), data: !wd.dataSince, dataSince: wd.dataSince || null, gh: (wd.gh || []).map((g) => g.name + ': ' + g.c), ver: WORKER_VER }, headers);
+  }
   if (request.method !== 'POST') return json(405, 'Method not allowed', headers);
   let b;
   try { b = await readBody(request); } catch (e) { return json(400, 'Ungültige Anfrage', headers); }
@@ -3241,7 +3373,8 @@ async function tradeRoute(request, headers, env, nowMs) {
     const alerts = (Array.isArray(b.alerts) ? b.alerts : []).slice(0, 20).map((a) => normAlert(a, nowMs)).filter(Boolean)
       .map((a) => old[a.id] && old[a.id].hit && !a.hit ? Object.assign(a, { hit: old[a.id].hit, hitPx: old[a.id].hitPx }) : a)
       .map((a) => old[a.id] && old[a.id].dead && !a.dead ? Object.assign(a, { dead: old[a.id].dead, deadAt: old[a.id].deadAt }) : a);
-    const next = { sub: b.off ? null : (b.sub || t.sub || null), on: b.on !== false,
+    // Alles, was der Dienst selbst fuehrt, bleibt erhalten (vorher gingen z. B. der Anleihen-Kauf zum Monatsende und der Korb-Stand verloren)
+    const next = Object.assign({}, t, { sub: b.off ? null : (b.sub || t.sub || null), on: b.on !== false,
       ccys: (Array.isArray(b.ccys) ? b.ccys : []).filter((c) => /^[A-Z]{3}$/.test(c)).slice(0, 10),
       kw: (Array.isArray(b.kw) ? b.kw : []).filter((k) => /^[a-z|]{2,40}$/.test(k)).slice(0, 5),
       lead: num(b.lead, 5, 60, 15), kz: b.kz !== false, alerts, sent: t.sent || {},
@@ -3250,11 +3383,13 @@ async function tradeRoute(request, headers, env, nowMs) {
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
       swing: b.swing !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, tight: !!b.tight, ibsMax1: !!b.ibsMax1, ibsCand: t.ibsCand || null, ibsPick: t.ibsPick || null, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
-      orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null) };
+      orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null),
+      shadowCap: num(b.shadow, 100, 1e7, 1000), fee: num(b.fee, 0, 20, 1) });
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
-    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-60), swingPos: next.swingPos, ibsPos: next.ibsPos, brief: next.brief || null, radar: next.radar || null, log: (t.log || []).slice(-40), now: nowMs }, headers);
+    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-400), swingPos: next.swingPos, ibsPos: next.ibsPos, autoPos: next.autoPos || [], brief: next.brief || null, radar: next.radar || null, log: (t.log || []).slice(-40),
+      lc: next.lc || null, wd: { hb: next.hb || null, dataSince: next.wd && next.wd.dataSince || null, gh: next.wd && next.wd.gh || [], ghAt: next.wd && next.wd.ghAt || null }, now: nowMs }, headers);
   }
   if (path === '/trade/test') {
     if (!validSub(t.sub)) return json(409, 'Kein Push-Abo gespeichert. Schalte Benachrichtigungen in Trade Check ein.', headers);
@@ -3306,7 +3441,7 @@ async function researchCfg(env, nowMs) {
       const r = await fetch(env.PAGES_URL + 'dienst/backtest-extra.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA });
       if (!r.ok) return {};
       const j = await r.json(), stats = {};
-      Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win }; });
+      Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win, lo: a.lo }; });
       return { swing: j.swing || [], passed: j.passed || [], stats };
     });
     return c.data || {};
@@ -3320,7 +3455,7 @@ async function moreCfg(env, nowMs) {
       const r = await fetch(env.PAGES_URL + 'dienst/backtest-more.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA });
       if (!r.ok) return {};
       const j = await r.json(), stats = {}, depot = {};
-      Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win, unit: j.sets[k].unit }; });
+      Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win, lo: a.lo, unit: j.sets[k].unit }; });
       Object.keys(j.depot || {}).forEach((k) => { const d = j.depot[k]; depot[k] = { name: d.name, now: d.now, nowMonth: d.nowMonth, all: d.all, bh: d.bh }; });
       const any = Object.keys(depot)[0];
       // Breite: Maerkte, auf denen RSI-2 bis 2013 bestand und ab 2014 gezaehlt wurde (ohne Asien: Handelszeit passt nicht)
@@ -3341,7 +3476,7 @@ async function calCfg(env, nowMs) {
       const r = await fetch(env.PAGES_URL + 'dienst/backtest-cal.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA });
       if (!r.ok) return {};
       const j = await r.json(), stats = {};
-      Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win }; });
+      Object.keys(j.sets || {}).forEach((k) => { const a = j.sets[k].all; if (a && a.n) stats[k] = { n: a.n, mean: a.mean, win: a.win, lo: a.lo }; });
       const groups = {}; ['ibs:laender'].forEach((k) => { if (j.sets && j.sets[k] && j.sets[k].syms) groups[k] = j.sets[k].syms; });
       return { passed: j.passed || [], stats, groups };
     });
@@ -3361,6 +3496,21 @@ async function korbCfg(env, nowMs) {
     return c.data || {};
   } catch (e) { return {}; }
 }
+// Sonntags-Suche (backtest-suche.json): bestandene Regeln, die in Bewaehrung live laufen (hoechstens 5)
+async function autoCfg(env, nowMs) {
+  try {
+    const c = await cachedKV(env, 'mkt:qa', 3 * 3600e3, nowMs, async () => {
+      if (!env.PAGES_URL) return {};
+      const r = await fetch(env.PAGES_URL + 'dienst/backtest-suche.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA });
+      if (!r.ok) return {};
+      const j = await r.json();
+      return { at: j.at, week: j.week, batch: j.batch || 0, testedTotal: j.testedTotal || 0, space: j.space || 0, found: (j.found || []).map((f) => ({ id: f.id, name: f.name })),
+        live: (j.live || []).filter((l) => l && l.rule && Array.isArray(l.rule.c) && Array.isArray(l.syms) && l.stats).slice(0, 5).map((l) => ({ id: String(l.id).slice(0, 80), name: String(l.name).slice(0, 80), text: String(l.text).slice(0, 300), rule: l.rule, syms: l.syms.slice(0, 12), stats: l.stats, since: l.since })) };
+    });
+    return c.data || {};
+  } catch (e) { return {}; }
+}
+const AUTO_NAMES = { '^GSPC': 'S&P 500', '^NDX': 'Nasdaq 100', '^DJI': 'Dow Jones', '^RUT': 'Russell 2000', XLK: 'US-Technologie', XLF: 'US-Finanzen', XLE: 'US-Energie', XLV: 'US-Gesundheit', XLY: 'US-Zykl. Konsum', XLP: 'US-Basiskonsum', XLI: 'US-Industrie', XLB: 'US-Rohstoffe', XLU: 'US-Versorger' };
 // Laender-ETFs (US-gehandelt), auf denen IBS als Gruppe bestanden hat
 const LAENDER = { EEM: 'Schwellenländer', EWZ: 'Brasilien', EWJ: 'Japan', FXI: 'China', EFA: 'Industrieländer ohne USA', EWG: 'Deutschland (US-ETF)', EWY: 'Südkorea', EWT: 'Taiwan', INDA: 'Indien', EWW: 'Mexiko' };
 const laenderUni = (qc) => (qc.passed || []).includes('ibs:laender') ? ((qc.groups || {})['ibs:laender'] || []).filter((s) => LAENDER[s] && !TL.trProduct(s).none).map((s) => ({ k: 'B:' + s, name: LAENDER[s], y: s, dec: 2, type: 'etf', land: true })) : [];
@@ -3378,20 +3528,27 @@ function nyseDaysLeftInMonth(key) {
   return n;
 }
 // Produkt bei Trade Republic und Risiko fuer diesen Trade: Obergrenze fuer alle offenen Positionen zusammen (heat, % vom Konto)
-function openCount(t) {
-  return (t.swingPos || []).filter((p) => p.state === 'offen' || p.state === 'wartet').length + (t.ibsPos || []).filter((p) => p.state === 'offen').length
-    + (t.track || []).filter((x) => x.state === 'wartet' || x.state === 'offen').length;
+// Offene Positionen aller Strategien mit ihrem Risiko (% vom Konto); ausgelassene (skip) zaehlen nicht
+function allPos(t) { return [].concat(t.swingPos || [], t.ibsPos || [], t.autoPos || [], t.track || []); }
+function openRiskOf(t, except) {
+  return allPos(t).filter((p) => p.id !== except && !p.skip && (p.state === 'offen' || p.state === 'wartet'))
+    .map((p) => ({ y: p.y || TL.logSym(p), risk: p.risk != null ? p.risk : (t.riskP > 0 ? t.riskP : 1), name: p.name, id: p.id }));
 }
-function riskTxt(t, stopPct) {
-  if (!(t.acct > 0 && t.riskP > 0)) return '';
-  const n = openCount(t), heat = t.heat || 5, hs = String(heat).replace('.', ','), room = heat - n * t.riskP;
-  const rp = Math.max(0, Math.min(t.riskP, room)), eur = Math.round(t.acct * rp / 100);
-  if (rp < t.riskP * 0.25) return ' ⚠️ Risikobudget voll: schon ' + n + ' Positionen offen (Grenze ' + hs + ' % vom Konto). Diesen auslassen oder erst nach einem Ausstieg.';
-  const stake = stopPct > 0 ? Math.round(eur / (stopPct / 100) / 10) * 10 : null;
-  return ' Risiko: ' + eur + ' €' + (rp < t.riskP ? ' (verkleinert, ' + n + ' Positionen offen, Grenze ' + hs + ' %)' : '') + (stake ? ', ohne Hebel ca. ' + stake.toLocaleString('de-DE') + ' € Positionsgröße' : '') + '.';
+function openCount(t) { return openRiskOf(t, null).length; }
+// Buendel: Maerkte, die zusammen laufen, sind eine Wette. Setzt beim Signal das Risiko der Position (pid) fest.
+function riskTxt(t, stopPct, y, pid) {
+  const rp0 = t.riskP > 0 ? t.riskP : 1, b = TL.riskBudget(openRiskOf(t, pid), y || '', { riskP: rp0, heat: t.heat || 5 });
+  const p = pid ? allPos(t).find((q) => q.id === pid) : null; if (p) { p.risk = b.full ? 0 : b.risk; p.skip = b.full || undefined; if (y && !p.y) p.y = y; }
+  const hs = String(b.heat).replace('.', ','), pc = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
+  const bund = b.same.length ? ' Bündel ' + b.cluster.name + ': schon offen ' + b.same.slice(0, 4).map((q) => q.name).join(', ') + '. Das ist im Kern dieselbe Wette.' : '';
+  if (b.full) return bund + (b.why === 'heat' ? ' ⚠️ Gesamtlimit erreicht: schon ' + pc(b.tot) + ' % vom Konto in offenen Positionen (Grenze ' + hs + ' %). Diesen auslassen oder erst nach einem Ausstieg.' : ' ⚠️ Bündel voll (' + pc(b.cl) + ' % von höchstens ' + pc(b.capC) + ' %): diesen auslassen.');
+  const cut = b.risk < rp0 ? ' Nur ' + pc(b.risk) + ' % Risiko statt ' + pc(rp0) + ' % (' + (b.why === 'heat' ? 'Gesamtlimit ' + hs + ' %' : 'Bündel') + ').' : '';
+  if (!(t.acct > 0 && t.riskP > 0)) return bund + cut;
+  const eur = Math.round(t.acct * b.risk / 100), stake = stopPct > 0 ? Math.round(eur / (stopPct / 100) / 10) * 10 : null;
+  return bund + cut + ' Risiko: ' + eur + ' €' + (stake ? ', ohne Hebel ca. ' + stake.toLocaleString('de-DE') + ' € Positionsgröße' : '') + '.';
 }
-function tradeTxt(t, ins, stopPct) {
-  const pr = TL.trProduct(ins.y), r = riskTxt(t, stopPct);
+function tradeTxt(t, ins, stopPct, pid) {
+  const pr = TL.trProduct(ins.y), r = riskTxt(t, stopPct, ins.y, pid);
   if (pr.etf) { const eur = t.acct > 0 && t.riskP > 0 ? t.acct * t.riskP / 100 / (stopPct / 100) : 0;
     return ' Bei Trade Republic: ' + pr.etf + ' (ohne Hebel).' + r + (eur && eur < 3000 ? ' Hinweis: Unter ca. 3.000 € Positionsgröße frisst die Ordergebühr den Vorteil.' : ''); }
   return ' Bei Trade Republic: Knock-out auf ' + (pr.ko || ins.name) + '.' + r;
@@ -3410,7 +3567,9 @@ async function runTrade(env, nowMs) {
     // Gewinnwahrscheinlichkeit: Trefferquote genau dieser Variante in der Rueckrechnung, steht in Titel und erster Zeile
     if (msg.pw && msg.pw.n && msg.pw.win != null) { const pc = Math.round(msg.pw.win * 100);
       msg = Object.assign({}, msg, { title: (msg.title || 'Trade Check') + ' · ' + pc + ' %', body: 'Gewinnwahrscheinlichkeit ' + pc + ' % (' + msg.pw.n + ' Trades in der Rückrechnung' + (msg.pw.weak ? ', unbelegte Stufe' : '') + '). ' + (msg.body || ''), d: msg.d ? Object.assign({}, msg.d, { pw: Math.round(msg.pw.win * 1000) / 1000, pn: msg.pw.n }) : msg.d }); }
-    const full = Object.assign({ title: 'Trade Check' }, msg, { id: key, url: './?m=' + encodeURIComponent(key), at: nowMs }); delete full.pw;
+    // Live-Pruefung: Strategie liegt deutlich unter der Rueckrechnung -> Signal kommt, aber als pausiert markiert
+    if (msg.g && t.lc && t.lc.paused && t.lc.paused[msg.g]) msg = Object.assign({}, msg, { title: '⏸ ' + (msg.title || 'Trade Check'), body: '⏸ Pausiert: ' + TL.groupName(msg.g, msg) + ' liegt live deutlich unter der Rückrechnung. Nur beobachten, nicht handeln. Der Schatten-Bot verfolgt das Signal weiter. ' + (msg.body || '') });
+    const full = Object.assign({ title: 'Trade Check' }, msg, { id: key, url: './?m=' + encodeURIComponent(key), at: nowMs }); delete full.pw; delete full.g; delete full.gn;
     const r = await sendPush(env, t.sub, full, nowMs, 1800);
     t.sent[key] = nowMs; dirty = true;
     t.log.push({ id: key, at: nowMs, title: full.title, t: (msg.body || '').slice(0, 1500), d: msg.d || null }); t.log = t.log.slice(-40);
@@ -3420,6 +3579,9 @@ async function runTrade(env, nowMs) {
   };
   const clk = berlinClock(nowMs), weekday = !['Sat', 'Sun'].includes(clk.wd);
   const dayKey = berlinDay(nowMs);
+  // Abgeschlossene Trades: fuer Tagebuch, Schatten-Bot und Live-Pruefung (Einstieg, Ausstieg, Stop-Abstand, Erwartung der Variante)
+  const logTrade = (o) => { Object.keys(o).forEach((k) => { if (o[k] === undefined) delete o[k]; }); t.trackLog = (t.trackLog || []).concat([o]).slice(-400); };
+  const ds = { ok: 0, fail: 0 };
   // 1) Wichtige Termine kurz vorher
   let cal = null;
   const needCal = (t.ccys && t.ccys.length) || t.kz || (t.trades && t.trades.length);
@@ -3455,6 +3617,7 @@ async function runTrade(env, nowMs) {
     if (key in cache) return cache[key];
     cache[key] = null;
     try { const r = await yahooChart(sym, iv, rg); if (r.ok) cache[key] = TL.parseYahoo(await r.json()); } catch (e) { /* Quelle aus */ }
+    if (cache[key] && cache[key].length) ds.ok++; else ds.fail++;
     return cache[key];
   };
   const fmtp = (x, k) => { const i = TL.instrumentByKey(k); return (+x).toFixed(i ? i.dec : 2).replace('.', ','); };
@@ -3591,9 +3754,9 @@ async function runTrade(env, nowMs) {
             const ins = TL.stockInstrument(g.s), id = ins.k + ':orbplay:' + dayKey, target = g.entry + g.dir * g.risk * 100, ko = g.stop - g.dir * g.risk * 0.5;
             if (t.signals.some((x) => x.id === id)) continue;
             t.signals.unshift({ id, type: 'orbplay', mode: 'stop', k: ins.k, name: ins.name, t: g.t, dir: g.dir, entry: g.entry, stop: g.stop, target: g.entry + g.dir * g.risk * 10, ko, rr: 0, sweep: 'Eröffnungskerze', withBias: g.b === g.dir, bias: g.b, expires: exp, cls: 'ORB', rvol: g.rvol, top: false });
-            t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: 'stop', entry: g.entry, stop: g.stop, target, ko, t: g.t, expires: exp, cls: 'ORB', grade: trendOnly ? 'orbplay:top3_trend' : 'orbplay:top3_rvol2', be: false, state: 'wartet', at: nowMs });
+            t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: 'stop', entry: g.entry, stop: g.stop, target, ko, t: g.t, expires: exp, cls: 'ORB', grade: trendOnly ? 'orbplay:top3_trend' : 'orbplay:top3_rvol2', be: false, state: 'wartet', at: nowMs, g: 'orb', ex: TL.expOf(st0, 'R') });
             const f2 = (x) => (+x).toFixed(2).replace('.', ',');
-            await send('o:' + id, { d: { k: ins.k, dir: g.dir, entry: g.entry, stop: g.stop, target, kind: 'orb' }, title: 'ORB Stocks in Play · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + String(g.rvol).replace('.', ',') + '-faches Volumen in der ersten 5-Min-Kerze' + (g.b === g.dir ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') + f2(g.entry) + ' · Stop ' + f2(g.stop) + ' (0,1 Tages-ATR). Kein festes Ziel: laufen lassen, ca. 21:45 schließen. ' + (g.past ? 'Achtung: Kurs ist schon drüber (' + f2(g.px) + '). Nicht hinterherkaufen, nur wenn er zurückkommt. ' : '') + 'Strategie mit wenigen großen Gewinnern: die meisten Trades enden mit −1R.' + (st0 && st0.n ? ' Rückrechnung: ' + st0.n + ' Trades, ' + Math.round(st0.win * 100) + ' % Gewinner, Ø ' + (st0.mean >= 0 ? '+' : '') + st0.mean.toFixed(2).replace('.', ',') + ' R.' : ''), tag: 'orb-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+            await send('o:' + id, { g: 'orb', d: { k: ins.k, dir: g.dir, entry: g.entry, stop: g.stop, target, kind: 'orb' }, title: 'ORB Stocks in Play · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + String(g.rvol).replace('.', ',') + '-faches Volumen in der ersten 5-Min-Kerze' + (g.b === g.dir ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') + f2(g.entry) + ' · Stop ' + f2(g.stop) + ' (0,1 Tages-ATR). Kein festes Ziel: laufen lassen, ca. 21:45 schließen. ' + (g.past ? 'Achtung: Kurs ist schon drüber (' + f2(g.px) + '). Nicht hinterherkaufen, nur wenn er zurückkommt. ' : '') + 'Strategie mit wenigen großen Gewinnern: die meisten Trades enden mit −1R.' + riskTxt(t, 0, ins.y, id) + (st0 && st0.n ? ' Rückrechnung: ' + st0.n + ' Trades, ' + Math.round(st0.win * 100) + ' % Gewinner, Ø ' + (st0.mean >= 0 ? '+' : '') + st0.mean.toFixed(2).replace('.', ',') + ' R.' : ''), tag: 'orb-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
           }
           t.signals = t.signals.slice(0, 30); t.track = t.track.slice(-20);
         }
@@ -3653,7 +3816,7 @@ async function runTrade(env, nowMs) {
           const dz = q.dossier && q.dossier[gSel];
           t.track = Array.isArray(t.track) ? t.track : [];
           t.track.push({ id, k: ins.k, y: ins.y, name: ins.name, dir: g.dir, mode: g.mode || 'limit', entry: g.entry, stop: g.stop, target: g.target, ko, t: g.t, expires: g.expires, cls, grade: gSel,
-            be: !!(dz && dz.mgmt === 'be'), part: true, state: 'wartet', at: nowMs, pw: sig.pw });
+            be: !!(dz && dz.mgmt === 'be'), part: true, state: 'wartet', at: nowMs, pw: sig.pw, g: TL.groupOf({ cls }), ex: sig.pw && sig.pw.win > 0 ? { win: sig.pw.win, unit: 'R', n: sig.pw.n } : null });
           if (t.quality === 'w60') t.track[t.track.length - 1].cls = '60 %+';
           if (t.quality === 'triple') t.track[t.track.length - 1].cls = '3× geprüft';
           if (t.quality === 'mix' || t.quality === 'creme') t.track[t.track.length - 1].cls = mixLbl;
@@ -3668,7 +3831,8 @@ async function runTrade(env, nowMs) {
           const proof = gs && gs.n ? (t.quality === 'creme' && q.statsP ? ' Mit Teilgewinn bisher: ' : ' Bisher: ') + gs.n + ' Trades, ' + Math.round(gs.win * 100) + ' % Gewinner, Ø ' + (gs.mean >= 0 ? '+' : '') + gs.mean.toFixed(2).replace('.', ',') + ' R.' + (gs.win < 0.6 && mixLbl !== 'B+' ? ' ⚠️ Unter deiner 60-%-Marke.' : '') : '';
           const bgTxt = mixLbl === 'B grün' ? ' B-Setup mit allen Pflicht-Bedingungen: Ampel grün ✓, ' + (g.dir > 0 ? 'Discount' : 'Premium') + ' ✓, Ziel an Liquidität ✓, CRV ' + g.rr.toFixed(1).replace('.', ',') + ' ✓.' + (gs && gs.n ? '' : ' Diese Stufe wird ab der nächsten Rückrechnung gemessen.') : '';
           sig.winRate = gs && gs.n ? Math.round(gs.win * 1000) / 1000 : null;
-          await send('s:' + id, { pw: gs && gs.n ? { n: gs.n, win: gs.win } : sig.pw, d: { k: ins.k, dir: g.dir, entry: g.entry, stop: g.stop, tp1: g.entry + g.dir * Math.abs(g.entry - g.stop), target: g.target, mode: g.mode, kind: 'intra' }, title: ((t.quality === 'mix' || t.quality === 'creme') ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · TP1 ' + fmtp(sig.tp1, ins.k) + ' (Hälfte schließen, Stop auf Einstand) · TP2 ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + bgTxt + riskTxt(t, 0) + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
+          { const tk = t.track.find((q) => q.id === id), pwS = gs && gs.n ? { n: gs.n, win: gs.win } : sig.pw; if (tk && pwS && pwS.win > 0) tk.ex = { win: pwS.win, unit: 'R', n: pwS.n }; }
+          await send('s:' + id, { g: TL.groupOf({ cls }), pw: gs && gs.n ? { n: gs.n, win: gs.win } : sig.pw, d: { k: ins.k, dir: g.dir, entry: g.entry, stop: g.stop, tp1: g.entry + g.dir * Math.abs(g.entry - g.stop), target: g.target, mode: g.mode, kind: 'intra' }, title: ((t.quality === 'mix' || t.quality === 'creme') ? mixLbl + ' Setup' : t.quality === 'triple' ? 'Geprüftes Setup' : t.quality === 'w60' ? '60 %+ Setup' : (cls !== 'B' ? cls + ' Setup' : 'Setup')) + ' · ' + ins.name, body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + (g.type === 'pullback' ? 'Trend-Pullback ins FVG nach Bruch auf 1 Std' : (g.type === 'sweep' || !g.type ? 'Sweep ' + g.sweep + ', Strukturbruch auf 1 Std' : TL.setupName(g.type))) + (sig.withBias ? ', mit Tagestrend' : ', gegen den Tagestrend') + '. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : (g.mode === 'market' ? 'Einstieg jetzt ca. ' : 'Limit ')) + fmtp(g.entry, ins.k) + ' · Stop ' + fmtp(g.stop, ins.k) + ' · TP1 ' + fmtp(sig.tp1, ins.k) + ' (Hälfte schließen, Stop auf Einstand) · TP2 ' + fmtp(g.target, ins.k) + ' (CRV ' + sig.rr.toFixed(1).replace('.', ',') + '). Knock-out mit Schwelle ' + (g.dir > 0 ? 'unter ' : 'über ') + fmtp(ko, ins.k) + '. Gilt bis ' + hhmm(g.expires) + '.' + bgTxt + riskTxt(t, 0, ins.y, id) + proof + confTxt, tag: 'sig-' + ins.k, url: './?sig=' + encodeURIComponent(id) });
         }
       }
     }
@@ -3693,8 +3857,8 @@ async function runTrade(env, nowMs) {
           const g = TL.rsi2DailySignals(d1).filter((x) => x.i === d1.length - 1 && x.dir > 0)[0];
           if (!g || t.swingPos.some((p) => p.k === ins.k && (p.state === 'wartet' || p.state === 'offen'))) continue;
           const id = ins.k + ':rsi2d:' + dayKey, stopRef = g.close - 3 * g.atr, s0 = sel.length ? (qb.stats && qb.stats['breit:rsi2']) : (qx.stats && qx.stats[sw[0]]);
-          t.swingPos.push({ id, k: ins.k, y: ins.y, name: ins.name, eu: EU_Y.includes(ins.y), etf: ins.type === 'etf', dir: 1, sigDay: dayKey, ref: g.close, atr: g.atr, stop: stopRef, state: 'wartet', at: nowMs });
-          await send('w:' + id, { pw: s0 && s0.n ? { n: s0.n, win: s0.win } : null, d: { k: ins.k, dir: 1, entry: g.close, stop: stopRef, kind: 'swing' }, title: 'Swing-Signal · ' + ins.name, body: ins.name + ' Long (Connors RSI-2): Kurs über dem 200-Tage-Schnitt, RSI(2) ' + g.rsi.toFixed(0) + '. Morgen zur Eröffnung kaufen (zuletzt ' + fmtp(g.close, ins.k) + '). Stop 3 ATR: ca. ' + fmtp(stopRef, ins.k) + '. Verkauft wird, sobald der Kurs über dem 5-Tage-Schnitt schließt, spätestens nach 10 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + (s0.unit === '%' ? ' % nach Kosten.' : ' R.') : '') + tradeTxt(t, ins, 3 * g.atr / g.close * 100), tag: 'swing-' + ins.k, url: './' });
+          t.swingPos.push({ id, k: ins.k, y: ins.y, name: ins.name, eu: EU_Y.includes(ins.y), etf: ins.type === 'etf', dir: 1, sigDay: dayKey, ref: g.close, atr: g.atr, stop: stopRef, state: 'wartet', at: nowMs, g: 'rsi2', ex: TL.expOf(s0, s0 && s0.unit === 'R' ? 'R' : '%') });
+          await send('w:' + id, { g: 'rsi2', pw: s0 && s0.n ? { n: s0.n, win: s0.win } : null, d: { k: ins.k, dir: 1, entry: g.close, stop: stopRef, kind: 'swing' }, title: 'Swing-Signal · ' + ins.name, body: ins.name + ' Long (Connors RSI-2): Kurs über dem 200-Tage-Schnitt, RSI(2) ' + g.rsi.toFixed(0) + '. Morgen zur Eröffnung kaufen (zuletzt ' + fmtp(g.close, ins.k) + '). Stop 3 ATR: ca. ' + fmtp(stopRef, ins.k) + '. Verkauft wird, sobald der Kurs über dem 5-Tage-Schnitt schließt, spätestens nach 10 Tagen. Ich melde mich.' + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + (s0.unit === '%' ? ' % nach Kosten.' : ' R.') : '') + tradeTxt(t, ins, 3 * g.atr / g.close * 100, id), tag: 'swing-' + ins.k, url: './' });
         }
       }
       // b) Offene Swing-Positionen kurz vor Handelsschluss pruefen (DAX 17:15, sonst 21:40)
@@ -3710,7 +3874,9 @@ async function runTrade(env, nowMs) {
         if (!after.length) continue;
         if (p.state === 'wartet') { p.state = 'offen'; p.entry = after[0].o; p.stop = p.entry - 3 * p.atr; p.days = 0; dirty = true; await send('w:' + p.id + ':fill', { body: p.name + ' Swing gekauft zur Eröffnung ca. ' + fmtp(p.entry, p.k) + '. Stop ' + fmtp(p.stop, p.k) + '. Ich melde mich zum Verkauf.', tag: 'swing-' + p.k }); }
         const risk = 3 * p.atr, lo = Math.min(...after.map((x) => x.l)), lastC = d1[d1.length - 1].c;
-        const fin = (state, r, txt) => { p.state = state; p.r = Math.round(r * 100) / 100; p.exitAt = nowMs; dirty = true; t.trackLog = (t.trackLog || []).concat([{ id: p.id, k: p.k, name: p.name, dir: 1, cls: 'Swing', t: p.at, state, r: p.r }]).slice(-200); return send('w:' + p.id + ':done', { body: txt, tag: 'swing-' + p.k }); };
+        const fin = (state, r, txt) => { p.state = state; p.r = Math.round(r * 100) / 100; p.exitAt = nowMs; dirty = true; const xp = state === 'stop' ? p.stop : lastC;
+          logTrade({ id: p.id, k: p.k, y: p.y || ins.y, name: p.name, dir: 1, cls: 'Swing', g: 'rsi2', t: p.at, x: nowMs, state, r: p.r, e: p.entry, xp, sp: 3 * p.atr / p.entry, pct: Math.round((xp / p.entry - 1) * 10000) / 100, ex: p.ex || null, risk: p.risk, skip: p.skip });
+          return send('w:' + p.id + ':done', { body: txt, tag: 'swing-' + p.k }); };
         if (lo <= p.stop) { await fin('stop', -1, '❌ SL erreicht: ' + p.name + ' Swing bei ' + fmtp(p.stop, p.k) + ' (−1R).'); continue; }
         if (inPre) {
           const s5 = d1.slice(-5).reduce((a, x) => a + x.c, 0) / 5, r = (lastC - p.entry) / risk, nDays = after.length;
@@ -3734,9 +3900,10 @@ async function runTrade(env, nowMs) {
       const ins = TL.instrumentByKey(g.k); if (!ins) continue; t.finderSent[g.id] = dayKey; dirty = true;
       const tp1 = g.entry + g.dir * Math.abs(g.entry - g.stop), nm = g.type === 'pullback' ? 'Trend-Pullback' : (g.type === 'sweep' || !g.type ? 'Sweep ' + (g.sweep || '') : TL.setupName(g.type));
       const pwF = g.pw ? Object.assign({ weak: true }, g.pw) : null;
-      t.track = Array.isArray(t.track) ? t.track : []; t.track.push({ id: g.id, k: g.k, y: ins.y, name: ins.name, dir: g.dir, mode: g.mode || 'limit', entry: g.entry, stop: g.stop, target: g.target, t: g.t, expires: g.expires, cls: 'Finder', grade: null, be: false, part: true, state: 'wartet', at: nowMs, pw: g.pw || null });
-      await send('f:' + g.id, { pw: pwF, d: { k: g.k, dir: g.dir, entry: g.entry, stop: g.stop, tp1, target: g.target, mode: g.mode, kind: 'finder' }, title: 'Trade Finder · ' + ins.name,
-        body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + nm.trim() + ', mit Tagestrend. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : 'Limit ') + fmtp(g.entry, g.k) + ', Stop ' + fmtp(g.stop, g.k) + ', TP1 ' + fmtp(tp1, g.k) + ', Ziel ' + fmtp(g.target, g.k) + ' (CRV ' + String(g.rr).replace('.', ',') + '). Ampel ' + (g.ampel === 'gruen' ? 'grün' : (g.ampel || 'offen')) + (g.conf ? ', Konfluenz ' + g.conf.score + '/' + g.conf.max : '') + '. Gültig bis ' + hhmm(g.expires) + '. Kein geprüftes Signal: Dieses Setup trifft keine Stufe, die die Rückrechnung bestanden hat. Selbst prüfen, kleiner handeln oder auslassen. Ich melde mich beim Einstieg, bei TP1 und am Ende.', tag: 'finder-' + g.k });
+      t.track = Array.isArray(t.track) ? t.track : []; t.track.push({ id: g.id, k: g.k, y: ins.y, name: ins.name, dir: g.dir, mode: g.mode || 'limit', entry: g.entry, stop: g.stop, target: g.target, t: g.t, expires: g.expires, cls: 'Finder', grade: null, be: false, part: true, state: 'wartet', at: nowMs, pw: g.pw || null, g: 'finder', ex: g.pw && g.pw.win > 0 ? { win: g.pw.win, unit: 'R', n: g.pw.n } : null });
+      const rkF = riskTxt(t, 0, ins.y, g.id);
+      await send('f:' + g.id, { g: 'finder', pw: pwF, d: { k: g.k, dir: g.dir, entry: g.entry, stop: g.stop, tp1, target: g.target, mode: g.mode, kind: 'finder' }, title: 'Trade Finder · ' + ins.name,
+        body: ins.name + ' ' + (g.dir > 0 ? 'Long' : 'Short') + ': ' + nm.trim() + ', mit Tagestrend. ' + (g.mode === 'stop' ? (g.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') : 'Limit ') + fmtp(g.entry, g.k) + ', Stop ' + fmtp(g.stop, g.k) + ', TP1 ' + fmtp(tp1, g.k) + ', Ziel ' + fmtp(g.target, g.k) + ' (CRV ' + String(g.rr).replace('.', ',') + '). Ampel ' + (g.ampel === 'gruen' ? 'grün' : (g.ampel || 'offen')) + (g.conf ? ', Konfluenz ' + g.conf.score + '/' + g.conf.max : '') + '. Gültig bis ' + hhmm(g.expires) + '. Kein geprüftes Signal: Dieses Setup trifft keine Stufe, die die Rückrechnung bestanden hat. Selbst prüfen, kleiner handeln oder auslassen. Ich melde mich beim Einstieg, bei TP1 und am Ende.' + rkF, tag: 'finder-' + g.k });
     }
   }
   // 5c) Radar: Wie nah sind die US-Maerkte am IBS-Signal? Stuendlich waehrend der US-Sitzung, mit Vorwarnung eine Dreiviertelstunde vor Schluss
@@ -3797,7 +3964,7 @@ async function runTrade(env, nowMs) {
         const ib = last.h > last.l ? (last.c - last.l) / (last.h - last.l) : 0.5;
         if (pos) {
           const fin = (state, px, txt) => { const r = (px - pos.entry) / (3 * pos.atr); pos.state = state; pos.exit = px; pos.pct = Math.round((px / pos.entry - 1) * 10000) / 100; pos.r = Math.round(r * 100) / 100; pos.exitAt = nowMs; dirty = true;
-            t.trackLog = (t.trackLog || []).concat([{ id: pos.id, k, name: ins.name, dir: 1, cls: pos.kind === 'tt' ? 'Turnaround Tuesday' : (pos.kind === 'd3' ? 'Drei Verlusttage' : 'IBS'), t: pos.at, state, r: pos.r }]).slice(-200); return send('b:' + pos.id + ':done', { body: txt + ' (' + (pos.pct >= 0 ? '+' : '') + String(pos.pct).replace('.', ',') + ' %).', tag: 'ibs-' + k }); };
+            logTrade({ id: pos.id, k, y: ins.y, name: ins.name, dir: 1, cls: pos.kind === 'tt' ? 'Turnaround Tuesday' : (pos.kind === 'd3' ? 'Drei Verlusttage' : 'IBS'), g: pos.g || (pos.kind === 'tt' ? 'tt' : pos.kind === 'd3' ? 'd3' : (ins.land ? 'laender' : 'ibs')), t: pos.at, x: nowMs, state, r: pos.r, e: pos.entry, xp: px, sp: 3 * pos.atr / pos.entry, pct: pos.pct, ex: pos.ex || null, risk: pos.risk, skip: pos.skip }); return send('b:' + pos.id + ':done', { body: txt + ' (' + (pos.pct >= 0 ? '+' : '') + String(pos.pct).replace('.', ',') + ' %).', tag: 'ibs-' + k }); };
           if (last.l <= pos.stop) { await fin('stop', pos.stop, '❌ Notstop: ' + ins.name + (pos.kind === 'tt' ? ' Turnaround-Tuesday-Trade bei ' : (pos.kind === 'd3' ? ' Drei-Verlusttage-Trade bei ' : ' IBS-Trade bei ')) + fmtp(pos.stop, k)); continue; }
           // Bestaetigung nach US-Schluss: Der Einstieg zaehlt mit dem Schlusskurs, und nur der Schluss entscheidet, ob das Signal gueltig war
           if (pos.day === dayKey && !pos.conf && nyMin(nowMs) >= 16 * 60 + 5 && nyMin(nowMs) < 16 * 60 + 40) { pos.conf = nowMs; dirty = true;
@@ -3834,18 +4001,19 @@ async function runTrade(env, nowMs) {
           t.ibsCand.list.push({ k, name: ins.name, mean, ib }); dirty = true; continue; }
         if (!isIbs && !isTT) { // nur drei Verlusttage in Folge im Aufwaertstrend: Verkauf, sobald ein Schluss ueber dem 5-Tage-Schnitt liegt (max. 7 Tage)
           const idD = k + ':d3:' + dayKey, stD = last.c - 3 * atr, pwD = pwOf('mr:down3');
-          t.ibsPos.push({ id: idD, kind: 'd3', k, name: ins.name, entry: last.c, stop: stD, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', pw: pwD });
-          await send('b:' + idD, { pw: pwD, d: { k, dir: 1, entry: last.c, stop: stD, kind: 'd3' }, title: 'Drei Verlusttage · ' + ins.name, body: ins.name + ' Long (Drei Verlusttage): dritter schwächerer Schluss in Folge im Aufwärtstrend. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stD, k) + '. Verkauft wird, sobald ein Tag über dem 5-Tage-Schnitt schließt, spätestens nach 7 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (cs['mr:down3'] ? ' Ø +' + cs['mr:down3'].mean.toFixed(2).replace('.', ',') + ' % je Trade nach Kosten.' : '') + pickNote(k), tag: 'ibs-' + k, url: './' });
+          t.ibsPos.push({ id: idD, kind: 'd3', k, y: ins.y, name: ins.name, entry: last.c, stop: stD, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', pw: pwD, g: 'd3', ex: TL.expOf(cs['mr:down3']) });
+          await send('b:' + idD, { g: 'd3', pw: pwD, d: { k, dir: 1, entry: last.c, stop: stD, kind: 'd3' }, title: 'Drei Verlusttage · ' + ins.name, body: ins.name + ' Long (Drei Verlusttage): dritter schwächerer Schluss in Folge im Aufwärtstrend. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stD, k) + '. Verkauft wird, sobald ein Tag über dem 5-Tage-Schnitt schließt, spätestens nach 7 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100, idD) + (cs['mr:down3'] ? ' Ø +' + cs['mr:down3'].mean.toFixed(2).replace('.', ',') + ' % je Trade nach Kosten.' : '') + pickNote(k), tag: 'ibs-' + k, url: './' });
           continue; }
         if (!isIbs) { // nur Turnaround Tuesday: schwacher Montag, Verkauf sobald ein Schluss ueber dem Vortageshoch liegt (max. 4 Tage)
           const idT = k + ':tt:' + dayKey, stT = last.c - 3 * atr;
-          t.ibsPos.push({ id: idT, kind: 'tt', k, name: ins.name, entry: last.c, stop: stT, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', pw: pwOf('tt:hold_us') });
-          await send('b:' + idT, { pw: pwOf('tt:hold_us'), d: { k, dir: 1, entry: last.c, stop: stT, kind: 'tt' }, title: 'Turnaround Tuesday · ' + ins.name, body: ins.name + ' Long (Turnaround Tuesday): schwacher Montag, Schluss im unteren Drittel der Tagesspanne (IBS ' + ib.toFixed(2).replace('.', ',') + '). Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stT, k) + '. Verkauft wird, sobald ein Tag über dem Hoch des Vortags schließt, spätestens nach 4 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (stTxt(cs['tt:hold_us']) ? ' Rückrechnung: ' + stTxt(cs['tt:hold_us']) + '.' : '') + pickNote(k), tag: 'ibs-' + k, url: './' });
+          t.ibsPos.push({ id: idT, kind: 'tt', k, y: ins.y, name: ins.name, entry: last.c, stop: stT, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', pw: pwOf('tt:hold_us'), g: 'tt', ex: TL.expOf(cs['tt:hold_us']) });
+          await send('b:' + idT, { g: 'tt', pw: pwOf('tt:hold_us'), d: { k, dir: 1, entry: last.c, stop: stT, kind: 'tt' }, title: 'Turnaround Tuesday · ' + ins.name, body: ins.name + ' Long (Turnaround Tuesday): schwacher Montag, Schluss im unteren Drittel der Tagesspanne (IBS ' + ib.toFixed(2).replace('.', ',') + '). Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stT, k) + '. Verkauft wird, sobald ein Tag über dem Hoch des Vortags schließt, spätestens nach 4 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100, idT) + (stTxt(cs['tt:hold_us']) ? ' Rückrechnung: ' + stTxt(cs['tt:hold_us']) + '.' : '') + pickNote(k), tag: 'ibs-' + k, url: './' });
           continue; }
         const rs2 = TL.rsiSeries(d1, 2).pop(), dbl = rs2 != null && rs2 < 10, deep = ib < 0.1, strong = deep || dbl;
         const id = k + ':ibs:' + dayKey, stop = last.c - 3 * atr;
-        t.ibsPos.push({ id, k, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', dbl, pw: pwOf(ins.land ? 'ibs:laender' : (dbl ? 'mr:both' : (deep ? 'ibs:t00_10' : 'ibs:t10_20'))) || (s0 && s0.n ? { n: s0.n, win: s0.win } : null) });
-        await send('b:' + id, { pw: t.ibsPos[t.ibsPos.length - 1].pw, d: { k, dir: 1, entry: last.c, stop, kind: 'ibs', q: strong ? 'stark' : 'leicht' }, title: (dbl ? '⭐ Doppelsignal · ' : (deep ? 'IBS-Signal (tief) · ' : 'IBS-Signal (leicht) · ')) + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + (dbl ? ' ⭐ Zusätzlich RSI-2 unter 10: die stärkere Variante' + (stTxt(cs['mr:both']) ? ' (' + stTxt(cs['mr:both']) + ')' : '') + '. Wenn das Risikobudget knapp ist, diese zuerst.' : '') + (isTT ? ' Dazu schwacher Montag (Turnaround Tuesday).' : '') + (isD3 ? ' Dazu der dritte Verlusttag in Folge.' : '') + (!strong && cs['ibs:t10_20'] ? ' Leichte Variante (IBS 0,1 bis 0,2): im Schnitt nur Ø +' + cs['ibs:t10_20'].mean.toFixed(2).replace('.', ',') + ' %, kaum mehr als einfach investiert zu sein. Halbe Größe oder auslassen.' : '') + (deep && !dbl && cs['ibs:t00_10'] ? ' Tiefe Variante (IBS unter 0,1): ' + stTxt(cs['ibs:t00_10']) + '.' : '') + (ins.land ? ' Länder-ETF: ' + (stTxt(cs['ibs:laender']) || 'als Gruppe geprüft') + '. Nur kaufen, wenn die Spanne zwischen Kauf- und Verkaufskurs unter 0,15 % liegt, sonst frisst sie den Vorteil.' : '') + pickNote(k), tag: 'ibs-' + k, url: './' });
+        const skI = ins.land ? 'ibs:laender' : (dbl ? 'mr:both' : (deep ? 'ibs:t00_10' : 'ibs:t10_20'));
+        t.ibsPos.push({ id, k, y: ins.y, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', dbl, pw: pwOf(skI) || (s0 && s0.n ? { n: s0.n, win: s0.win } : null), g: ins.land ? 'laender' : 'ibs', ex: TL.expOf(cs[skI]) || TL.expOf(s0) });
+        await send('b:' + id, { g: ins.land ? 'laender' : 'ibs', pw: t.ibsPos[t.ibsPos.length - 1].pw, d: { k, dir: 1, entry: last.c, stop, kind: 'ibs', q: strong ? 'stark' : 'leicht' }, title: (dbl ? '⭐ Doppelsignal · ' : (deep ? 'IBS-Signal (tief) · ' : 'IBS-Signal (leicht) · ')) + ins.name, body: ins.name + ' Long (IBS-Mean-Reversion): Kurs schließt nahe am Tagestief (IBS ' + ib.toFixed(2).replace('.', ',') + ') über dem 200-Tage-Schnitt. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Notstop 3 ATR: ' + fmtp(stop, k) + '. Verkauft wird zum Schluss eines Tages im oberen Fünftel der Spanne, spätestens nach 5 Tagen. Ich melde mich.' + tradeTxt(t, ins, 3 * atr / last.c * 100, id) + (s0 && s0.n ? ' Rückrechnung: ' + s0.n + ' Trades, ' + Math.round(s0.win * 100) + ' % Gewinner, Ø +' + s0.mean.toFixed(2).replace('.', ',') + ' % nach Kosten.' : '') + (dbl ? ' ⭐ Zusätzlich RSI-2 unter 10: die stärkere Variante' + (stTxt(cs['mr:both']) ? ' (' + stTxt(cs['mr:both']) + ')' : '') + '. Wenn das Risikobudget knapp ist, diese zuerst.' : '') + (isTT ? ' Dazu schwacher Montag (Turnaround Tuesday).' : '') + (isD3 ? ' Dazu der dritte Verlusttag in Folge.' : '') + (!strong && cs['ibs:t10_20'] ? ' Leichte Variante (IBS 0,1 bis 0,2): im Schnitt nur Ø +' + cs['ibs:t10_20'].mean.toFixed(2).replace('.', ',') + ' %, kaum mehr als einfach investiert zu sein. Halbe Größe oder auslassen.' : '') + (deep && !dbl && cs['ibs:t00_10'] ? ' Tiefe Variante (IBS unter 0,1): ' + stTxt(cs['ibs:t00_10']) + '.' : '') + (ins.land ? ' Länder-ETF: ' + (stTxt(cs['ibs:laender']) || 'als Gruppe geprüft') + '. Nur kaufen, wenn die Spanne zwischen Kauf- und Verkaufskurs unter 0,15 % liegt, sonst frisst sie den Vorteil.' : '') + pickNote(k), tag: 'ibs-' + k, url: './' });
       }
       };
       await runLoop(null);
@@ -3859,6 +4027,52 @@ async function runTrade(env, nowMs) {
       }
     }
     t.ibsPos = t.ibsPos.filter((p) => p.state === 'offen' || nowMs - (p.exitAt || p.at) < 3 * 86400e3);
+  }
+  // 9b) Neu entdeckt (Sonntags-Suche, in Bewaehrung): Kauf kurz vor US-Schluss nach der Regel, Bestaetigung nach dem Schluss,
+  // Ausstieg nach der Regel oder nach max Tagen, Notstop 3 ATR. Dieselbe Regel-Engine wie in der Rueckrechnung.
+  if (t.ibsOn !== false && weekday) {
+    const qa = await autoCfg(env, nowMs), rules = qa.live || [];
+    t.autoPos = Array.isArray(t.autoPos) ? t.autoPos : []; t.autoSent = t.autoSent || {}; t.autoAnn = t.autoAnn || {};
+    // neue Regel einmal ankuendigen
+    for (const R of rules) { if (t.autoAnn[R.id]) continue; t.autoAnn[R.id] = nowMs; dirty = true;
+      await send('aa:' + R.id.slice(0, 60), { title: '🧪 Neue Strategie entdeckt', body: R.name + ': ' + R.text + ' Rückrechnung seit 2000: ' + R.stats.n + ' Trades, ' + Math.round(R.stats.win * 100) + ' % Gewinner, Ø +' + (+R.stats.mean).toFixed(2).replace('.', ',') + ' % nach Kosten. Sie hat alle Hürden der Sonntags-Suche genommen und läuft ab jetzt in Bewährung: Signale kommen mit „Neu entdeckt“, erst mit halber Größe handeln. Die Live-Prüfung vergleicht jeden Trade mit der Rückrechnung.', tag: 'auto', url: './' }); }
+    const ny = nyMin(nowMs), win = ny >= 15 * 60 + 40 && ny < 15 * 60 + 56, confW = ny >= 16 * 60 + 5 && ny < 16 * 60 + 40;
+    let fetches = 12;
+    for (const p of t.autoPos.filter((q) => q.state === 'offen')) {
+      const needConf = confW && p.day === dayKey && !p.conf;
+      if (!win && !needConf && nowMs - (p.chk || 0) < 55 * 60e3) continue;
+      if (fetches-- <= 0) break;
+      p.chk = nowMs; dirty = true;
+      const d1 = await candlesOf(p.y, '1d', '2y'); if (!d1 || d1.length < 210) continue;
+      const li = d1.length - 1, last = d1[li], S = TL.ruleSeries(d1), today = dKey(last.t) === dayKey;
+      const fin = async (state, px, txt) => { p.state = state; p.exit = px; p.pct = Math.round((px / p.entry - 1) * 10000) / 100; p.r = Math.round((px - p.entry) / (3 * p.atr) * 100) / 100; p.exitAt = nowMs;
+        logTrade({ id: p.id, k: p.k, y: p.y, name: p.name, dir: 1, cls: 'Neu entdeckt', g: p.g, gn: p.gn, t: p.at, x: nowMs, state, r: p.r, e: p.entry, xp: px, sp: 3 * p.atr / p.entry, pct: p.pct, ex: p.ex || null, risk: p.risk, skip: p.skip });
+        await send('a:' + p.id + ':done', { body: txt + ' (' + (p.pct >= 0 ? '+' : '') + String(p.pct).replace('.', ',') + ' %).', tag: 'auto-' + p.k }); };
+      if (d1.some((x) => dKey(x.t) > p.day && x.l <= p.stop)) { await fin('stop', p.stop, '❌ Notstop: ' + p.name + ' (' + p.gn + ') bei ' + fmtp(p.stop, p.k)); continue; }
+      if (needConf && today) { p.conf = nowMs; const still = TL.ruleHit(d1, li, p.rule, S); p.entry = last.c; p.stop = last.c - 3 * p.atr;
+        await send('a:' + p.id + ':conf', { g: p.g, gn: p.gn, title: (still ? 'Einstieg bestätigt · ' : 'Einstieg knapp · ') + p.name, body: still ? '🎯 Einstieg bestätigt: ' + p.name + ' schloss bei ' + fmtp(last.c, p.k) + '. Das ist dein Einstiegskurs, Notstop ' + fmtp(p.stop, p.k) + '. Ich melde mich zum Verkauf.' : '⚠️ ' + p.name + ' hat sich zum Schluss erholt und schloss bei ' + fmtp(last.c, p.k) + '. Die Regel war am Schluss knapp nicht mehr erfüllt. Wer gekauft hat, führt den Trade normal weiter.', tag: 'auto-' + p.k }); continue; }
+      if (win && today && p.day !== dayKey) {
+        const held = d1.filter((x) => dKey(x.t) > p.day).length;
+        if (TL.ruleExit(d1, li, p.rule, S)) await fin(last.c >= p.entry ? 'ziel' : 'tagesende', last.c, '✅ Jetzt verkaufen: ' + p.name + ' (' + p.gn + '), die Ausstiegsregel greift. Stand ' + fmtp(last.c, p.k));
+        else if (held >= (p.rule.max || 10)) await fin('tagesende', last.c, p.name + ' (' + p.gn + '): ' + (p.rule.max || 10) + ' Tage erreicht, jetzt verkaufen. Stand ' + fmtp(last.c, p.k));
+      }
+    }
+    if (win) for (const R of rules) for (const y of R.syms) {
+      const key = R.id + '|' + y; if (t.autoSent[key] === dayKey || fetches <= 0) continue;
+      if (t.autoPos.some((q) => q.y === y && q.rid === R.id && q.state === 'offen')) continue;
+      const pr = TL.trProduct(y); if (pr.none || (t.tight && pr.etf)) continue;
+      fetches--; const d1 = await candlesOf(y, '1d', '2y'); if (!d1 || d1.length < 210) continue;
+      const li = d1.length - 1, last = d1[li]; if (dKey(last.t) !== dayKey) continue;
+      t.autoSent[key] = dayKey; dirty = true;
+      const S = TL.ruleSeries(d1); if (!TL.ruleHit(d1, li, R.rule, S)) continue;
+      const atr = S.atr[li], ins = TL.INSTRUMENTS.find((i) => i.y === y) || { k: 'B:' + y, name: AUTO_NAMES[y] || y, y, dec: 2, type: /^\^/.test(y) ? 'idx' : 'etf' };
+      const pid = ins.k + ':a' + Object.keys(t.autoAnn).indexOf(R.id) + ':' + dayKey, stop = last.c - 3 * atr, g = 'auto:' + R.id, st = R.stats;
+      t.autoPos.push({ id: pid, rid: R.id, rule: R.rule, k: ins.k, y, name: ins.name, entry: last.c, stop, atr, day: dayKey, state: 'offen', at: nowMs, g, gn: R.name, ex: TL.expOf(st), pw: { n: st.n, win: st.win } });
+      await send('a:' + pid, { g, gn: R.name, pw: { n: st.n, win: st.win, weak: true }, d: { k: ins.k, dir: 1, entry: last.c, stop, kind: 'auto' }, title: '🧪 Neu entdeckt · ' + ins.name,
+        body: ins.name + ' Long (' + R.name + '): ' + R.text + ' Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, ins.k) + ', Notstop ' + fmtp(stop, ins.k) + '. Neu aus der Sonntags-Suche, noch in Bewährung: Rückrechnung ' + st.n + ' Trades, ' + Math.round(st.win * 100) + ' % Gewinner, Ø +' + (+st.mean).toFixed(2).replace('.', ',') + ' % nach Kosten. Bis die Live-Prüfung genug Trades hat: halbe Größe.' + tradeTxt(t, ins, 3 * atr / last.c * 100, pid), tag: 'auto-' + ins.k, url: './' });
+    }
+    t.autoPos = t.autoPos.filter((p) => p.state === 'offen' || nowMs - (p.exitAt || p.at) < 3 * 86400e3);
+    for (const k of Object.keys(t.autoSent)) if (t.autoSent[k] !== dayKey) delete t.autoSent[k];
   }
   // 10) Depot-Strategien (Wochen bis Monate): am ersten Werktag des Monats die Aufteilung fuer den neuen Monat
   if (t.depotOn !== false && weekday && clk.min >= 8 * 60 && clk.min < 10 * 60) {
@@ -3883,7 +4097,8 @@ async function runTrade(env, nowMs) {
     const sim = TL.simulate({ i: i0, dir: x.dir, mode: x.mode, entry: x.entry, stop: x.stop, target: x.target, expires: x.expires, be: x.be, part: x.part }, c5, 0);
     const mine = (t.trades || []).some((tr) => tr.sig === x.id); // eigener Tagebuch-Trade meldet sich schon selbst
     const nm = x.name + ' ' + (x.dir > 0 ? 'Long' : 'Short') + ' (' + x.cls + ')';
-    const done = (state, txt) => { x.state = state; x.r = sim.r; x.exitAt = sim.exitT || nowMs; dirty = true; t.trackLog = (t.trackLog || []).concat([{ id: x.id, k: x.k, name: x.name, dir: x.dir, cls: x.cls, grade: x.grade, t: x.t, fillT: x.fillT || null, state, r: sim.r != null ? Math.round(sim.r * 100) / 100 : null }]).slice(-200); return txt; };
+    const done = (state, txt) => { x.state = state; x.r = sim.r; x.exitAt = sim.exitT || nowMs; dirty = true; const spX = x.entry > 0 ? Math.abs(x.entry - x.stop) / x.entry : null, rr = sim.r != null ? Math.round(sim.r * 100) / 100 : null;
+      logTrade({ id: x.id, k: x.k, y: x.y, name: x.name, dir: x.dir, cls: x.cls, grade: x.grade, g: x.g || TL.groupOf(x), t: x.t, fillT: x.fillT || null, x: x.exitAt, state, r: rr, e: sim.entry || x.entry, sp: spX, pct: rr != null && spX ? Math.round(rr * spX * 10000) / 100 : null, ex: x.ex || null, risk: x.risk, skip: x.skip }); return txt; };
     if (sim.filled && x.state === 'wartet') { x.state = 'offen'; x.fillT = sim.fillT; dirty = true; if (!mine) await send('k:' + x.id + ':fill', { pw: x.pw ? Object.assign({ weak: x.cls === 'Finder' }, x.pw) : null, d: { k: x.k, dir: x.dir, entry: sim.entry, stop: x.stop, tp1: x.part ? x.entry + x.dir * Math.abs(x.entry - x.stop) : null, target: x.target, kind: 'fill' }, title: 'Einstieg · ' + x.name, body: '🎯 Einstieg: ' + nm + ' ausgelöst bei ' + fmtp(sim.entry, x.k) + '. Stop ' + fmtp(x.stop, x.k) + (x.part ? ' · TP1 ' + fmtp(x.entry + x.dir * Math.abs(x.entry - x.stop), x.k) : '') + ' · Ziel ' + fmtp(x.target, x.k) + '. Stop jetzt beim Broker setzen. Ich melde mich bei TP1, Ziel oder Stop.', tag: 'trk-' + x.id }); }
     if (sim.filled && sim.mfe >= 1 && !x.r1) { x.r1 = nowMs; dirty = true; if (!mine && (sim.r == null || sim.r > 0)) await send('k:' + x.id + ':r1', { body: x.part ? '💰 TP1 erreicht: ' + nm + ' bei ' + fmtp(x.entry + x.dir * Math.abs(x.entry - x.stop), x.k) + ' (+1R). Jetzt die Hälfte verkaufen (+0,5R gesichert) und den Stop für den Rest auf Einstand ' + fmtp(sim.entry, x.k) + ' ziehen. Rest läuft bis TP2 ' + fmtp(x.target, x.k) + '. Ab jetzt kann dieser Trade nicht mehr im Minus enden.' : nm + ' liegt 1R im Plus.' + (x.be ? ' Laut Rückrechnung lohnt es sich jetzt, den Stop auf Einstand ' + fmtp(sim.entry, x.k) + ' zu ziehen.' : ' Laut Rückrechnung ist es besser, den Stop stehen zu lassen.'), tag: 'trk-' + x.id }); }
     if (sim.filled && sim.r != null) {
@@ -3985,11 +4200,64 @@ async function runTrade(env, nowMs) {
       let c = cal; if (!c) { try { c = (await getCalendar(env, nowMs)).data; } catch (e) { c = []; } }
       const ev = (c || []).filter((e) => e.impact === 'High' && (!t.ccys || !t.ccys.length || t.ccys.includes(e.country))).map((e) => Object.assign({}, e, { t: Date.parse(e.date) })).filter((e) => e.t > nowMs && e.t < nowMs + 6 * 86400e3);
       if (ev.length) { const wd = new Intl.DateTimeFormat('de-DE', { weekday: 'short', timeZone: 'Europe/Berlin' }); lines.push('Neue Woche: ' + ev.slice(0, 6).map((e) => wd.format(new Date(e.t)) + ' ' + hhmm(e.t) + ' ' + e.country + ' ' + e.title).join(', ') + '.'); }
+      // Schatten-Bot, Live-Pruefung, Strategiesuche
+      const sh = TL.shadowRun(t.trackLog || [], { cap: t.shadowCap || 1000, riskP: t.riskP || 1, fee: t.fee != null ? t.fee : 1, heat: t.heat || 5 });
+      if (sh.n) { const wkN = sh.trades.filter((o) => !o.skip && nowMs - o.x < 7 * 86400e3), wkE = wkN.reduce((a, o) => a + o.net, 0), eu = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(0) + ' €';
+        lines.push('Schatten-Bot: Woche ' + eu(wkE) + ' (' + wkN.length + ' Trades), seit Start ' + eu(sh.net) + ' auf ' + Math.round(sh.cap) + ' € Kapital, davon Gebühren und Spread −' + Math.round(sh.fees + sh.spread + sh.fin) + ' €.'); }
+      const lcq = ((t.lc && t.lc.groups) || []).filter((q) => q.status === 'warnung' || q.status === 'beobachten');
+      lines.push(lcq.length ? 'Live-Prüfung: ' + lcq.map((q) => q.name + (q.status === 'warnung' ? ' pausiert' : ' unter Beobachtung')).join(', ') + '.' : 'Live-Prüfung: alle Strategien mit genug Trades liegen im erwarteten Bereich.');
+      const qa = await autoCfg(env, nowMs);
+      if (qa.week) lines.push('Strategiesuche (' + qa.week + '): ' + qa.batch + ' neue Regeln geprüft, ' + (qa.found && qa.found.length ? qa.found.length + ' bestanden: ' + qa.found.slice(0, 3).map((f) => f.name).join(', ') : 'keine hat alle Hürden genommen') + '. In Bewährung: ' + ((qa.live || []).length || 'keine') + '.');
       lines.push('Ein Wochenergebnis sagt wenig, entscheidend ist der Schnitt über viele Trades. Bleib bei den Regeln.');
       t.briefs['w:' + dayKey] = 1; t.brief = { kind: 'w', day: dayKey, at: nowMs, lines }; dirty = true;
       await send('bw:' + dayKey, { title: 'Wochenbericht', body: lines.join(' '), tag: 'brief', url: './' });
     }
   }
+  // 13) Live gegen Rueckrechnung: je Strategie die echten Ergebnisse gegen die Erwartung der Rueckrechnung.
+  // Deutlich darunter (z unter -2,5, mind. 15 Trades): Strategie pausiert, ihre Signale kommen als „Pausiert“. Wieder im Rahmen: Pause aufgehoben.
+  const tlog = t.trackLog || [];
+  if (t.lcN !== tlog.length || !t.lc) {
+    t.lcN = tlog.length; dirty = true;
+    const lc = TL.liveCheck(tlog), pc = (v) => v == null ? '–' : Math.round(v * 100) + ' %', mu = (v, u) => v == null ? '–' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2).replace('.', ',') + (u === 'R' ? ' R' : ' %');
+    t.lc = Object.assign({ paused: {} }, t.lc || {}, { at: nowMs, groups: lc });
+    for (const q of lc) {
+      if (q.status === 'warnung' && !t.lc.paused[q.g]) { t.lc.paused[q.g] = nowMs;
+        await send('lc:' + q.g.slice(0, 60) + ':' + dayKey, { title: '⚠️ Strategie pausiert · ' + q.name, body: q.name + ' liegt live deutlich unter der Rückrechnung: ' + q.nt + ' Trades, ' + pc(q.win) + ' Gewinner statt erwartet ' + pc(q.expWin) + (q.mean != null ? ', Ø ' + mu(q.mean, q.unit) + ' statt ' + mu(q.expMean, q.unit) : '') + '. Mit normalem Pech ist das kaum zu erklären. Ab jetzt kommen ihre Signale mit „Pausiert“: nicht handeln. Der Schatten-Bot verfolgt sie weiter, ist sie wieder im Rahmen, melde ich mich.', tag: 'lc', url: './' }); }
+      else if (t.lc.paused[q.g] && q.status === 'ok') { delete t.lc.paused[q.g];
+        await send('lcok:' + q.g.slice(0, 60) + ':' + dayKey, { title: '✅ Wieder im Rahmen · ' + q.name, body: q.name + ' liegt live wieder im erwarteten Bereich: ' + q.nt + ' Trades, ' + pc(q.win) + ' Gewinner, erwartet ' + pc(q.expWin) + '. Die Pause ist aufgehoben.', tag: 'lc', url: './' }); }
+    }
+  }
+  // 14) Waechter: Kursdaten, GitHub und Herzschlag. Stille soll nie heissen, dass der Dienst stillsteht.
+  t.wd = t.wd || {};
+  // Gegenprobe mit einem verlaesslichen Kurs: wenn alle Abrufe scheitern, oder in der Handelszeit alle 10 Min, falls sonst nichts abgefragt wurde
+  const mh = weekday && clk.min >= 8 * 60 && clk.min < 22 * 60 + 30;
+  if (ds.ok === 0 && (ds.fail > 0 || (mh && nowMs - (t.wd.probeAt || 0) > 10 * 60e3))) { t.wd.probeAt = nowMs; await candlesOf('ES=F', '1d', '5d'); }
+  if (ds.ok + ds.fail >= 1) {
+    if (ds.ok === 0) { if (!t.wd.dataSince) { t.wd.dataSince = nowMs; dirty = true; } }
+    else if (t.wd.dataSince) { const was = t.wd.dataSent; t.wd.dataSince = null; t.wd.dataSent = null; dirty = true;
+      if (was) await send('wd:dataok:' + was, { title: '✅ Kursdaten wieder da', body: 'Der Dienst bekommt wieder Kurse, die Signale laufen normal.', tag: 'wd', url: './' }); }
+  }
+  if (t.wd.dataSince && !t.wd.dataSent && nowMs - t.wd.dataSince > 30 * 60e3 && mh) { t.wd.dataSent = nowMs; dirty = true;
+    await send('wd:data:' + t.wd.dataSince, { title: '⚠️ Dienst: Kursdaten fehlen', body: 'Seit ' + hhmm(t.wd.dataSince) + ' Uhr bekommt der Dienst keine Kurse. Solange können Signale ausbleiben: Stille heißt gerade nicht „kein Signal“. Ich melde mich, sobald es wieder läuft.', tag: 'wd', url: './' }); }
+  if (nowMs - (t.wd.ghAt || 0) > 3 * 3600e3) {
+    t.wd.ghAt = nowMs; dirty = true;
+    try {
+      const r = await fetch('https://api.github.com/repos/' + (env.GH_REPO || 'jb19244/Value-Slip-Handy-') + '/actions/runs?per_page=40', { headers: { 'User-Agent': 'TradeCheck-Waechter', Accept: 'application/vnd.github+json' } });
+      if (r.ok) {
+        const runs = ((await r.json()).workflow_runs || []), seen = {}, bad = [];
+        for (const w of runs) { if (seen[w.name]) continue;
+          if (w.status === 'completed') { seen[w.name] = 1; if (['failure', 'startup_failure', 'timed_out'].includes(w.conclusion) && nowMs - Date.parse(w.updated_at) < 36 * 3600e3) bad.push({ id: w.id, name: w.name, c: w.conclusion, at: Date.parse(w.updated_at) }); }
+          else if (nowMs - Date.parse(w.created_at) > 2 * 3600e3) { seen[w.name] = 1; bad.push({ id: w.id, name: w.name, c: 'hängt', at: Date.parse(w.created_at) }); } }
+        t.wd.gh = bad; t.wd.ghSent = t.wd.ghSent || {};
+        const ghName = (n) => /pages build/i.test(n) ? 'Website (App-Updates)' : n;
+        const ghWhy = (n) => /pages build/i.test(n) ? 'Neue App-Versionen und frische Daten kommen gerade nicht an, die App läuft mit dem letzten Stand weiter.' : /Push-Dienst/.test(n) ? 'Eine neue Version des Push-Dienstes wurde nicht aktiviert, die bisherige läuft weiter.' : 'Die Rückrechnung „' + n + '“ wurde nicht aktualisiert, die App rechnet mit dem letzten Stand.';
+        for (const w of bad) { if (t.wd.ghSent[w.id]) continue; t.wd.ghSent[w.id] = nowMs;
+          await send('wd:gh:' + w.id, { title: '⚠️ GitHub: ' + ghName(w.name) + (w.c === 'hängt' ? ' hängt' : ' fehlgeschlagen'), body: ghWhy(w.name) + ' Meist liegt das an GitHub selbst und löst sich von allein. Deine Signale laufen über den Push-Dienst bei Cloudflare normal weiter.', tag: 'wd', url: './' }); }
+        for (const k of Object.keys(t.wd.ghSent)) if (nowMs - t.wd.ghSent[k] > 7 * 86400e3) delete t.wd.ghSent[k];
+      }
+    } catch (e) { /* GitHub nicht erreichbar: beim naechsten Mal */ }
+  }
+  t.hb = nowMs; if (nowMs - (t.hbSaved || 0) > 25 * 60e3) { t.hbSaved = nowMs; dirty = true; }
   // Aufraeumen: alte Sendungen vergessen
   for (const k of Object.keys(t.sent)) if (nowMs - t.sent[k] > 3 * 86400e3) { delete t.sent[k]; dirty = true; }
   if (dirty) await env.VS.put('trade', JSON.stringify(t));
