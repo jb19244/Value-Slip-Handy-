@@ -149,6 +149,7 @@ details.more[open] summary::after{content:"−"}
 .wb{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border-radius:14px;background:var(--bad-bg);color:var(--bad);font-size:14px;border-left:3px solid var(--bad)}.wb.warn{background:var(--warn-bg);color:var(--warn);border-left-color:var(--warn)}.wb span{color:var(--fg);opacity:.86;font-size:13px;line-height:1.4}
 .lvl{list-style:none;margin:8px 0 0;padding:0}.lvl li{padding:10px 0;border-top:1px solid var(--line)}.lvl li:first-child{border-top:0}.lv-n{display:grid;grid-template-columns:auto 1fr 1fr;gap:12px;margin-top:6px;font-variant-numeric:tabular-nums;font-size:14px}.lv-n span{display:flex;flex-direction:column;gap:1px}.lv-n small{font-size:11px;color:var(--muted)}.lv-n em{font-style:normal;color:var(--muted);font-size:12px}.sr-rule{padding:10px 0;border-top:1px solid var(--line)}.sr-rule:first-child{border-top:0}
 .code-box{display:flex;align-items:center;gap:10px;margin-top:6px;padding:10px 12px;border-radius:12px;background:var(--surface2)}.code-box code{flex:1;font-size:13px;letter-spacing:.04em;word-break:break-all;font-variant-numeric:tabular-nums}
+.tr-row{padding:10px 0;border-top:1px solid var(--line)}.tr-row:first-of-type{border-top:0}.tr-row select{width:100%}
 .depot{padding:6px 0 4px}
 .depot .bigpx{font-size:40px}
 .lv .acts{display:flex;gap:4px}
@@ -1412,7 +1413,7 @@ function trainDraw(){
 // ================= Echte Bilanz: Euro statt Theorie =================
 // Je gemeldetem Signal: gehandelt oder nicht, mit echtem Euro-Ergebnis. Dazu Trades aus dem Tagebuch und ein CSV-Import.
 // Zeigt, was wirklich auf dem Konto ankam, je Strategie gegen die Rueckrechnung, und was die ausgelassenen Signale gebracht haetten.
-function realGroup(c){ c = String(c || ''); if (/Turnaround/.test(c)) return 'Turnaround Tuesday'; if (/Finder/.test(c)) return 'Trade Finder (unbelegt)'; if (/Drei Verlusttage/.test(c)) return 'Drei Verlusttage'; return /Crème|A\+|^A$|3×|60/.test(c) ? 'Crème (Intraday)' : (/B\+|B grün/.test(c) ? 'B+ (ab 16 Uhr)' : (/Swing/.test(c) ? 'Swing RSI-2' : (/IBS/.test(c) ? 'IBS' : (/ORB/.test(c) ? 'ORB' : 'Andere')))); }
+function realGroup(c){ c = String(c || ''); if (/DAX-Ausbruch/.test(c)) return 'DAX-Trend-Ausbruch'; if (/Neu entdeckt/.test(c)) return 'Neu entdeckt'; if (/Turnaround/.test(c)) return 'Turnaround Tuesday'; if (/Finder/.test(c)) return 'Trade Finder (unbelegt)'; if (/Drei Verlusttage/.test(c)) return 'Drei Verlusttage'; return /Crème|A\+|^A$|3×|60/.test(c) ? 'Crème (Intraday)' : (/B\+|B grün/.test(c) ? 'B+ (ab 16 Uhr)' : (/Swing/.test(c) ? 'Swing RSI-2' : (/IBS/.test(c) ? 'IBS' : (/ORB/.test(c) ? 'ORB' : 'Andere')))); }
 function realRows(){
   var rows = [], re = riskEur(), cost = (+S.cfg.fee || 0) * 2, seen = {};
   (V.trackLog || []).forEach(function(x){ var m = S.real[x.id]; if (!m || !m.traded) return; seen[x.id] = 1;
@@ -1456,8 +1457,10 @@ function viewExec(){
 function viewReal(){
   var rows = realRows(), L2 = (V.trackLog || []).filter(function(x){ return x.r != null; });
   var asked = L2.filter(function(x){ return !S.real[x.id]; }).slice(-5).reverse();
-  var h = '<section class="card real"><div class="row"><h2>Echtes Geld</h2><button class="link small" data-act="realimp">CSV importieren</button></div>';
-  if (!rows.length && !asked.length) return h + '<p class="hint">Hier landet, was wirklich auf deinem Konto passiert: Markier nach jedem gemeldeten Signal, ob du es gehandelt hast und mit welchem Ergebnis in Euro, oder importier eine CSV-Datei mit deinen Abrechnungen. Dann siehst du, ob du die Rückrechnung triffst, und was dir ausgelassene Signale gebracht hätten.</p><input type="file" id="realfile" accept=".csv,text/csv,text/plain" hidden></section>';
+  var h = '<section class="card real"><div class="row"><h2>Echtes Geld</h2><span><button class="link small" data-act="trpdf">Abrechnungen (PDF)</button> · <button class="link small" data-act="realimp">CSV</button></span></div>';
+  var trOpen = pairTrFills(S.trf || []).filter(function(t){ return !t.closed; });
+  if ((S.trf || []).length) h += '<p class="muted small" style="margin:2px 0 6px">' + S.trf.length + (S.trf.length === 1 ? ' Abrechnung' : ' Abrechnungen') + ' eingelesen' + (trOpen.length ? ', ' + trOpen.length + ' offen (Verkauf fehlt noch)' : '') + '.</p>';
+  if (!rows.length && !asked.length) return h + '<p class="hint">Hier landet, was wirklich auf deinem Konto passiert: Markier nach jedem gemeldeten Signal, ob du es gehandelt hast und mit welchem Ergebnis in Euro, oder lies deine Abrechnungen von Trade Republic als PDF ein (Aktivität → Trade → Dokumente → Abrechnung → Teilen). Dann siehst du, ob du die Rückrechnung triffst, und was dir ausgelassene Signale gebracht hätten.</p><input type="file" id="realfile" accept=".csv,text/csv,text/plain" hidden><input type="file" id="trpdffile" accept=".pdf,application/pdf" multiple hidden></section>';
   if (rows.length){
     var sum = 0, w = 0, curve = [0], mon = {}, now = berlinParts(Date.now()).key.slice(0, 7), peak = 0, dd = 0;
     rows.forEach(function(x){ sum += x.eur; curve.push(sum); if (x.eur > 0) w++; peak = Math.max(peak, sum); dd = Math.max(dd, peak - sum); var m = berlinParts(x.t).key.slice(0, 7); mon[m] = (mon[m] || 0) + x.eur; });
@@ -1484,7 +1487,7 @@ function viewReal(){
   h += viewExec();
   if (asked.length) h += '<div class="label" style="margin-top:12px">Hast du die gehandelt?</div>' + asked.map(function(x){ return '<div class="ask"><span><b>' + esc(x.name) + '</b> <span class="' + (x.dir > 0 ? 'good' : 'bad') + '">' + (x.dir > 0 ? 'Long' : 'Short') + '</span> <span class="muted small">' + dm(x.t) + ' · Signal ' + sgn(x.r, 2) + ' R</span></span><span class="btns"><button class="btn sm" data-act="realyes" data-id="' + esc(x.id) + '">Ja</button><button class="btn sm ghost" data-act="realno" data-id="' + esc(x.id) + '">Nein</button></span></div>'; }).join('');
   if (rows.length) h += '<details class="real-list"><summary>Alle Einträge (' + rows.length + ')</summary><ul class="list-plain">' + rows.slice().reverse().slice(0, 60).map(function(x){ return '<li><div class="row"><span>' + esc(x.name) + ' <span class="muted small">' + dm(x.t) + ' · ' + esc(x.src) + (x.est ? ' · geschätzt' : '') + '</span>' + (x.id ? ' <button class="link tiny" data-act="realyes" data-id="' + esc(x.id) + '">Preise</button>' : '') + '</span><span class="num ' + (x.eur >= 0 ? 'good' : 'bad') + '">' + sgn(x.eur, 2) + ' €</span></div></li>'; }).join('') + '</ul>' + ((S.imp || []).length ? '<button class="link tiny" data-act="realclr">Importierte Zeilen entfernen</button>' : '') + '</details>';
-  return h + '<input type="file" id="realfile" accept=".csv,text/csv,text/plain" hidden></section>';
+  return h + '<input type="file" id="realfile" accept=".csv,text/csv,text/plain" hidden><input type="file" id="trpdffile" accept=".pdf,application/pdf" multiple hidden></section>';
 }
 // CSV: Trennzeichen, Kopfzeile und Spalten selbst erkennen (Datum, Name, Ergebnis in Euro)
 function csvSplit(line, d){ var out = [], cur = '', q = false; for (var i = 0; i < line.length; i++){ var ch = line[i]; if (q){ if (ch === '"'){ if (line[i + 1] === '"'){ cur += '"'; i++; } else q = false; } else cur += ch; } else if (ch === '"') q = true; else if (ch === d){ out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out.map(function(x){ return x.trim(); }); }
@@ -1504,7 +1507,56 @@ function parseTradeCsv(txt){
 }
 document.addEventListener('toggle', function(ev){ var d = ev.target; if (d && d.dataset && d.dataset.fold){ S.fold = S.fold || {}; if (d.open) S.fold[d.dataset.fold] = 1; else delete S.fold[d.dataset.fold]; save(); } }, true);
 document.addEventListener('change', function(ev){ var fi = ev.target; if (fi && fi.id === 'realfile' && fi.files && fi.files[0]){ realImport(fi.files[0]); fi.value = ''; }
+  if (fi && fi.id === 'trpdffile' && fi.files && fi.files.length){ var fl = Array.prototype.slice.call(fi.files); fi.value = ''; trImport(fl); }
   if (fi && fi.id === 'bakfile' && fi.files && fi.files[0]){ var f0 = fi.files[0]; fi.value = ''; f0.text().then(function(tx){ restoreFrom(tx, false); toast('Daten eingelesen'); rerender(); }).catch(function(e){ toast(e.message || 'Datei nicht lesbar'); }); } });
+// ================= Trade-Republic-Abrechnungen einlesen (PDF) =================
+// pdf.js wird erst beim Einlesen geladen. Kauf und Verkauf werden gepaart und dem passenden Signal zugeordnet (Vorschlag nach Zeit und Richtung).
+var PDFJS_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.2.108/legacy/build/pdf.min.mjs', PDFJS_WORKER = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.2.108/legacy/build/pdf.worker.min.mjs';
+function pdfLib(){ if (!V.pdfjs) V.pdfjs = import(PDFJS_URL).then(function(m){ m.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; return m; }).catch(function(e){ V.pdfjs = null; throw new Error('PDF-Leser nicht geladen (Internet nötig).'); }); return V.pdfjs; }
+function pdfLines(file){
+  return Promise.all([pdfLib(), file.arrayBuffer()]).then(function(r){ return r[0].getDocument({ data: new Uint8Array(r[1]) }).promise; }).then(function(doc){
+    var out = [], i = 1;
+    var next = function(){ if (i > doc.numPages) return out; return doc.getPage(i++).then(function(pg){ return pg.getTextContent(); }).then(function(tc){ var y0 = null, ln = [];
+      tc.items.forEach(function(it){ var y = Math.round(it.transform[5]); if (y0 !== null && Math.abs(y - y0) > 2){ out.push(ln.join(' ')); ln = []; } if (String(it.str).trim()) ln.push(String(it.str).trim()); y0 = y; }); out.push(ln.join(' ')); return next(); }); };
+    return next(); });
+}
+function trCands(tr){
+  var used = {}; Object.keys(S.real || {}).forEach(function(k){ if (S.real[k] && S.real[k].src === 'pdf' && S.real[k].exec !== tr.exec) used[k] = 1; });
+  return (V.trackLog || []).filter(function(x){ return x.r != null && !used[x.id] && (x.dir || 1) === tr.dir; }).map(function(x){
+    var d = tr.buyAt ? Math.abs(tr.buyAt - (x.fillT || x.t)) : Math.abs(tr.sellAt - (x.x || x.t)); return { x: x, d: d }; })
+    .filter(function(c){ return c.d <= (tr.buyAt ? 4 : 6) * 3600e3; }).sort(function(a, b){ return a.d - b.d; }).slice(0, 4);
+}
+function trImport(files){
+  var list = Array.prototype.slice.call(files || []), n = 0, bad = [], dup = 0;
+  toast('Lese ' + list.length + (list.length === 1 ? ' Abrechnung …' : ' Abrechnungen …'));
+  var step = function(){ if (!list.length) return Promise.resolve();
+    var f = list.shift(); return pdfLines(f).then(function(lines){ var p = parseTrPdf(lines); if (p.err){ bad.push(f.name + ': ' + p.err); return; }
+      S.trf = S.trf || []; var key = p.exec || (p.at + '|' + p.isin + '|' + p.side + '|' + p.qty);
+      if (S.trf.some(function(q){ return (q.exec || (q.at + '|' + q.isin + '|' + q.side + '|' + q.qty)) === key; })){ dup++; return; } S.trf.push(p); n++; }).catch(function(e){ bad.push(f.name + ': ' + e.message); }).then(step); };
+  return step().then(function(){ save();
+    S.trBooked = S.trBooked || {};
+    var todo = pairTrFills(S.trf).filter(function(t){ return t.closed && !S.trBooked[t.exec]; });
+    if (bad.length && !n) toast(bad[0]); else if (!n && dup) toast(dup === 1 ? 'Diese Abrechnung ist schon eingelesen.' : 'Diese Abrechnungen sind schon eingelesen.'); else toast(n + (n === 1 ? ' Abrechnung' : ' Abrechnungen') + ' eingelesen' + (dup ? ', ' + dup + ' schon vorhanden' : '') + (bad.length ? ', ' + bad.length + ' nicht erkannt' : ''));
+    if (todo.length) trSheet(todo); else rerender(); });
+}
+function trSheet(todo){
+  V.trTodo = todo; S.isinR = S.isinR || {};
+  sheet('<h2>Abrechnungen zuordnen</h2><p class="hint">Ich habe jedem Trade das Signal vorgeschlagen, das zeitlich und in der Richtung passt. Prüf kurz und speichere.</p>' + todo.map(function(t, i){
+    var c = trCands(t);
+    return '<div class="tr-row"><div class="row"><b>' + esc(t.name || t.isin) + '</b><span class="num ' + (t.eur >= 0 ? 'good' : 'bad') + '">' + (t.eur != null ? sgn(t.eur, 2) + ' €' : '–') + '</span></div><div class="muted small">' + fmt(t.qty, t.qty % 1 ? 4 : 0) + ' Stk.' + (t.buyAt ? ' · Kauf ' + dm(t.buyAt) + ' ' + hm(t.buyAt) + ' zu ' + fmt(t.buy, 3) : ' · Kauf-Abrechnung fehlt, Ergebnis aus dem Bruttogewinn') + ' · Verkauf ' + dm(t.sellAt) + ' ' + hm(t.sellAt) + ' zu ' + fmt(t.sell, 3) + ' · Gebühren ' + fmt(t.fee, 2) + ' €' + (t.tax ? ' · Steuern ' + fmt(t.tax, 2) + ' €' : '') + '</div>' +
+      '<label class="field" style="margin-top:6px"><span>Gehört zu</span><select id="trsel' + i + '">' + c.map(function(q, j){ return '<option value="' + esc(q.x.id) + '"' + (j === 0 ? ' selected' : '') + '>' + esc(q.x.name) + ' · ' + esc(groupName(groupOf(q.x), q.x)) + ' · ' + dm(q.x.t) + ' ' + hm(q.x.t) + '</option>'; }).join('') + '<option value=""' + (c.length ? '' : ' selected') + '>Eigener Trade (kein Signal)</option></select></label>' +
+      (t.prod === 'ko' ? '<label class="field"><span>Bezugsverhältnis (optional, für die Kostenrechnung)</span><input inputmode="decimal" id="trratio' + i + '" value="' + esc(t.isin && S.isinR[t.isin] ? fmtIn(S.isinR[t.isin], 2) : '') + '" placeholder="steht im Produktblatt, z. B. 100"></label>' : '') + '</div>'; }).join('') +
+    '<div class="btns"><button class="btn block" data-act="trsave">Speichern</button></div>');
+}
+function trSave(){
+  var todo = V.trTodo || []; S.trBooked = S.trBooked || {}; S.isinR = S.isinR || {}; S.imp = S.imp || [];
+  todo.forEach(function(t, i){ var sel = $('#trsel' + i), sid = sel ? sel.value : '', rt = $('#trratio' + i) ? pnum($('#trratio' + i).value) : null;
+    if (t.isin && rt > 0) S.isinR[t.isin] = rt;
+    if (sid){ S.real[sid] = { traded: true, src: 'pdf', exec: t.exec, prod: t.prod, buy: t.buy, sell: t.sell, qty: t.qty, ko: t.ko, ratio: t.isin ? S.isinR[t.isin] || null : null, fee: t.fee / (t.hasBuy ? 2 : 1), eur: t.eur, tax: t.tax || 0, isin: t.isin }; }
+    else S.imp.push({ t: t.sellAt, name: t.name || t.isin, eur: t.eur, src: 'PDF', isin: t.isin, exec: t.exec });
+    S.trBooked[t.exec] = sid || 'eigen'; });
+  V.trTodo = null; save(); closeSheet(); toast(todo.length + (todo.length === 1 ? ' Trade' : ' Trades') + ' übernommen'); rerender();
+}
 function realImport(file){
   var rd = new FileReader();
   rd.onload = function(){ var p = parseTradeCsv(rd.result); if (!p.rows.length) return toast(p.err || 'Keine Zeilen erkannt.');
@@ -2087,7 +2139,7 @@ function restoreFrom(data, newDevice){
   // Auf einem neuen Geraet muss das Push-Abo neu angelegt werden, sonst gingen Meldungen an das alte Geraet
   if (newDevice) d.cfg.push.on = false;
   d.tab = S.tab || d.tab;
-  ['fold', 'korbDone', 'real', 'imp', 'train'].forEach(function(k){ if (o[k] != null) d[k] = o[k]; });
+  ['fold', 'korbDone', 'real', 'imp', 'train', 'trf', 'trBooked', 'isinR'].forEach(function(k){ if (o[k] != null) d[k] = o[k]; });
   S = d; save(); return S;
 }
 function exportFile(){
@@ -2260,6 +2312,8 @@ function onAct(e){
   if (a === 'korbdone'){ var kb0 = V.bk && V.bk.korb; S.korbDone = S.korbDone || {}; if (kb0) S.korbDone[kb0.month] = 1; save(); toast('Korb erledigt'); return rerender(); }
   if (a === 'realno'){ S.real[el.dataset.id] = { traded: false }; save(); return rerender(); }
   if (a === 'realimp'){ var fi = $('#realfile'); if (fi) fi.click(); return; }
+  if (a === 'trpdf'){ var fp = $('#trpdffile'); if (fp) fp.click(); return; }
+  if (a === 'trsave'){ trSave(); return; }
   if (a === 'realclr'){ S.imp = []; save(); return rerender(); }
   if (a === 'train') return trainOpen();
   if (a === 'inbox') return inboxSheet();

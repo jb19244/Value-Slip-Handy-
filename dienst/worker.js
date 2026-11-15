@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'c810dd2e5c';
+const WORKER_VER = '9b36ba3068';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3318,6 +3318,50 @@ function newsText(ev, su){
       : (good > 0 ? 'Wirtschaft stärker als erwartet: stützt ' + cur + ' und eher die Aktien.' : 'Wirtschaft schwächer als erwartet: belastet ' + cur + ' und eher die Aktien.'));
   var calls = su.size >= 1 ? newsCalls(ev, su.sign) : []; if (su.size === 1) calls.forEach(function(c){ c.weak = true; });
   return { head: nm + ' ' + dirTxt + (sz && su.sign ? ' (' + sz + ')' : ''), why: why + (su.size === 1 ? ' Kleine Abweichung, eher schwacher Impuls.' : ''), calls: calls };
+}
+// ================= Trade-Republic-Abrechnungen (PDF) lesen =================
+// Eingabe: Textzeilen des PDFs (pdf.js). Erkennt Kauf/Verkauf, Ordertyp, Zeit, Wertpapier (Name, ISIN), Stueck, Kurs, Betrag,
+// Gebuehren, Steuern und beim Verkauf den Bruttogewinn/-verlust aus dem Steuerteil (Ergebnis nach Gebuehren, vor Steuern).
+function deNum(s){ if (s == null) return null; var x = String(s).replace(/\s/g, '').replace(/\./g, '').replace(',', '.'); return x === '' || isNaN(+x) ? null : +x; }
+function berlinToMs(y, mo, d, h, mi){ var guess = Date.UTC(y, mo - 1, d, h, mi) - 3600e3; for (var k = 0; k < 3; k++){ var b = berlinFast(guess), diff = (h * 60 + mi) - b.min + (b.key === (y + '-' + ('0' + mo).slice(-2) + '-' + ('0' + d).slice(-2)) ? 0 : (b.key < (y + '-' + ('0' + mo).slice(-2) + '-' + ('0' + d).slice(-2)) ? 1440 : -1440)); if (!diff) return guess; guess += diff * 60e3; } return guess; }
+function parseTrPdf(lines){
+  var tx = (lines || []).join('\n'), one = tx.replace(/\s+/g, ' ');
+  if (!/TRADE REPUBLIC/i.test(one) || !/WERTPAPIERABRECHNUNG/i.test(one)) return { err: 'Keine Wertpapierabrechnung von Trade Republic.' };
+  var m = one.match(/((?:Market|Limit|Stop[- ]Market|Stop[- ]Limit)-Order|Sparplanausführung|Sparplan)?\s*(Kauf|Verkauf) am (\d{2})\.(\d{2})\.(\d{4}),? um (\d{2}):(\d{2}) Uhr/);
+  if (!m) return { err: 'Kauf oder Verkauf mit Datum nicht gefunden.' };
+  var side = m[2] === 'Kauf' ? 'buy' : 'sell', at = berlinToMs(+m[5], +m[4], +m[3], +m[6], +m[7]);
+  var isin = (one.match(/ISIN:?\s*([A-Z]{2}[A-Z0-9]{9}\d)/) || [])[1] || null;
+  var q = one.match(/([\d.]+(?:,\d+)?)\s*Stk\.\s+([\d.]+,\d+)\s*EUR\s+(-?[\d.]+,\d+)\s*EUR/);
+  if (!q) return { err: 'Stückzahl und Kurs nicht gefunden.' };
+  var hdr = one.indexOf('POSITION ANZAHL PREIS BETRAG'), name = '';
+  if (hdr >= 0){ var rest = one.slice(hdr + 'POSITION ANZAHL PREIS BETRAG'.length), cut = rest.search(/ISIN:|[\d.]+(?:,\d+)?\s*Stk\./); name = rest.slice(0, cut >= 0 ? cut : 60).trim(); }
+  var feeRe = /(Fremdkostenzuschlag|Abwicklungspauschale|Fremde Spesen|Transaktionsgebühr|Ordergebühr)\s+(-?[\d.]+,\d+)\s*EUR/g, fee = 0, f;
+  var abr = one.split(/STEUERLICHE BEHANDLUNG/)[0];
+  while ((f = feeRe.exec(abr))) fee += Math.abs(deNum(f[2]));
+  var tax = 0; ['Kapitalertragsteuer', 'Solidaritätszuschlag', 'Kirchensteuer'].forEach(function(k){ var r = abr.match(new RegExp(k + '\\s+(-?[\\d.]+,\\d+)\\s*EUR')); if (r) tax += Math.abs(deNum(r[1])); });
+  var tot = (abr.match(/(?:^|\s)ABRECHNUNG\s+POSITION\s+BETRAG[\s\S]*?GESAMT\s+(-?[\d.]+,\d+)\s*EUR/) || [])[1];
+  var bg = one.match(/Brutto(gewinn|verlust)\s+(-?[\d.]+,\d+)\s*EUR/), gross = bg ? (bg[1] === 'verlust' ? -Math.abs(deNum(bg[2])) : deNum(bg[2])) : null;
+  var ko = name.match(/^(Long|Short)\s+([\d.]+(?:,\d+)?)/), ex = (one.match(/AUSFÜHRUNG\s+([0-9a-f]{4}-[0-9a-f]{4})/i) || [])[1] || null, ord = (one.match(/AUFTRAG\s+([0-9a-f]{4}-[0-9a-f]{4})/i) || [])[1] || null;
+  var emi = (one.match(/ mit der ([A-Za-zÄÖÜäöüß&. ]+?), die zugleich/) || [])[1] || null;
+  return { side: side, type: m[1] || '', at: at, isin: isin, name: name, qty: deNum(q[1]), price: deNum(q[2]), amount: Math.abs(deNum(q[3])), fee: Math.round(fee * 100) / 100, tax: Math.round(tax * 100) / 100,
+    total: tot != null ? Math.abs(deNum(tot)) : null, gross: gross, dir: ko ? (ko[1] === 'Long' ? 1 : -1) : 1, ko: ko ? deNum(ko[2]) : null, prod: ko ? 'ko' : 'etf', exec: ex, order: ord, emittent: emi };
+}
+// Kauf und Verkauf je ISIN nach Zeit paaren (zuerst gekauft, zuerst verkauft). Ein Verkauf ohne Kauf nutzt den Bruttogewinn der Abrechnung.
+function pairTrFills(fills){
+  var by = {}, out = [];
+  (fills || []).slice().sort(function(a, b){ return a.at - b.at; }).forEach(function(x){ (by[x.isin || x.name] = by[x.isin || x.name] || []).push(x); });
+  Object.keys(by).forEach(function(k){ var open = [];
+    by[k].forEach(function(x){
+      if (x.side === 'buy'){ open.push({ f: x, left: x.qty }); return; }
+      var need = x.qty, cost = 0, buyFee = 0, got = 0, first = null;
+      while (need > 1e-9 && open.length){ var o = open[0], take = Math.min(need, o.left); cost += take * o.f.price; buyFee += o.f.fee * take / o.f.qty; got += take; need -= take; o.left -= take; if (!first) first = o.f; if (o.left <= 1e-9) open.shift(); }
+      var full = got >= x.qty - 1e-9;
+      out.push({ isin: x.isin, name: x.name, dir: x.dir, ko: x.ko, prod: x.prod, qty: x.qty, sellAt: x.at, buyAt: first ? first.at : null, sell: x.price, buy: full ? cost / got : null,
+        fee: Math.round((x.fee + (full ? buyFee : 0)) * 100) / 100, tax: x.tax, eur: full ? Math.round(((x.price - cost / got) * x.qty - x.fee - buyFee) * 100) / 100 : x.gross, gross: x.gross, exec: x.exec, closed: true, hasBuy: full });
+    });
+    open.forEach(function(o){ out.push({ isin: o.f.isin, name: o.f.name, dir: o.f.dir, ko: o.f.ko, prod: o.f.prod, qty: o.left, buyAt: o.f.at, buy: o.f.price, fee: o.f.fee, exec: o.f.exec, closed: false }); });
+  });
+  return out.sort(function(a, b){ return (a.sellAt || a.buyAt) - (b.sellAt || b.buyAt); });
 }
   return { newsName, newsKind, newsSurprise, newsCalls, newsNum, newsText, riskCluster, riskBudget, groupOf, groupName, dailyGroup, logSym, shadowRun, shadowCost, liveCheck, expOf, ruleSeries, ruleHit, ruleExit, ruleText, ruleId, smaAt, ibs, trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
