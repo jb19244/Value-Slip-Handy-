@@ -1724,6 +1724,20 @@ function expOf(st, unit){ if (!st || !(st.n > 0) || st.win == null) return null;
 // Dieselbe Funktion rechnet in der Rueckrechnung und live im Dienst. Jede Bedingung nutzt nur Kerzen bis einschliesslich Tag i.
 function ruleSeries(d1){ return { atr: atrSeries(d1), rsi2: rsiSeries(d1, 2), sm: {} }; }
 function smaSeries(d1, S, n){ S.sm = S.sm || {}; if (!S.sm[n]){ var a = [], s = 0; for (var i = 0; i < d1.length; i++){ s += d1[i].c; if (i >= n) s -= d1[i - n].c; a.push(i >= n - 1 ? s / n : null); } S.sm[n] = a; } return S.sm[n]; }
+// Zusatz-Reihen fuer Strategien aus dem Netz (einmal je Kursreihe berechnet, im Cache S)
+function crsiSeries(d1, S){
+  if (S.crsi) return S.crsi; var st = [], k, i, out = [];
+  for (i = 0; i < d1.length; i++){ var pv = i ? st[i - 1] : 0, ch = i ? d1[i].c - d1[i - 1].c : 0; st.push(ch > 0 ? (pv > 0 ? pv + 1 : 1) : ch < 0 ? (pv < 0 ? pv - 1 : -1) : 0); }
+  var r3 = rsiSeries(d1, 3), rs = rsiSeries(st.map(function(v){ return { c: v }; }), 2);
+  for (i = 0; i < d1.length; i++){
+    if (i < 101 || r3[i] == null || rs[i] == null){ out.push(null); continue; }
+    var roc = d1[i].c / d1[i - 1].c - 1, cnt = 0; for (k = i - 100; k < i; k++) if (d1[k].c / d1[k - 1].c - 1 < roc) cnt++;
+    out.push((r3[i] + rs[i] + cnt) / 3);
+  }
+  return (S.crsi = out);
+}
+function bbPct(d1, i, n, m){ if (i < n - 1) return null; var a = smaAt(d1, i, n), v = 0; for (var k = i - n + 1; k <= i; k++) v += (d1[k].c - a) * (d1[k].c - a); var sd = Math.sqrt(v / n); return sd > 0 ? (d1[i].c - (a - m * sd)) / (2 * m * sd) : 0.5; }
+function wrAt(d1, i, n){ if (i < n - 1) return null; var h = -Infinity, l = Infinity; for (var k = i - n + 1; k <= i; k++){ h = Math.max(h, d1[k].h); l = Math.min(l, d1[k].l); } return h > l ? (h - d1[i].c) / (h - l) * -100 : -50; }
 function ruleCond(d1, i, c, S){
   var x = d1[i], p = d1[i - 1], k, n;
   switch (c[0]){
@@ -1739,6 +1753,16 @@ function ruleCond(d1, i, c, S){
     case 'bb': n = c[1] || 20; if (i < n) return false; var m = smaAt(d1, i, n), v = 0; for (k = i - n + 1; k <= i; k++) v += (d1[k].c - m) * (d1[k].c - m); return x.c < m - (c[2] || 2) * Math.sqrt(v / n);
     case 'wd': return new Date(x.t + 3 * 3600e3).getUTCDay() === c[1];
     case 'insideDn': return !!p && x.h < p.h && x.l > p.l && x.c < x.o;
+    case 'below': var sb = smaSeries(d1, S, c[1] || 5); return sb[i] != null && x.c < sb[i];
+    case 'crsi': var cr = crsiSeries(d1, S); return cr[i] != null && cr[i] < c[1];
+    case 'cum': n = c[1] || 2; if (i < n) return false; var cs = 0; for (k = 0; k < n; k++){ if (S.rsi2[i - k] == null) return false; cs += S.rsi2[i - k]; } return cs < c[2];
+    case 'rsiN': n = c[1]; for (k = 0; k < n; k++) if (!(S.rsi2[i - k] != null && S.rsi2[i - k] < c[2])) return false; return true;
+    case 'r3': if (i < 3 || S.rsi2[i - 2] == null) return false; return S.rsi2[i - 2] < c[1] && S.rsi2[i - 1] < S.rsi2[i - 2] && S.rsi2[i] < S.rsi2[i - 1] && S.rsi2[i] < c[2];
+    case 'pb': n = c[1]; for (k = 0; k < n; k++){ var q = bbPct(d1, i - k, 20, 2); if (!(q != null && q < c[2])) return false; } return true;
+    case 'mdd': n = c[2] || 5; if (i < n) return false; var dn = 0; for (k = 0; k < n; k++) if (d1[i - k].c < d1[i - k - 1].c) dn++; return dn >= c[1];
+    case 'wr': var w = wrAt(d1, i, c[1]); return w != null && w < c[2];
+    case 'hl': n = c[1]; if (i < n) return false; for (k = 0; k < n; k++) if (!(d1[i - k].h < d1[i - k - 1].h && d1[i - k].l < d1[i - k - 1].l)) return false; return true;
+    case 'stoch': var st0 = wrAt(d1, i, c[1]); return st0 != null && st0 + 100 < c[2];
   }
   return false;
 }
@@ -1753,14 +1777,21 @@ function ruleExit(d1, k, rule, S){
     case 'rsi2': return S.rsi2[k] != null && S.rsi2[k] > (e[1] || 70);
     case 'up': return x.c > d1[k - 1].c;
     case 'days': return false;
+    case 'hi': var nh = e[1] || 7; if (k < nh) return false; for (var j = 1; j < nh; j++) if (d1[k - j].c >= x.c) return false; return true;
+    case 'crsi': var cr = crsiSeries(d1, S); return cr[k] != null && cr[k] > (e[1] || 70);
+    case 'pb': var q = bbPct(d1, k, 20, 2); return q != null && q > (e[1] || 0.8);
+    case 'wr': var w = wrAt(d1, k, e[1] || 2); return w != null && w > (e[2] || -20);
   }
   return false;
 }
 var COND_NAMES = { trend: function(c){ return 'über dem ' + (c[1] || 200) + '-Tage-Schnitt'; }, ibs: function(c){ return 'IBS unter ' + String(c[1]).replace('.', ','); }, rsi2: function(c){ return 'RSI-2 unter ' + c[1]; },
   down: function(c){ return c[1] + ' Verlusttage in Folge'; }, low: function(c){ return 'tiefster Schluss seit ' + c[1] + ' Tagen'; }, ret: function(c){ return String(c[2]).replace('.', ',') + ' % in ' + c[1] + ' Tagen'; },
   gap: function(c){ return 'Eröffnung ' + String(c[1]).replace('.', ',') + ' % unter Vortag'; }, wide: function(c){ return 'Spanne über ' + String(c[1]).replace('.', ',') + ' ATR'; }, nr: function(c){ return 'engste Spanne seit ' + c[1] + ' Tagen'; },
-  bb: function(c){ return 'unter dem unteren Bollinger-Band'; }, wd: function(c){ return ['', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag'][c[1]]; }, insideDn: function(){ return 'Innenstab mit rotem Schluss'; } };
-var EXIT_NAMES = { sma: function(e){ return 'Schluss über dem ' + (e[1] || 5) + '-Tage-Schnitt'; }, ibs: function(e){ return 'IBS über ' + String(e[1] || 0.8).replace('.', ','); }, ph: function(){ return 'Schluss über dem Vortageshoch'; }, rsi2: function(e){ return 'RSI-2 über ' + (e[1] || 70); }, up: function(){ return 'erster Tag im Plus'; }, days: function(){ return 'nur Zeit'; } };
+  bb: function(c){ return 'unter dem unteren Bollinger-Band'; }, wd: function(c){ return ['', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag'][c[1]]; }, insideDn: function(){ return 'Innenstab mit rotem Schluss'; },
+  below: function(c){ return 'Schluss unter dem ' + (c[1] || 5) + '-Tage-Schnitt'; }, crsi: function(c){ return 'ConnorsRSI unter ' + c[1]; }, cum: function(c){ return 'RSI-2 der letzten ' + c[1] + ' Tage zusammen unter ' + c[2]; },
+  rsiN: function(c){ return 'RSI-2 ' + c[1] + ' Tage in Folge unter ' + c[2]; }, r3: function(c){ return 'RSI-2 drei Tage fallend, zuletzt unter ' + c[2]; }, pb: function(c){ return 'Bollinger-%b ' + c[1] + ' Tage unter ' + String(c[2]).replace('.', ','); },
+  mdd: function(c){ return c[1] + ' von ' + (c[2] || 5) + ' Tagen im Minus'; }, wr: function(c){ return 'Williams %R(' + c[1] + ') unter ' + c[2]; }, hl: function(c){ return c[1] + ' Tage tiefere Hochs und Tiefs'; }, stoch: function(c){ return 'Stochastik(' + c[1] + ') unter ' + c[2]; } };
+var EXIT_NAMES = { sma: function(e){ return 'Schluss über dem ' + (e[1] || 5) + '-Tage-Schnitt'; }, ibs: function(e){ return 'IBS über ' + String(e[1] || 0.8).replace('.', ','); }, ph: function(){ return 'Schluss über dem Vortageshoch'; }, rsi2: function(e){ return 'RSI-2 über ' + (e[1] || 70); }, up: function(){ return 'erster Tag im Plus'; }, days: function(){ return 'nur Zeit'; }, hi: function(e){ return 'höchster Schluss seit ' + (e[1] || 7) + ' Tagen'; }, crsi: function(e){ return 'ConnorsRSI über ' + (e[1] || 70); }, pb: function(e){ return 'Bollinger-%b über ' + String(e[1] || 0.8).replace('.', ','); }, wr: function(e){ return 'Williams %R über ' + (e[2] || -20); } };
 function ruleText(rule){ return 'Kauf zum Schluss bei ' + rule.c.filter(function(c){ return c[0] !== 'trend'; }).map(function(c){ return COND_NAMES[c[0]] ? COND_NAMES[c[0]](c) : c[0]; }).join(' und ') + (rule.c.some(function(c){ return c[0] === 'trend'; }) ? ' im Aufwärtstrend' : '') + '. Verkauf bei ' + EXIT_NAMES[(rule.x || ['sma'])[0]](rule.x || ['sma', 5]) + ', spätestens nach ' + (rule.max || 10) + ' Tagen. Notstop 3 ATR.'; }
 function ruleId(rule){ return rule.c.map(function(c){ return c.join('_'); }).join('+') + '>' + (rule.x || ['sma', 5]).join('_') + '@' + (rule.max || 10); }
 // ================= Termin-Ergebnisse: Ist gegen Prognose und die typische Marktreaktion =================

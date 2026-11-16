@@ -1,0 +1,27 @@
+# Strategien aus dem Netz mit taeglichen Signalen: streng gepruefte Rueckrechnung (Tageskerzen seit 2000)
+name: Netz-Strategien
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/netz.yml', 'dienst/backtest22.mjs']
+permissions:
+  contents: write
+concurrency: netz
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Rechnen
+        run: node dienst/backtest22.mjs
+      - name: Speichern
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dienst/backtest-netz.json dienst/backtest-suche.json
+          git diff --cached --quiet || (git commit -m "Netz-Strategien geprueft [skip ci]" && git pull --rebase -X theirs -q && git push)
