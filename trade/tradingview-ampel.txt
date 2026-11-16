@@ -1,0 +1,311 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// TRADE CHECK · AMPEL
+// Eine klare Antwort statt vieler Zonen: Lohnt sich jetzt ein Trade, und in welche Richtung?
+//
+// So entscheidet die Ampel (alles nur aus abgeschlossenen Kerzen, nichts wird nachgezeichnet):
+//  1) RICHTUNG   aus der 4h-Struktur: Schluss über dem letzten 4h-Hoch = aufwärts, Schluss unter dem
+//                geschützten 4h-Tief = Wende abwärts (und umgekehrt).
+//  2) KORREKTUR  Ein guter Einstieg kommt erst, wenn der Kurs in die günstige Hälfte der letzten
+//                4h-Bewegung zurückläuft (Long: untere Hälfte, Short: obere Hälfte), ohne das
+//                geschützte Tief/Hoch zu brechen.
+//  3) WENDE      Korrigiert der Kurs weiter oder dreht er? Das zeigt das Chart-Zeitfenster (15 Min):
+//                Solange es tiefere Hochs macht, läuft die Korrektur. Erst ein Schluss über dem letzten
+//                Hoch (Long) ist die Bestätigung, dass der Kurs in deine Richtung dreht.
+//  4) LOHNT ES?  Stop unter dem Korrektur-Tief, Ziel ist das 4h-Hoch (dort liegt die Liquidität).
+//                Signal nur, wenn das Chance-Risiko-Verhältnis (CRV) mindestens 2 beträgt.
+//  5) BILANZ     Die Ampel rechnet jedes ihrer Signale auf diesem Chart nach (Ziel oder Stop zuerst,
+//                Spread als Kosten) und sagt dir ehrlich, ob die Regel auf DIESEM Markt bisher Geld bringt.
+//
+// Empfohlen: 15-Minuten-Chart. Die Zonen-Ansicht (Order Blocks, FVG) gibt es weiter im Indikator
+// "Trade Check · Zonen", für die Entscheidung brauchst du sie nicht.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+indicator("Trade Check · Ampel", shorttitle="TC Ampel", overlay=true, max_lines_count=60, max_labels_count=60, max_boxes_count=10)
+
+// ───────── Einstellungen ─────────
+grpR = "Regel"
+htf = input.timeframe("240", "Richtung aus Zeitebene", group=grpR)
+hL = input.int(3, "Swing-Länge Richtung (Kerzen links/rechts)", minval=1, maxval=10, group=grpR)
+lL = input.int(2, "Swing-Länge Wende im Chart", minval=1, maxval=10, group=grpR)
+disc = input.float(0.5, "Korrektur mindestens bis (Anteil der Bewegung)", options=[0.5, 0.618], group=grpR)
+minCrv = input.float(2.0, "Mindest-CRV", minval=1.0, step=0.5, group=grpR)
+costTicks = input.float(0.0, "Spread in Kurspunkten (0 = automatisch 2 Ticks)", minval=0.0, group=grpR)
+grpA = "Anzeige"
+showZone = input.bool(true, "Kaufzone / Verkaufszone und 4h-Marken zeigen", group=grpA)
+showSig = input.bool(true, "Signale im Chart (▲ / ▼)", group=grpA)
+showPos = input.bool(true, "Laufenden Trade zeigen (Einstieg, Stop, Ziel)", group=grpA)
+tabPos = input.string("Oben rechts", "Ampel: Position", options=["Oben rechts", "Unten rechts", "Oben links", "Unten links"], group=grpA)
+big = input.bool(true, "Große Schrift", group=grpA)
+upCol = input.color(#2FD07A, "Farbe Long", group=grpA)
+dnCol = input.color(#FF5A5F, "Farbe Short", group=grpA)
+amb = input.color(#F2B84B, "Farbe Warten", group=grpA)
+
+// ───────── 4h-Richtung (nur abgeschlossene Kerzen der höheren Zeitebene) ─────────
+f_htf(int L) =>
+    var int trend = 0
+    var float legLow = na
+    var float legHigh = na
+    var int extT = 0
+    var float lastPH = na
+    var int lastPHt = 0
+    var float lastPL = na
+    var int lastPLt = 0
+    ph = ta.pivothigh(high, L, L)
+    pl = ta.pivotlow(low, L, L)
+    if not na(ph)
+        lastPH := ph
+        lastPHt := time[L]
+    if not na(pl)
+        lastPL := pl
+        lastPLt := time[L]
+    if trend == 1
+        if close < legLow
+            trend := -1
+            legLow := low
+            extT := time
+        else if high > legHigh
+            if not na(lastPL) and lastPLt > extT and lastPL > legLow
+                legLow := lastPL
+            legHigh := high
+            extT := time
+    else if trend == -1
+        if close > legHigh
+            trend := 1
+            legHigh := high
+            extT := time
+        else if low < legLow
+            if not na(lastPH) and lastPHt > extT and lastPH < legHigh
+                legHigh := lastPH
+            legLow := low
+            extT := time
+    else
+        if not na(lastPH) and not na(lastPL) and close > lastPH
+            trend := 1
+            legLow := lastPL
+            legHigh := high
+            extT := time
+        else if not na(lastPH) and not na(lastPL) and close < lastPL
+            trend := -1
+            legHigh := lastPH
+            legLow := low
+            extT := time
+    [trend[1], legLow[1], legHigh[1], extT[1]]
+
+[hTrend, hLow, hHigh, hExt] = request.security(syminfo.tickerid, htf, f_htf(hL), lookahead=barmerge.lookahead_on)
+tfOk = timeframe.in_seconds() < timeframe.in_seconds(htf)
+
+// ───────── Wende im Chart-Zeitfenster ─────────
+atrC = ta.atr(14)
+cost = costTicks > 0 ? costTicks : 2 * syminfo.mintick
+cph = ta.pivothigh(high, lL, lL)
+cpl = ta.pivotlow(low, lL, lL)
+var float lastLH = na
+var int lastLHt = 0
+var float lastHL = na
+var int lastHLt = 0
+var int usedPiv = 0
+var float pbEx = na
+var string pbKey = ""
+// laufender Trade und angekündigter Einstieg (Füllung zur nächsten Kerze)
+var int posDir = 0
+var float posE = na
+var float posStop = na
+var float posTgt = na
+var float posRisk = na
+var int posBar = 0
+var int pendDir = 0
+var float pendStop = na
+var float pendTgt = na
+// Bilanz
+var array<float> Rs = array.new<float>()
+var int nWin = 0
+var array<label> sigLabels = array.new<label>()
+
+f_fmt(float v) => str.tostring(v, format.mintick)
+f_pct(float v) => str.tostring(math.round(v * 100)) + " %"
+f_r(float v) => (v >= 0 ? "+" : "−") + str.tostring(math.abs(v), "#.##") + " R"
+
+// 1) angekündigten Einstieg zur Eröffnung dieser Kerze füllen
+if pendDir != 0 and posDir == 0
+    e = open
+    st = pendDir > 0 ? math.min(pendStop, e - 0.5 * atrC[1]) : math.max(pendStop, e + 0.5 * atrC[1])
+    rk = (e - st) * pendDir
+    crvNow = (pendTgt - e) * pendDir / rk
+    if rk > cost * 3 and crvNow >= minCrv * 0.9
+        posDir := pendDir
+        posE := e
+        posStop := st
+        posTgt := pendTgt
+        posRisk := rk
+        posBar := bar_index
+    pendDir := 0
+
+// 2) laufenden Trade abrechnen (ab der Kerze nach dem Einstieg; Stop zählt zuerst, wenn beides in einer Kerze)
+float exitPx = na
+if posDir != 0 and bar_index > posBar
+    hitS = posDir > 0 ? low <= posStop : high >= posStop
+    hitT = posDir > 0 ? high >= posTgt : low <= posTgt
+    if hitS
+        exitPx := posStop
+    else if hitT
+        exitPx := posTgt
+    else if bar_index - posBar > 480
+        exitPx := close
+    if not na(exitPx)
+        r = ((exitPx - posE) * posDir - cost) / posRisk
+        array.push(Rs, r)
+        if r > 0
+            nWin += 1
+        posDir := 0
+
+// 3) Swing-Punkte im Chart
+if not na(cph)
+    lastLH := cph
+    lastLHt := time[lL]
+if not na(cpl)
+    lastHL := cpl
+    lastHLt := time[lL]
+
+// 4) Korrektur verfolgen und Wende prüfen
+dir = tfOk ? hTrend : 0
+rng = hHigh - hLow
+lvl = dir > 0 ? hHigh - disc * rng : dir < 0 ? hLow + disc * rng : na
+key = str.tostring(hExt) + ":" + str.tostring(dir)
+if key != pbKey
+    pbKey := key
+    pbEx := na
+if dir != 0
+    pbEx := na(pbEx) ? (dir > 0 ? low : high) : (dir > 0 ? math.min(pbEx, low) : math.max(pbEx, high))
+inZone = dir > 0 ? pbEx <= lvl : dir < 0 ? pbEx >= lvl : false
+intact = dir > 0 ? pbEx > hLow : dir < 0 ? pbEx < hHigh : false
+pivOk = dir > 0 ? (not na(lastLH) and lastLHt > hExt and lastLHt != usedPiv) : dir < 0 ? (not na(lastHL) and lastHLt > hExt and lastHLt != usedPiv) : false
+trigLvl = dir > 0 ? lastLH : dir < 0 ? lastHL : na
+trig = barstate.isconfirmed and posDir == 0 and pendDir == 0 and inZone and intact and pivOk and (dir > 0 ? close > lastLH : close < lastHL)
+sigStop = dir > 0 ? math.min(pbEx - 0.1 * atrC, close - 0.5 * atrC) : math.max(pbEx + 0.1 * atrC, close + 0.5 * atrC)
+sigTgt = dir > 0 ? hHigh : hLow
+sigRisk = (close - sigStop) * dir
+sigCrv = sigRisk > 0 ? (sigTgt - close) * dir / sigRisk : 0.0
+// Was wäre, wenn die Wende jetzt käme (für die Vorschau "lohnt es sich überhaupt?")
+prevStop = dir > 0 ? math.min(pbEx - 0.1 * atrC, trigLvl - 0.5 * atrC) : math.max(pbEx + 0.1 * atrC, trigLvl + 0.5 * atrC)
+prevCrv = pivOk and not na(trigLvl) and (trigLvl - prevStop) * dir > 0 ? (sigTgt - trigLvl) * dir / ((trigLvl - prevStop) * dir) : na
+longSig = trig and dir > 0 and sigCrv >= minCrv
+shortSig = trig and dir < 0 and sigCrv >= minCrv
+weakSig = trig and sigCrv < minCrv
+if trig
+    usedPiv := dir > 0 ? lastLHt : lastHLt
+if longSig or shortSig
+    pendDir := dir
+    pendStop := sigStop
+    pendTgt := sigTgt
+
+// ───────── Bilanz dieser Regel auf diesem Chart ─────────
+n = array.size(Rs)
+meanR = n > 0 ? array.avg(Rs) : 0.0
+sdR = n > 1 ? array.stdev(Rs, false) : 0.0
+tR = sdR > 0 ? meanR / sdR * math.sqrt(n) : 0.0
+sumR = n > 0 ? array.sum(Rs) : 0.0
+proven = n >= 20 and meanR > 0.1 and tR >= 1.5
+losing = n >= 20 and meanR < 0
+verdictTxt = n < 20 ? "noch zu wenig Signale für ein Urteil" : proven ? "lohnt sich auf diesem Markt" : losing ? "bisher Verlust auf diesem Markt: Signale auslassen" : "Vorteil unsicher, nur mit kleinem Risiko"
+verdictCol = n < 20 ? color.gray : proven ? upCol : losing ? dnCol : amb
+
+// Signale im Chart
+if showSig and (longSig or shortSig)
+    lb = label.new(bar_index, longSig ? low : high, longSig ? "▲ LONG" : "▼ SHORT", style=longSig ? label.style_label_up : label.style_label_down, color=color.new(longSig ? upCol : dnCol, 10), textcolor=color.black, size=size.small)
+    array.push(sigLabels, lb)
+    if array.size(sigLabels) > 40
+        label.delete(array.shift(sigLabels))
+
+// ───────── Zonen und Marken (nur am letzten Balken neu gezeichnet) ─────────
+var box zBox = na
+var line lTop = na
+var line lBot = na
+var line lMid = na
+var line lTrig = na
+var line pE = na
+var line pS = na
+var line pT = na
+var label zLab = na
+f_hl(line l, float y, color c, string st, int w) =>
+    line.delete(l)
+    na(y) ? line(na) : line.new(bar_index - 30, y, bar_index + 25, y, color=c, style=st, width=w)
+if barstate.islast
+    box.delete(zBox)
+    label.delete(zLab)
+    if showZone and dir != 0 and not na(lvl)
+        zTop = dir > 0 ? lvl : hHigh
+        zBot = dir > 0 ? hLow : lvl
+        zc = dir > 0 ? upCol : dnCol
+        zBox := box.new(bar_index - 30, zTop, bar_index + 25, zBot, border_color=color.new(zc, 75), bgcolor=color.new(zc, 90))
+        zLab := label.new(bar_index + 25, dir > 0 ? zTop : zBot, dir > 0 ? "Kaufzone" : "Verkaufszone", style=label.style_label_left, color=color.new(zc, 75), textcolor=color.white, size=size.tiny)
+        lTop := f_hl(lTop, hHigh, color.new(dir > 0 ? upCol : dnCol, 20), line.style_solid, 1)
+        lBot := f_hl(lBot, hLow, color.new(dir > 0 ? dnCol : upCol, 20), line.style_solid, 1)
+    else
+        lTop := f_hl(lTop, na, color.gray, line.style_solid, 1)
+        lBot := f_hl(lBot, na, color.gray, line.style_solid, 1)
+    lTrig := f_hl(lTrig, dir != 0 and posDir == 0 and inZone and intact and pivOk ? trigLvl : na, amb, line.style_dashed, 2)
+    pE := f_hl(pE, showPos and posDir != 0 ? posE : na, color.gray, line.style_solid, 1)
+    pS := f_hl(pS, showPos and posDir != 0 ? posStop : na, dnCol, line.style_solid, 2)
+    pT := f_hl(pT, showPos and posDir != 0 ? posTgt : na, upCol, line.style_solid, 2)
+
+// ───────── Die Ampel ─────────
+tpos = tabPos == "Oben rechts" ? position.top_right : tabPos == "Unten rechts" ? position.bottom_right : tabPos == "Oben links" ? position.top_left : position.bottom_left
+var table tb = table.new(tpos, 1, 6, bgcolor=color.new(#0F1012, 4), frame_color=color.new(#2A2D33, 0), frame_width=1, border_width=0)
+if barstate.islast
+    string head = ""
+    string why = ""
+    string plan = ""
+    color hc = color.gray
+    trendTxt = dir > 0 ? "4h aufwärts" : dir < 0 ? "4h abwärts" : "4h ohne klare Richtung"
+    retr = dir != 0 and rng > 0 ? (dir > 0 ? (hHigh - pbEx) / rng : (pbEx - hLow) / rng) : na
+    if not tfOk
+        head := "CHART-ZEITEBENE ZU GROSS"
+        why := "Die Ampel braucht ein kleineres Zeitfenster als " + htf + ". Am besten 15 Minuten."
+    else if posDir != 0
+        curR = (close - posE) * posDir / posRisk
+        head := (posDir > 0 ? "LONG LÄUFT  " : "SHORT LÄUFT  ") + f_r(curR)
+        hc := posDir > 0 ? upCol : dnCol
+        why := "Stop und Ziel stehen. Nichts nachziehen, nicht vorher raus: die Bilanz unten gilt nur so."
+        plan := "Einstieg " + f_fmt(posE) + " · Stop " + f_fmt(posStop) + " · Ziel " + f_fmt(posTgt)
+    else if longSig or shortSig or pendDir != 0
+        d0 = pendDir != 0 ? pendDir : dir
+        head := (d0 > 0 ? "LONG" : "SHORT") + (losing ? " · HIER BISHER VERLUST" : " · LOHNT SICH")
+        hc := losing ? amb : d0 > 0 ? upCol : dnCol
+        why := (d0 > 0 ? "Korrektur in der Kaufzone beendet: 15 Min schließt über dem letzten Hoch." : "Erholung in der Verkaufszone beendet: 15 Min schließt unter dem letzten Tief.") + (losing ? " Auf diesem Markt hat die Regel bisher verloren: auslassen." : "")
+        plan := "Einstieg ~" + f_fmt(close) + " · Stop " + f_fmt(pendStop) + " · Ziel " + f_fmt(pendTgt) + " · CRV " + str.tostring(sigCrv, "#.#")
+    else if dir == 0
+        head := "KEIN TRADE"
+        why := "Die 4h-Struktur hat keine klare Richtung. Abwarten, bis ein 4h-Hoch oder -Tief mit Schluss gebrochen wird."
+    else if not intact
+        head := "ACHTUNG: WENDE MÖGLICH"
+        hc := amb
+        why := "Der Kurs ist unter das geschützte 4h-" + (dir > 0 ? "Tief " : "Hoch ") + f_fmt(dir > 0 ? hLow : hHigh) + " gelaufen. Schließt die 4h-Kerze dort, dreht die Richtung. Kein Trade."
+    else if not inZone
+        head := "WARTEN · KORREKTUR ZU KLEIN"
+        hc := amb
+        why := "Der Kurs ist erst " + f_pct(nz(retr)) + " der 4h-Bewegung zurückgelaufen. " + (dir > 0 ? "Kaufen lohnt erst in der unteren Hälfte, " : "Verkaufen lohnt erst in der oberen Hälfte, ") + "sonst ist der Stop zu weit und das Ziel zu nah."
+        plan := (dir > 0 ? "Kaufzone ab " : "Verkaufszone ab ") + f_fmt(lvl) + " · Ziel später " + f_fmt(sigTgt)
+    else if weakSig
+        head := "WENDE, ABER LOHNT NICHT"
+        hc := amb
+        why := "15 Min hat gedreht, aber bis zum Ziel ist zu wenig Platz: CRV nur " + str.tostring(sigCrv, "#.#") + " (mindestens " + str.tostring(minCrv, "#.#") + ")."
+    else
+        stillCorr = pivOk and (dir > 0 ? close <= trigLvl : close >= trigLvl)
+        head := "BEREIT · " + (dir > 0 ? "LONG" : "SHORT") + " WENN BESTÄTIGT"
+        hc := amb
+        why := "Der Kurs ist in der " + (dir > 0 ? "Kaufzone" : "Verkaufszone") + " (" + f_pct(nz(retr)) + " zurück). " + (stillCorr ? "15 Min korrigiert noch (" + (dir > 0 ? "tiefere Hochs" : "höhere Tiefs") + "). " : "Warte auf das nächste 15-Min-" + (dir > 0 ? "Hoch" : "Tief") + ". ") + "Erst die Bestätigung zeigt, dass er in deine Richtung dreht."
+        plan := pivOk ? ((dir > 0 ? "Long bei 15-Min-Schluss über " : "Short bei 15-Min-Schluss unter ") + f_fmt(trigLvl) + (not na(prevCrv) ? " · CRV dann ca. " + str.tostring(prevCrv, "#.#") + (prevCrv < minCrv ? " (zu wenig)" : "") : "")) : "Bestätigung kommt nach dem nächsten 15-Min-" + (dir > 0 ? "Hoch" : "Tief")
+    fs = big ? size.large : size.normal
+    table.cell(tb, 0, 0, head, text_color=color.black, bgcolor=hc, text_size=fs, text_halign=text.align_left)
+    table.cell(tb, 0, 1, why, text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 0, 2, plan, text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 0, 3, trendTxt + (dir != 0 ? " · Bewegung " + f_fmt(dir > 0 ? hLow : hHigh) + " → " + f_fmt(dir > 0 ? hHigh : hLow) : ""), text_color=color.new(color.white, 35), text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 0, 4, "Bilanz hier: " + str.tostring(n) + " Signale · " + (n > 0 ? str.tostring(math.round(nWin * 100.0 / n)) + " % Treffer · Ø " + f_r(meanR) + " · Summe " + f_r(sumR) : "noch keine"), text_color=color.new(color.white, 35), text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 0, 5, "Urteil: " + verdictTxt, text_color=verdictCol, text_size=size.small, text_halign=text.align_left)
+
+// ───────── Alarme ─────────
+alertcondition(longSig, "Long lohnt sich", "Trade Check Ampel: LONG bestätigt auf {{ticker}} ({{interval}}), Einstieg ~{{close}}")
+alertcondition(shortSig, "Short lohnt sich", "Trade Check Ampel: SHORT bestätigt auf {{ticker}} ({{interval}}), Einstieg ~{{close}}")
+alertcondition(dir != 0 and inZone and intact and not (inZone[1] and intact[1]), "Bereit: Kurs in der Zone", "Trade Check Ampel: {{ticker}} ist in der Zone, warte auf die 15-Min-Bestätigung")
+if longSig or shortSig
+    alert((longSig ? "LONG" : "SHORT") + " " + syminfo.ticker + ": Einstieg ~" + f_fmt(close) + ", Stop " + f_fmt(sigStop) + ", Ziel " + f_fmt(sigTgt) + ", CRV " + str.tostring(sigCrv, "#.#") + (losing ? " (auf diesem Markt bisher Verlust)" : ""), alert.freq_once_per_bar_close)
