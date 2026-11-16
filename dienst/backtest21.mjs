@@ -18,7 +18,9 @@ D.forEach((d, i) => { const a = apply(RULE, d, dax, D, i, false); if (!a || a.sk
   T.push({ day: d.day, y: +d.day.slice(0, 4), r: a.r,
     f: { wochentag: wd, luecke: (d.open - d.prev.close) / d.atr * dir, spanne: (oh - ol) / d.atr, gesternSchwankung: (d.prev.hi - d.prev.lo) / d.atr,
       gesternRichtung: (d.prev.close - d.prev.open) / d.atr * dir, trendStaerke: (d.prev.close - d.sma20) / d.atr * dir,
-      lageGestern: d.prev.hi > d.prev.lo ? (d.open - d.prev.lo) / (d.prev.hi - d.prev.lo) : 0.5 } }); });
+      lageGestern: d.prev.hi > d.prev.lo ? (d.open - d.prev.lo) / (d.prev.hi - d.prev.lo) : 0.5,
+      // Nachtest (einzige neue Hypothese nach Runde 1): Lage der Eroeffnung in der gestrigen Spanne, auf die Trade-Richtung bezogen (0 = ungünstig, 1 = günstig)
+      lageRichtung: d.prev.hi > d.prev.lo ? (dir > 0 ? (d.open - d.prev.lo) / (d.prev.hi - d.prev.lo) : (d.prev.hi - d.open) / (d.prev.hi - d.prev.lo)) : 0.5 } }); });
 const train = T.filter((x) => x.y <= 2019), test = T.filter((x) => x.y >= 2020);
 const tdiff = (a, b) => { const sa = stats(a), sb = stats(b), v = (s, arr) => arr.reduce((q, x) => q + (x - s.mean) ** 2, 0) / Math.max(1, arr.length - 1); return (sa.mean - sb.mean) / Math.sqrt(v(sa, a) / a.length + v(sb, b) / b.length); };
 const out = { at: new Date().toISOString(), rule: RULE.id, alle: { train: stats(train.map((x) => x.r)), test: stats(test.map((x) => x.r)) }, filter: {}, passed: [] };
