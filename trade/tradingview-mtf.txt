@@ -512,8 +512,8 @@ f_pat(int id) =>
                 d := -1
                 ext := high[1]
     else if id == 9
-        float r1 = high[1] - low[1]
-        if r1 > 0 and f_bd(1) <= 0.1 * r1
+        float dojiR = high[1] - low[1]
+        if dojiR > 0 and f_bd(1) <= 0.1 * dojiR
             if close[2] < close[3] and close[3] < close[4] and close > high[1]
                 d := 1
                 ext := math.min(low, low[1])
