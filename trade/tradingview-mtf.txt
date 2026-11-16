@@ -8,6 +8,10 @@ indicator("Trade Check · Zonen (alle Zeitebenen)", shorttitle="TC Zonen", overl
 // Zeitebenen, die kleiner sind als der Chart, werden automatisch ausgelassen.
 // Nach dem SMC-Leitfaden ergänzt: gebrochene Order Blocks werden zu Breaker Blocks (Rolle getauscht, gestrichelt),
 // abgeholte Liquidität mit Schluss zurück wird als Sweep markiert, und Fair Value Gaps schrumpfen beim Füllen.
+// Price Action: 15 Kerzen- und Chartmuster werden markiert, jedes mit seinem Ergebnis aus der Rückrechnung
+// (15 Min, DAX, Nasdaq, S&P 500, Dow, Gold, EUR/USD, GBP/USD seit 2013; allein, in Trendrichtung, in Zonen, beides).
+// Ehrlich: Kein Muster hat nach Kosten bestanden, auch nicht mit Trend oder Zone. Darum sind die Marken grau,
+// und der Tooltip sagt, wie das Muster abgeschnitten hat. Für Entscheidungen: Indikator "Trade Check · Ampel".
 
 // ───────── Einstellungen ─────────
 grpT = "Zeitebenen (von klein nach groß)"
@@ -45,6 +49,14 @@ tabPos = input.string("Oben rechts", "Übersicht: Position", options=["Oben rech
 grpD = "Feinheiten"
 swingLen = input.int(3, "Swing-Länge (Kerzen links und rechts)", minval=1, maxval=20, group=grpD)
 fvgMin = input.float(0.15, "FVG-Mindestgröße (in ATR)", minval=0.0, step=0.05, group=grpD)
+
+grpP = "Price Action (Kerzen- und Chartmuster)"
+showPA = input.bool(true, "Muster zeigen (Pin Bar, Engulfing, Inside Bar, Sterne, Flagge, Sweep, Doppelboden …)", group=grpP)
+paOnlyGood = input.bool(false, "Nur Muster mit bestandener Rückrechnung", group=grpP)
+paTrendOnly = input.bool(false, "Nur in 4h-Trendrichtung", group=grpP)
+paZoneOnly = input.bool(false, "Nur in einer offenen 1h-Zone (FVG / Order Block)", group=grpP)
+paSess = input.bool(true, "Nur zur Haupthandelszeit des Marktes", group=grpP)
+paMax = input.int(40, "Muster-Marken im Chart", minval=5, maxval=200, group=grpP)
 
 // ───────── Typen ─────────
 type Zone
@@ -349,6 +361,306 @@ bool sw2 = f_tf(zF2, zO2, lq2, mk2, swAll, nm2, 2, ok2, nb2, a2, b2, c2t, d2b, e
 bool sw3 = f_tf(zF3, zO3, lq3, mk3, swAll, nm3, 3, ok3, nb3, a3, b3, c3t, d3b, e3, f3, g3, h3, i3, j3, k3, l3, m3, n3, o3, p3, q3, r3, s3, t3, u3, v3, w3)
 bool sw4 = f_tf(zF4, zO4, lq4, mk4, swAll, nm4, 4, ok4, nb4, a4, b4, c4t, d4b, e4, f4, g4, h4, i4, j4, k4, l4, m4, n4, o4, p4, q4, r4, s4, t4, u4, v4, w4)
 
+// ───────── Price Action: alle gängigen Kerzen- und Chartmuster auf dem Chart-Zeitfenster ─────────
+// Gleiche Definitionen wie in der Rückrechnung (15 Min, 7 Märkte seit 2013). Jedes Muster trägt sein Ergebnis:
+// grün = bestanden, grau = kein Vorteil, rot = verliert nach Kosten. Trend = 4h-Struktur, Zone = offenes 1h-FVG / Order Block.
+f_htf(int L) =>
+    var int trend = 0
+    var float legLow = na
+    var float legHigh = na
+    var float lastPH = na
+    var float lastPL = na
+    ph = ta.pivothigh(high, L, L)
+    pl = ta.pivotlow(low, L, L)
+    if not na(ph)
+        lastPH := ph
+    if not na(pl)
+        lastPL := pl
+    if trend == 1
+        if close < legLow
+            trend := -1
+            legHigh := math.max(legHigh, high)
+            legLow := low
+        else if high > legHigh
+            legHigh := high
+            if not na(lastPL) and lastPL > legLow
+                legLow := lastPL
+    else if trend == -1
+        if close > legHigh
+            trend := 1
+            legLow := math.min(legLow, low)
+            legHigh := high
+        else if low < legLow
+            legLow := low
+            if not na(lastPH) and lastPH < legHigh
+                legHigh := lastPH
+    else if not na(lastPH) and not na(lastPL)
+        if close > lastPH
+            trend := 1
+            legLow := lastPL
+            legHigh := high
+        else if close < lastPL
+            trend := -1
+            legHigh := lastPH
+            legLow := low
+    trend[1]
+int paTrend = request.security(syminfo.tickerid, "240", f_htf(3), lookahead=barmerge.lookahead_on)
+
+// Ergebnisse der Rückrechnung je Muster (Zeile) und Filter (alle, Trend, Zone, Trend+Zone): Ø R je Trade nach Kosten, und ob bestanden
+// Stand: 2026-11-16, 15 Min, 7 Märkte seit 2013. Zum Vergleich Zufallseinstiege mit gleicher Stop/Ziel-Regel: Ø -0.152 R. Bestanden hat kein Muster.
+var array<float> paMean = array.from(-0.158, -0.147, -0.161, -0.147, -0.112, -0.108, -0.111, -0.107, -0.111, -0.106, -0.122, -0.120, -0.118, -0.113, -0.117, -0.133, -0.106, -0.097, -0.103, -0.097, -0.039, -0.032, 0.011, -0.030, -0.145, -0.147, -0.138, -0.158, -0.120, -0.109, -0.126, -0.112, -0.175, -0.161, -0.175, -0.172, -0.125, -0.131, -0.120, -0.136, -0.090, -0.097, -0.091, -0.091, -0.144, -0.146, -0.129, -0.151, -0.048, -0.038, -0.105, -0.154, -0.153, -0.147, -0.154, -0.143, -0.072, -0.062, -0.062, -0.058)
+var array<bool> paPass = array.from(false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false)
+float paRand = -0.152
+var array<string> paCode = array.from("PIN", "ENG", "IB↗", "OUT", "STAR", "3S", "TWZ", "PRC", "HAR", "DOJI", "MARU", "FAKEY", "FLAG", "SWEEP", "DOPPEL")
+var array<string> paName = array.from("Pin Bar / Hammer / Shooting Star", "Engulfing", "Inside-Bar-Ausbruch", "Outside Bar", "Morning / Evening Star", "Drei Soldaten / Drei Krähen", "Tweezer Bottom / Top", "Piercing Line / Dark Cloud", "Harami", "Doji-Wende", "Marubozu (Momentum)", "Fakey (falscher Inside-Bar-Ausbruch)", "Flagge (Ausbruch nach Impuls)", "Liquiditäts-Sweep (2B)", "Doppelboden / Doppeltop")
+
+// Haupthandelszeit des Marktes (wie in der Rückrechnung)
+string pTk = syminfo.ticker
+bool pDax = str.contains(pTk, "DAX") or str.contains(pTk, "DE40") or str.contains(pTk, "GER40")
+bool pUS = pTk == "SPX" or pTk == "NDX" or pTk == "DJI" or str.contains(pTk, "US500") or str.contains(pTk, "US100") or str.contains(pTk, "US30") or str.contains(pTk, "NAS100") or str.startswith(pTk, "ES1") or str.startswith(pTk, "NQ1") or str.startswith(pTk, "YM1")
+int pMin = hour(time, "Europe/Berlin") * 60 + minute(time, "Europe/Berlin")
+bool pSess = pDax ? (pMin >= 540 and pMin < 1035) : pUS ? (pMin >= 930 and pMin < 1305) : (pMin >= 480 and pMin < 1185)
+
+float pA = ta.atr(14)[1]
+float pR = high - low
+float pB = math.abs(close - open)
+f_sr(float v) => (v >= 0 ? "+" : "−") + str.tostring(math.abs(v), "0.00")
+f_bd(int k) => math.abs(close[k] - open[k])
+f_up(int k) => close[k] > open[k]
+f_dn(int k) => close[k] < open[k]
+// Ergebnis: Richtung (1 / -1 / 0) und Extrem für den Stop
+f_pat(int id) =>
+    int d = 0
+    float ext = na
+    if id == 0
+        float lw = math.min(open, close) - low
+        float uw = high - math.max(open, close)
+        if pR >= 0.6 * pA
+            if lw >= 2 * pB and lw >= 0.6 * pR and close - low >= 0.66 * pR
+                d := 1
+                ext := low
+            else if uw >= 2 * pB and uw >= 0.6 * pR and high - close >= 0.66 * pR
+                d := -1
+                ext := high
+    else if id == 1
+        if pB >= 0.5 * pA
+            if f_dn(1) and f_up(0) and close >= open[1] and open <= close[1]
+                d := 1
+                ext := math.min(low, low[1])
+            else if f_up(1) and f_dn(0) and close <= open[1] and open >= close[1]
+                d := -1
+                ext := math.max(high, high[1])
+    else if id == 2
+        if high[1] < high[2] and low[1] > low[2]
+            if close > high[2]
+                d := 1
+                ext := low[1]
+            else if close < low[2]
+                d := -1
+                ext := high[1]
+    else if id == 3
+        if high > high[1] and low < low[1] and pR >= pA
+            float pos = (close - low) / pR
+            if pos > 0.75 and close > high[1]
+                d := 1
+                ext := low
+            else if pos < 0.25 and close < low[1]
+                d := -1
+                ext := high
+    else if id == 4
+        if f_bd(2) >= 0.6 * pA and f_bd(1) <= 0.3 * f_bd(2)
+            if f_dn(2) and f_up(0) and close > (open[2] + close[2]) / 2
+                d := 1
+                ext := math.min(low, low[1], low[2])
+            else if f_up(2) and f_dn(0) and close < (open[2] + close[2]) / 2
+                d := -1
+                ext := math.max(high, high[1], high[2])
+    else if id == 5
+        bool allUp = true
+        bool allDn = true
+        for k = 0 to 2
+            float rk = high[k] - low[k]
+            allUp := allUp and f_up(k) and f_bd(k) >= 0.4 * pA and high[k] - close[k] <= 0.25 * rk
+            allDn := allDn and f_dn(k) and f_bd(k) >= 0.4 * pA and close[k] - low[k] <= 0.25 * rk
+        if allUp and close[1] > close[2] and close > close[1] and open[1] >= open[2] and open >= open[1]
+            d := 1
+            ext := low[2]
+        else if allDn and close[1] < close[2] and close < close[1] and open[1] <= open[2] and open <= open[1]
+            d := -1
+            ext := high[2]
+    else if id == 6
+        if f_dn(1) and f_up(0) and math.abs(low[1] - low) <= 0.05 * pA and f_bd(1) >= 0.3 * pA
+            d := 1
+            ext := math.min(low, low[1])
+        else if f_up(1) and f_dn(0) and math.abs(high[1] - high) <= 0.05 * pA and f_bd(1) >= 0.3 * pA
+            d := -1
+            ext := math.max(high, high[1])
+    else if id == 7
+        if f_bd(1) >= 0.5 * pA
+            if f_dn(1) and f_up(0) and open <= close[1] and close > (open[1] + close[1]) / 2 and close < open[1]
+                d := 1
+                ext := math.min(low, low[1])
+            else if f_up(1) and f_dn(0) and open >= close[1] and close < (open[1] + close[1]) / 2 and close > open[1]
+                d := -1
+                ext := math.max(high, high[1])
+    else if id == 8
+        if f_bd(1) >= 0.6 * pA and pB <= 0.5 * f_bd(1)
+            if f_dn(1) and f_up(0) and open >= close[1] and close <= open[1]
+                d := 1
+                ext := low[1]
+            else if f_up(1) and f_dn(0) and open <= close[1] and close >= open[1]
+                d := -1
+                ext := high[1]
+    else if id == 9
+        float r1 = high[1] - low[1]
+        if r1 > 0 and f_bd(1) <= 0.1 * r1
+            if close[2] < close[3] and close[3] < close[4] and close > high[1]
+                d := 1
+                ext := math.min(low, low[1])
+            else if close[2] > close[3] and close[3] > close[4] and close < low[1]
+                d := -1
+                ext := math.max(high, high[1])
+    else if id == 10
+        if pR >= 1.2 * pA and pB >= 0.9 * pR
+            d := close > open ? 1 : -1
+            ext := close > open ? low : high
+    else if id == 11
+        if high[1] < high[2] and low[1] > low[2]
+            if low < low[1] and close > low[1] and close > open
+                d := 1
+                ext := low
+            else if high > high[1] and close < high[1] and close < open
+                d := -1
+                ext := high
+    else if id == 12
+        for n = 3 to 8
+            float mv = close[n + 1] - open[n + 3]
+            float fh = high[1]
+            float fl = low[1]
+            for k = 1 to n
+                fh := math.max(fh, high[k])
+                fl := math.min(fl, low[k])
+            if mv >= 2 * pA and fl >= open[n + 3] + 0.5 * mv and close > fh
+                d := 1
+                ext := fl
+                break
+            if mv <= -2 * pA and fh <= open[n + 3] + 0.5 * mv and close < fl
+                d := -1
+                ext := fh
+                break
+    [d, ext]
+
+// Swing-Muster: Liquiditäts-Sweep und Doppelboden / -top (Swing-Länge 3 wie in der Rückrechnung)
+var float spl1 = na
+var int spl1i = na
+var float spl2 = na
+var int spl2i = na
+var bool splUsed = false
+var bool splDb = false
+var float sph1 = na
+var int sph1i = na
+var float sph2 = na
+var int sph2i = na
+var bool sphUsed = false
+var bool sphDb = false
+float pvl = ta.pivotlow(low, 3, 3)
+float pvh = ta.pivothigh(high, 3, 3)
+if not na(pvl)
+    spl1 := spl2
+    spl1i := spl2i
+    spl2 := pvl
+    spl2i := bar_index - 3
+    splUsed := false
+    splDb := false
+if not na(pvh)
+    sph1 := sph2
+    sph1i := sph2i
+    sph2 := pvh
+    sph2i := bar_index - 3
+    sphUsed := false
+    sphDb := false
+int swD = 0
+float swE = na
+if not na(spl2) and bar_index - spl2i <= 60 and not splUsed and low < spl2 and close > spl2
+    swD := 1
+    swE := low
+    splUsed := true
+else if not na(sph2) and bar_index - sph2i <= 60 and not sphUsed and high > sph2 and close < sph2
+    swD := -1
+    swE := high
+    sphUsed := true
+int dbD = 0
+float dbE = na
+if not na(spl1) and not splDb and spl2i - spl1i >= 5 and math.abs(spl1 - spl2) <= 0.15 * pA and bar_index - spl2i <= 30
+    float neck = high[bar_index - spl2i]
+    for k = bar_index - spl2i to bar_index - spl1i
+        neck := math.max(neck, high[k])
+    if close > neck
+        dbD := 1
+        dbE := math.min(spl1, spl2)
+        splDb := true
+if dbD == 0 and not na(sph1) and not sphDb and sph2i - sph1i >= 5 and math.abs(sph1 - sph2) <= 0.15 * pA and bar_index - sph2i <= 30
+    float neck2 = low[bar_index - sph2i]
+    for k = bar_index - sph2i to bar_index - sph1i
+        neck2 := math.min(neck2, low[k])
+    if close < neck2
+        dbD := -1
+        dbE := math.max(sph1, sph2)
+        sphDb := true
+
+// Liegt die Kerze in einer offenen 1h-Zone derselben Richtung (FVG oder Order Block, keine Breaker)?
+f_inZone(int d) =>
+    bool hit = false
+    for z in zF2
+        if z.dir == d and not z.brk and low <= z.top and high >= z.bot
+            hit := true
+    for z in zO2
+        if z.dir == d and not z.brk and low <= z.top and high >= z.bot
+            hit := true
+    hit
+
+var array<label> paLabels = array.new<label>()
+var string paLast = ""
+var color paLastCol = na
+bool paGoodNow = false
+if showPA and barstate.isconfirmed and (pSess or not paSess)
+    for id = 0 to 14
+        int d = 0
+        float ext = na
+        if id <= 12
+            [dd, ee] = f_pat(id)
+            d := dd
+            ext := ee
+        else if id == 13
+            d := swD
+            ext := swE
+        else
+            d := dbD
+            ext := dbE
+        if d != 0
+            bool inT = paTrend == d
+            bool inZ = f_inZone(d)
+            int f = inT and inZ ? 3 : inZ ? 2 : inT ? 1 : 0
+            float m = array.get(paMean, id * 4 + f)
+            bool ps = array.get(paPass, id * 4 + f)
+            bool show = not paOnlyGood or ps
+            if show and (not paTrendOnly or inT) and (not paZoneOnly or inZ)
+                float stp = d > 0 ? math.min(ext - 0.1 * chartAtr, close - 0.5 * chartAtr) : math.max(ext + 0.1 * chartAtr, close + 0.5 * chartAtr)
+                float tgt = close + 2 * (close - stp)
+                color c = ps ? (d > 0 ? bullCol : bearCol) : m < -0.05 ? color.new(#8A8F98, 0) : color.new(#C9CCD1, 0)
+                string fl = f == 3 ? "Trend + Zone" : f == 2 ? "in Zone" : f == 1 ? "mit Trend" : "ohne Trend / Zone"
+                string verdict = ps ? "BESTANDEN: Ø " + f_sr(m) + " R je Trade" : (m < -0.05 ? "verliert nach Kosten: Ø " : "kein Vorteil nach Kosten: Ø ") + f_sr(m) + " R je Trade" + (m > paRand + 0.05 ? " (besser als Zufall mit " + f_sr(paRand) + " R, aber im Minus)" : " (wie Zufall: " + f_sr(paRand) + " R)")
+                string tip = array.get(paName, id) + (d > 0 ? " · Long" : " · Short") + "\n" + fl + "\n" + verdict + "\nStop " + str.tostring(stp, format.mintick) + " · Ziel 2R " + str.tostring(tgt, format.mintick)
+                label lb = label.new(bar_index, d > 0 ? low : high, array.get(paCode, id) + (d > 0 ? "▲" : "▼"), style=d > 0 ? label.style_label_up : label.style_label_down, color=color.new(c, ps ? 10 : 70), textcolor=ps ? color.black : color.new(#E8EAED, 0), size=size.tiny, tooltip=tip)
+                array.push(paLabels, lb)
+                if array.size(paLabels) > paMax
+                    label.delete(array.shift(paLabels))
+                paLast := array.get(paName, id) + (d > 0 ? " ▲ " : " ▼ ") + "(" + fl + "): " + verdict
+                paLastCol := ps ? (d > 0 ? bullCol : bearCol) : m < -0.05 ? bearCol : color.new(#8A8F98, 0)
+                paGoodNow := paGoodNow or ps
+alertcondition(paGoodNow, "Price Action: belegtes Muster", "Trade Check: belegtes Price-Action-Muster auf {{ticker}} ({{interval}})")
+
+
 // ───────── Übersicht ─────────
 color pTxt = #E8EAED
 color pMut = #8A8F98
@@ -364,7 +676,7 @@ f_row(table tbl, int r, string nm, bool ok, int tr, array<Zone> zF, array<Zone> 
     table.cell(tbl, 2, r, ok ? f_cnt(zF) + " · " + f_cnt(zO) : "", text_color=pMut, text_size=size.small, text_halign=text.align_right)
 
 tpos = tabPos == "Oben rechts" ? position.top_right : tabPos == "Unten rechts" ? position.bottom_right : tabPos == "Oben links" ? position.top_left : position.bottom_left
-var table tb = table.new(tpos, 3, 6, bgcolor=color.new(#0F1012, 6), border_color=color.new(#2A2D33, 100), border_width=1, frame_color=color.new(#2A2D33, 0), frame_width=1)
+var table tb = table.new(tpos, 3, 7, bgcolor=color.new(#0F1012, 6), border_color=color.new(#2A2D33, 100), border_width=1, frame_color=color.new(#2A2D33, 0), frame_width=1)
 if showTab and barstate.islast
     table.cell(tb, 0, 0, "ZONEN", text_color=pGold, text_size=size.small, text_halign=text.align_left)
     table.cell(tb, 1, 0, "Struktur", text_color=pMut, text_size=size.small, text_halign=text.align_left)
@@ -384,6 +696,9 @@ if showTab and barstate.islast
     color bcol = act > 0 and up == act ? bullCol : act > 0 and dn == act ? bearCol : pGold
     table.cell(tb, 0, 5, bias, text_color=bcol, text_size=size.small, text_halign=text.align_left)
     table.merge_cells(tb, 0, 5, 2, 5)
+    if showPA
+        table.cell(tb, 0, 6, paLast == "" ? "Price Action: noch kein Muster" : "Letztes Muster: " + paLast, text_color=paLast == "" ? pMut : paLastCol, text_size=size.small, text_halign=text.align_left)
+        table.merge_cells(tb, 0, 6, 2, 6)
 
 // ───────── Alarme ─────────
 bool ch1 = ok1 and nb1 and (n1 or o1) and p1
