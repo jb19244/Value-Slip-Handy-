@@ -1046,6 +1046,31 @@ function viewBundle(r){
     (b.full ? 'Dieser Trade würde das Risiko über die Grenze heben: auslassen oder erst nach einem Ausstieg.' : 'Nimm ihn nur mit ' + fmt(b.risk, 2) + ' % Risiko' + (acct ? ' (' + eur(acct * b.risk / 100) + ')' : '') + ' statt ' + fmt(b.riskP, 1) + ' %.') + '</span></div>';
 }
 // ================= Waechter =================
+// ================= Gefahr gegen Ertrag =================
+function execAvgR(){
+  var re = riskEur(); if (!re) return null;
+  var items = (V.trackLog || []).filter(function(x){ var m = S.real[x.id]; return m && m.traded; }).map(function(x){ var m = S.real[x.id], c = execCost(x, m); return c && c.entry != null ? { t: x.t, prod: m.prod, entryR: c.entry / re, exitR: c.exit != null ? c.exit / re : null } : null; }).filter(Boolean);
+  var c = costReport(items); return c.n >= 3 ? c.avg : null;
+}
+function edgeTypR(){
+  var v = (V.trackLog || []).slice(-60).map(function(x){ return x.ex && x.ex.unit === 'R' ? x.ex.mean : null; }).filter(function(x){ return x != null && x > 0; }).sort(function(a, b){ return a - b; });
+  return v.length >= 3 ? v[Math.floor(v.length / 2)] : 0.15;
+}
+function dangerNow(){
+  var acct = +S.cfg.account || 0, re = acct * riskNow() / 100, lc = liveCheck(V.trackLog || []), pz = Object.keys((V.lc && V.lc.paused) || {}), lk = lockState(), dg = ddState();
+  var warn = lc.filter(function(q){ return q.status === 'warnung'; }).map(function(q){ return q.g; }); pz.forEach(function(g){ if (warn.indexOf(g) < 0) warn.push(g); });
+  var stressPct = null, L = openRiskList().filter(function(x){ return x.entry > 0; });
+  if (L.length && acct){ var st = stressTest(L.map(function(x){ return { name: x.name, y: x.y, dir: x.dir, entry: x.entry, stop: x.stop, risk: acct * x.risk / 100, ko: !x.etf }; })); stressPct = st.loss / acct * 100; }
+  return dangerState({ lock: lk.lock ? 'Verlustgrenze erreicht: ' + lk.why : null, ddOn: dg.on, dd: dg.dd, warn: warn.length, watch: lc.filter(function(q){ return q.status === 'beobachten'; }).length,
+    feeR: re > 0 ? 2 * (S.cfg.fee != null ? +S.cfg.fee : 1) / re : null, edgeR: edgeTypR(), execR: execAvgR(), stressPct: stressPct, nOpen: L.length });
+}
+function dangerOut(){ var d = dangerNow(), x = execAvgR(); return { level: d.level, why: d.red.concat(d.yellow).slice(0, 3), execX: x != null ? Math.max(0, Math.round((x - 0.05) * 1000) / 1000) : 0 }; }
+function dangerBanner(){
+  var d = dangerNow(); if (d.level === 'gruen') return '';
+  var L = d.red.length ? d.red : d.yellow;
+  return '<div class="wb ' + (d.level === 'rot' ? 'bad' : 'warn') + '" role="alert" id="gefahr"><b>' + (d.level === 'rot' ? 'Gefahr höher als Ertrag: heute keine neuen Trades' : 'Vorsicht: der Vorteil schrumpft') + '</b>' +
+    L.map(function(t){ return '<span>' + esc(t) + '</span>'; }).join('') + (d.level === 'rot' && d.yellow.length ? '<span class="muted small">Außerdem: ' + esc(d.yellow.join(' ')) + '</span>' : '') + '</div>';
+}
 function watchBanner(){
   var w = V.wd || null, out = [];
   if (S.cfg.push.on && V.syncErr) out.push(['bad', 'Push-Dienst nicht erreichbar', 'Der letzte Abgleich ist fehlgeschlagen (' + V.syncErr + '). Solange können Meldungen ausbleiben.']);
@@ -1056,7 +1081,7 @@ function watchBanner(){
     (w.gh || []).forEach(function(g){ out.push(['warn', 'GitHub: ' + (/pages build/i.test(g.name) ? 'Website (App-Updates)' : g.name) + (g.c === 'hängt' ? ' hängt' : ' fehlgeschlagen'), /pages build/i.test(g.name) ? 'App-Updates und frische Daten kommen verspätet. Deine Signale laufen über Cloudflare normal weiter.' : 'Diese Rückrechnung ist nicht aktuell, die App rechnet mit dem letzten Stand. Signale laufen normal weiter.']); });
   }
   var dg = ddState(); if (dg.on) out.push(['warn', 'Rückgang-Schutz: Risiko halbiert', 'Dein echtes Konto liegt ' + fmt(dg.dd * 100, 1).replace(/,0$/, '') + ' % unter dem Hoch von ' + eur(dg.peak) + '. Positionsgrößen und Mitteilungen rechnen jetzt mit ' + fmt(riskNow(), 2).replace(/,?0+$/, '') + ' % statt ' + fmt(+S.cfg.risk || 1, 2).replace(/,?0+$/, '') + ' % je Trade. Volles Risiko wieder, sobald der Rückgang unter 5 % liegt (noch ' + eur(dg.toBack) + ').']);
-  return out.map(function(x){ return '<div class="wb ' + x[0] + '" role="alert"><b>' + esc(x[1]) + '</b><span>' + esc(x[2]) + '</span></div>'; }).join('');
+  return dangerBanner() + out.map(function(x){ return '<div class="wb ' + x[0] + '" role="alert"><b>' + esc(x[1]) + '</b><span>' + esc(x[2]) + '</span></div>'; }).join('');
 }
 // ================= Schatten-Bot =================
 function shadowCfg(){ return { cap: +S.cfg.shadow || 1000, riskP: +S.cfg.risk || 1, fee: S.cfg.fee != null ? +S.cfg.fee : 1, heat: +S.cfg.heat || 5 }; }
@@ -2353,7 +2378,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), take: takeOut(), lock: lockOut(), alloc: allocMult(liveCheck(V.trackLog || [])), acct: +S.cfg.account || 0, risk: S.cfg.risk ? riskNow() : 0, dd: ddState().on ? ddState().dd : 0, wkh: S.cfg.wk && S.cfg.wkh ? S.cfg.wkh : '', heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, dtb: S.cfg.push.dtb !== false, dpm: S.cfg.push.dpm !== false, sw: S.cfg.push.sw !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), take: takeOut(), lock: lockOut(), gefahr: dangerOut(), alloc: allocMult(liveCheck(V.trackLog || [])), acct: +S.cfg.account || 0, risk: S.cfg.risk ? riskNow() : 0, dd: ddState().on ? ddState().dd : 0, wkh: S.cfg.wk && S.cfg.wkh ? S.cfg.wkh : '', heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, dtb: S.cfg.push.dtb !== false, dpm: S.cfg.push.dpm !== false, sw: S.cfg.push.sw !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);

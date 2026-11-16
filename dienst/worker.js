@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'd89eab3705';
+const WORKER_VER = 'bb69d2fc62';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3149,11 +3149,11 @@ function riskBudget(open, y, cfg){
   return { cluster: c, risk: Math.max(0, Math.round(room * 100) / 100), full: room < riskP * 0.25, why: why, same: same, tot: Math.round(tot * 100) / 100, cl: Math.round(cl * 100) / 100, capC: capC, heat: heat, riskP: riskP };
 }
 // ================= Strategie-Gruppen fuer Schatten-Bot und Live-Pruefung =================
-var GROUP_NAMES = { dtb: 'DAX-Trend-Ausbruch', dpm: 'DAX-Nachmittag', ibs: 'IBS (US)', laender: 'IBS Länder-ETFs', tt: 'Turnaround Tuesday', d3: 'Drei Verlusttage', rsi2: 'Swing RSI-2', creme: 'Crème (Intraday)', bplus: 'B+ (Intraday)', intra: 'Intraday', finder: 'Trade Finder', orb: 'ORB', auto: 'Neu entdeckt' };
+var GROUP_NAMES = { dtb: 'DAX-Trend-Ausbruch', dpm: 'DAX-Nachmittag', sw: 'Liquiditäts-Sweep', ibs: 'IBS (US)', laender: 'IBS Länder-ETFs', tt: 'Turnaround Tuesday', d3: 'Drei Verlusttage', rsi2: 'Swing RSI-2', creme: 'Crème (Intraday)', bplus: 'B+ (Intraday)', intra: 'Intraday', finder: 'Trade Finder', orb: 'ORB', auto: 'Neu entdeckt' };
 function groupOf(x){
   if (x.g) return x.g;
   var c = String(x.cls || '');
-  return c === 'DAX-Ausbruch' ? 'dtb' : c === 'DAX-Nachmittag' ? 'dpm' : c === 'IBS' ? 'ibs' : c === 'Turnaround Tuesday' ? 'tt' : c === 'Drei Verlusttage' ? 'd3' : /^Swing/.test(c) ? 'rsi2' : c === 'Finder' ? 'finder' : c === 'ORB' ? 'orb' : /Crème|Creme/.test(c) ? 'creme' : c === 'B+' ? 'bplus' : 'intra';
+  return c === 'DAX-Ausbruch' ? 'dtb' : c === 'DAX-Nachmittag' ? 'dpm' : c === 'Liquiditäts-Sweep' ? 'sw' : c === 'IBS' ? 'ibs' : c === 'Turnaround Tuesday' ? 'tt' : c === 'Drei Verlusttage' ? 'd3' : /^Swing/.test(c) ? 'rsi2' : c === 'Finder' ? 'finder' : c === 'ORB' ? 'orb' : /Crème|Creme/.test(c) ? 'creme' : c === 'B+' ? 'bplus' : 'intra';
 }
 function groupName(g, x){ return /^auto:/.test(g) ? 'Neu: ' + ((x && x.gn) || g.slice(5)) : (GROUP_NAMES[g] || g); }
 function dailyGroup(g){ return /^(ibs|laender|tt|d3|rsi2)$/.test(g) || /^auto:/.test(g); }
@@ -3591,7 +3591,34 @@ function koHitRate(d1, ent, hold, dist, atr){
     for (var j = i + 1; j <= Math.min(d1.length - 1, i + hold); j++){ if (d1[j].l <= bar){ hit++; if (d1[j].o <= bar) gap++; break; } } });
   return { n: n, hit: hit, gap: gap, rate: n ? hit / n : null };
 }
-  return { koHitRate, lossLocks, allocMult, takeState, takeCounts, newsWanted, newsMatch, newsName, newsKind, newsSurprise, newsCalls, newsNum, newsText, riskCluster, riskBudget, groupOf, groupName, dailyGroup, logSym, shadowRun, shadowCost, liveCheck, expOf, ruleSeries, ruleHit, ruleExit, ruleText, ruleId, smaAt, ibs, trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
+// ================= Gefahr gegen Ertrag =================
+// Je Signal: Erwartung aus der Rueckrechnung (in R) minus Ordergebuehren (in R) minus deine Ausfuehrungskosten ueber der Annahme.
+// ex: { mean, unit: 'R'|'%' }, stopPct: Abstand Stop in % (fuer %-Strategien), eur: Risiko in Euro, fee: Euro je Order, execX: zusaetzliche Ausfuehrungskosten in R
+function edgeCheck(ex, stopPct, eur, fee, execX){
+  if (!ex || ex.mean == null) return null;
+  var expR = ex.unit === 'R' ? ex.mean : (stopPct > 0 ? ex.mean / stopPct : null); if (expR == null) return null;
+  var feeR = eur > 0 ? 2 * (fee != null ? fee : 1) / eur : 0, exR = Math.max(0, execX || 0), net = expR - feeR - exR;
+  return { expR: Math.round(expR * 1000) / 1000, feeR: Math.round(feeR * 1000) / 1000, execR: Math.round(exR * 1000) / 1000, net: Math.round(net * 1000) / 1000, ok: net > 0, thin: net > 0 && net < 0.03,
+    minEur: expR - exR - 0.03 > 0 ? Math.ceil(2 * (fee != null ? fee : 1) / (expR - exR - 0.03)) : null };
+}
+// Gesamtlage: Wann ueberwiegt die Gefahr den Ertrag? Nur Gruende, die belegt Geld kosten (keine Tagesprognose, die gibt es nicht).
+// o: { lock, ddOn, dd, warn (Strategien mit Warnung), watch (beobachten), feeR (Gebuehren je Trade in R), edgeR (typischer Vorteil in R), execR (deine Ausfuehrung in R), stressPct (Crash-Test in % vom Konto), nOpen }
+function dangerState(o){
+  o = o || {}; var red = [], yel = [], pc = function(v){ return String(Math.round(v * 10) / 10).replace('.', ','); };
+  if (o.lock) red.push(o.lock);
+  if (o.feeR != null && o.edgeR != null && o.feeR >= o.edgeR) red.push('Die Ordergebühren (' + pc(o.feeR * 100) + ' % von R je Trade) sind so hoch wie der ganze Vorteil der Strategien. Bei deinem Risiko je Trade verdient nur Trade Republic.');
+  else if (o.feeR != null && o.edgeR != null && o.feeR >= 0.5 * o.edgeR) yel.push('Die Ordergebühren fressen mehr als die Hälfte des Vorteils. Mehr Konto oder weniger, dafür größere Trades helfen.');
+  if ((o.warn || 0) >= 2) red.push(o.warn + ' Strategien laufen live deutlich schlechter als in der Rückrechnung.');
+  else if ((o.warn || 0) === 1) yel.push('Eine Strategie läuft live deutlich schlechter als in der Rückrechnung (pausiert).');
+  if (o.execR != null && o.execR >= 0.3) red.push('Deine Ausführung kostet im Schnitt ' + pc(o.execR) + ' R je Trade, mehr als die Strategien bringen. Erst Einstieg und Ausstieg verbessern.');
+  else if (o.execR != null && o.execR >= 0.15) yel.push('Deine Ausführung kostet im Schnitt ' + pc(o.execR) + ' R je Trade. Das frisst einen großen Teil des Vorteils.');
+  if (o.stressPct != null && o.stressPct >= 15) red.push('Ein Crash-Tag wie im März 2020 würde dich mit den offenen Positionen ' + pc(o.stressPct) + ' % vom Konto kosten.');
+  else if (o.stressPct != null && o.stressPct >= 8) yel.push('Crash-Test: ' + pc(o.stressPct) + ' % vom Konto an einem schlimmen Tag.');
+  if (o.ddOn) yel.push('Das Konto liegt ' + pc((o.dd || 0) * 100) + ' % unter dem Hoch, Risiko ist halbiert.');
+  if ((o.watch || 0) >= 2) yel.push(o.watch + ' Strategien stehen unter Beobachtung.');
+  return { level: red.length ? 'rot' : yel.length ? 'gelb' : 'gruen', red: red, yellow: yel };
+}
+  return { edgeCheck, dangerState, koHitRate, lossLocks, allocMult, takeState, takeCounts, newsWanted, newsMatch, newsName, newsKind, newsSurprise, newsCalls, newsNum, newsText, riskCluster, riskBudget, groupOf, groupName, dailyGroup, logSym, shadowRun, shadowCost, liveCheck, expOf, ruleSeries, ruleHit, ruleExit, ruleText, ruleId, smaAt, ibs, trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
 const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
@@ -3760,6 +3787,8 @@ async function tradeRoute(request, headers, env, nowMs) {
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null),
       shadowCap: num(b.shadow, 100, 1e7, 1000), fee: num(b.fee, 0, 20, 1), newsRes: b.newsRes !== false, dd: num(b.dd, 0, 1, 0), taken: mergeTaken(t.taken, b.take, nowMs),
       lock: b.lock && +b.lock.until > nowMs ? { until: Math.min(+b.lock.until, nowMs + 40 * 864e5), why: String(b.lock.why || '').slice(0, 220), kind: String(b.lock.kind || '').slice(0, 10) } : null,
+      gefahr: b.gefahr && ['gruen', 'gelb', 'rot'].includes(b.gefahr.level) ? { level: b.gefahr.level, why: (Array.isArray(b.gefahr.why) ? b.gefahr.why : []).slice(0, 3).map((x) => String(x).slice(0, 260)), at: nowMs } : null,
+      execX: b.gefahr ? num(b.gefahr.execX, 0, 2, 0) : 0,
       alloc: (() => { const o = {}; if (b.alloc && typeof b.alloc === 'object') Object.keys(b.alloc).slice(0, 40).forEach((g) => { const v = +b.alloc[g]; if (/^[a-z0-9:_-]{1,30}$/i.test(g) && v >= 0.5 && v <= 1.25) o[g] = v; }); return o; })(), wkh: typeof b.wkh === 'string' && /^[a-f0-9]{64}$/.test(b.wkh) ? b.wkh : null });
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
@@ -4028,7 +4057,16 @@ function riskTxt(t, stopPct, y, pid) {
   const cut = b.risk < rp0 ? ' Nur ' + pc(b.risk) + ' % Risiko statt ' + pc(rp0) + ' % (' + (b.why === 'heat' ? 'Gesamtlimit ' + hs + ' %' : 'Bündel') + ').' : '';
   if (!(t.acct > 0 && t.riskP > 0)) return bund + cut;
   const eur = Math.round(t.acct * b.risk / 100), stake = stopPct > 0 ? Math.round(eur / (stopPct / 100) / 10) * 10 : null;
-  return bund + cut + ' Risiko: ' + eur + ' €' + (stake ? ', ohne Hebel ca. ' + stake.toLocaleString('de-DE') + ' € Positionsgröße' : '') + '.' + (am > 1 ? ' Risiko ×' + String(am).replace('.', ',') + ': läuft live besser als die Rückrechnung.' : am < 1 ? ' Risiko ×' + String(am).replace('.', ',') + ': läuft live schwächer, darum kleiner.' : '') + (t.dd > 0 ? ' Rückgang-Schutz: halbes Risiko, Konto ' + String(Math.round(t.dd * 1000) / 10).replace('.', ',') + ' % unter dem Hoch.' : '');
+  return bund + cut + ( ' Risiko: ' + eur + ' €' + (stake ? ', ohne Hebel ca. ' + stake.toLocaleString('de-DE') + ' € Positionsgröße' : '') + '.' + (am > 1 ? ' Risiko ×' + String(am).replace('.', ',') + ': läuft live besser als die Rückrechnung.' : am < 1 ? ' Risiko ×' + String(am).replace('.', ',') + ': läuft live schwächer, darum kleiner.' : '') + (t.dd > 0 ? ' Rückgang-Schutz: halbes Risiko, Konto ' + String(Math.round(t.dd * 1000) / 10).replace('.', ',') + ' % unter dem Hoch.' : '')) + edgeTxt(t, p, stopPct, eur);
+}
+// Gefahr gegen Ertrag je Signal: Erwartung der Rueckrechnung minus Ordergebuehren minus deine gemessenen Ausfuehrungskosten
+function edgeTxt(t, p, stopPct, eur) {
+  if (!p || !p.ex) return '';
+  const e = TL.edgeCheck(p.ex, stopPct, eur, t.fee != null ? t.fee : 1, t.execX || 0); if (!e) return '';
+  const f0 = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2).replace('.', ',');
+  if (e.ok) { delete p.edgeBad; return e.thin ? ' Kleiner Vorteil: nach Gebühren' + (e.execR > 0 ? ' und deiner Ausführung' : '') + ' bleiben im Schnitt nur ' + f0(e.net) + ' R je Trade.' + (e.minEur ? ' Ab ca. ' + e.minEur + ' € Risiko je Trade wäre es deutlich mehr.' : '') : ''; }
+  p.edgeBad = e.net; const f = (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2).replace('.', ',');
+  return ' ⚠️ Lohnt nicht: Erwartung nach Kosten ' + f(e.net) + ' R (Rückrechnung ' + f(e.expR) + ' R, Ordergebühren ' + f(-e.feeR) + ' R' + (e.execR > 0 ? ', deine Ausführung ' + f(-e.execR) + ' R' : '') + ').' +  ' Im Schnitt verlierst du damit Geld: auslassen.' + (e.minEur ? ' Ab ca. ' + e.minEur + ' € Risiko je Trade würde es sich lohnen.' : '');
 }
 function tradeTxt(t, ins, stopPct, pid) {
   const pr = TL.trProduct(ins.y), r = riskTxt(t, stopPct, ins.y, pid);
@@ -4048,6 +4086,12 @@ async function runTrade(env, nowMs) {
   if (t.lock && t.lock.until > nowMs && t.lockSent !== t.lock.until) { t.lockSent = t.lock.until; dirty = true;
     try { const r0 = await sendPush(env, t.sub, { title: '🔒 Trade Check: Pause', body: t.lock.why + ' Bis ' + new Date(t.lock.until).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + ' kommen keine neuen Signale. Laufende Positionen betreue ich weiter.', id: 'lock:' + t.lock.until, url: './', at: nowMs }, nowMs, 3600);
       t.log.push({ id: 'lock:' + t.lock.until, at: nowMs, title: '🔒 Trade Check: Pause', t: t.lock.why }); if (r0.status === 404 || r0.status === 410) t.sub = null; } catch (e) { /* nicht kritisch */ } }
+  // Gefahrenlage: einmal melden, wenn sie auf Rot springt (oder sich der Grund aendert)
+  { const gz = t.gefahr, gk = gz && gz.level === 'rot' ? 'gef:' + gz.why.join('|').length + ':' + (gz.why[0] || '').slice(0, 40) : null;
+    if (gk && t.gefahrSent !== gk && !(t.lock && t.lock.until > nowMs && gz.why.length === 1 && /Verlustgrenze/.test(gz.why[0]))) { t.gefahrSent = gk; dirty = true;
+      try { const r0 = await sendPush(env, t.sub, { title: '⛔ Trade Check: Gefahr höher als Ertrag', body: gz.why.join(' ') + ' Neue Signale kommen weiter, aber markiert. Laufende Positionen betreue ich normal.', id: gk, url: './', at: nowMs }, nowMs, 3600);
+        t.log.push({ id: gk, at: nowMs, title: '⛔ Gefahr höher als Ertrag', t: gz.why.join(' ') }); if (r0.status === 404 || r0.status === 410) t.sub = null; } catch (e) { /* nicht kritisch */ } }
+    else if (!gk && t.gefahrSent) { t.gefahrSent = null; dirty = true; } }
   // Einmalige Korrektur 16.11.2026: nur der Dow-Jones-Trade (IBS) ist wirklich offen, alles andere nicht genommen
   if (!t.mig1611) { t.taken = t.taken || {}; allPos(t).filter((p) => p.state === 'offen' || p.state === 'wartet' || nowMs - (p.exitAt || p.at || 0) < 48 * 3600e3)
     .forEach((p) => { if (!t.taken[p.id]) t.taken[p.id] = { v: p.name === 'Dow Jones' && p.state === 'offen' && !p.skip ? 1 : 0, at: nowMs }; }); t.mig1611 = 1; dirty = true; }
@@ -4064,6 +4108,11 @@ async function runTrade(env, nowMs) {
     if (msg.g && t.lc && t.lc.paused && t.lc.paused[msg.g]) msg = Object.assign({}, msg, { title: '⏸ ' + (msg.title || 'Trade Check'), body: '⏸ Pausiert: ' + TL.groupName(msg.g, msg) + ' liegt live deutlich unter der Rückrechnung. Nur beobachten, nicht handeln. Der Schatten-Bot verfolgt das Signal weiter. ' + (msg.body || '') });
     // Verlustgrenze erreicht: neue Signale nicht melden (der Schatten-Bot verfolgt sie weiter), laufende Positionen schon
     if (msg.g && !mid && t.lock && t.lock.until > nowMs) { t.sent[key] = nowMs; dirty = true; t.lockSkip = (t.lockSkip || 0) + 1; return false; }
+    // Gefahr hoeher als Ertrag: im Titel sichtbar, damit du es schon auf dem Sperrbildschirm siehst
+    const pz0 = msg.g && t.lc && t.lc.paused && t.lc.paused[msg.g];
+    if (pz0) { /* pausiert hat Vorrang */ }
+    else if (msg.g && !mid && /⚠️ Lohnt nicht/.test(msg.body || '')) msg = Object.assign({}, msg, { title: '⚠️ Lohnt nicht · ' + (msg.title || 'Trade Check') });
+    else if (msg.g && !mid && t.gefahr && t.gefahr.level === 'rot') msg = Object.assign({}, msg, { title: '⛔ Gefahr > Ertrag · ' + (msg.title || 'Trade Check'), body: '⛔ Gefahr höher als Ertrag: ' + (t.gefahr.why[0] || '') + ' Heute besser auslassen. ' + (msg.body || '') });
     // neues Signal einer Strategie: kurz bestaetigen lassen, damit Risiko und Folgemeldungen nur fuer echte Positionen gelten
     if (msg.g && !mid && !(t.lc && t.lc.paused && t.lc.paused[msg.g])) msg = Object.assign({}, msg, { body: (msg.body || '') + ' Genommen? Tipp auf die Mitteilung und bestätige es in der App.' });
     const full = Object.assign({ title: 'Trade Check' }, msg, { id: key, url: './?m=' + encodeURIComponent(key), at: nowMs }); delete full.pw; delete full.g; delete full.gn;
