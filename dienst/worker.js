@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '206f474049';
+const WORKER_VER = '9c1a235918';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3430,7 +3430,8 @@ function widgetScript(url, key, origin, app){
     '  if (d.dd > 0) line(w, "Risiko halbiert: Konto " + Math.round(d.dd * 100) + " % unter Hoch", C.warn, 11);',
     '  const open = d.open || [], wait = d.wait || [], max = big ? 3 : 2;',
     '  line(w, open.length ? open.length + (open.length === 1 ? " Position offen" : " Positionen offen") : "Keine offene Position", open.length ? C.fg : C.mut, 12, true);',
-    '  open.slice(0, max).forEach((p) => line(w, (p.d > 0 ? "▲ " : "▼ ") + p.n + (big && p.s ? "  Stop " + px(p.s) : ""), p.d > 0 ? C.good : C.bad, 11));',
+    '  open.slice(0, max).forEach((p) => line(w, (p.d > 0 ? "▲ " : "▼ ") + p.n + (p.q ? " (?)" : "") + (big && p.s ? "  Stop " + px(p.s) : ""), p.d > 0 ? C.good : C.bad, 11));',
+    '  if (open.some((p) => p.q)) line(w, "(?) = in der App noch bestätigen", C.mut, 9);',
     '  if (wait.length) { w.addSpacer(3); wait.slice(0, big ? 2 : 1).forEach((p) => line(w, "⏳ " + p.n + " " + (p.d > 0 ? "Kauf über " : "Verkauf unter ") + px(p.e) + (p.until ? " bis " + hm(p.until) : ""), C.warn, 11)); }',
     '  w.addSpacer();',
     '  if (d.next) line(w, "📅 " + hm(d.next.at) + " " + d.next.c + " " + d.next.t, C.mut, 10);',
@@ -3444,7 +3445,30 @@ function widgetScript(url, key, origin, app){
     'Script.complete();'
   ].join('\n');
 }
-  return { newsName, newsKind, newsSurprise, newsCalls, newsNum, newsText, riskCluster, riskBudget, groupOf, groupName, dailyGroup, logSym, shadowRun, shadowCost, liveCheck, expOf, ruleSeries, ruleHit, ruleExit, ruleText, ruleId, smaAt, ibs, trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
+// ================= Genommen oder nicht: nur echte Positionen zaehlen =================
+// take: { id: { v: 1|0, at } } aus der App. Unbeantwortete Signale zaehlen 3 Stunden lang vorsichtshalber mit, danach nicht mehr.
+var TAKE_GRACE = 3 * 3600e3;
+function takeState(take, p, now){
+  var x = take && p && take[p.id]; if (x && (x.v === 1 || x.v === 0)) return x.v === 1 ? 'ja' : 'nein';
+  if (p && p.skip) return 'nein';
+  return now - ((p && (p.fillAt || p.at)) || 0) < TAKE_GRACE ? 'offen' : 'alt';
+}
+function takeCounts(take, p, now){ var s = takeState(take, p, now); return s === 'ja' || s === 'offen'; }
+// ================= Welche Termine bekommen ein Ergebnis per Push =================
+// Jede Zahl mit Prognose in deinen Waehrungen: hoch und mittel immer, bei "niedrig" nur die marktbewegenden Klassiker
+var NEWS_KEY = /Empire State|Philly Fed|Unemployment Claims|Retail Sales|PPI|CPI|ISM|PMI|Durable Goods|GDP|PCE|Non-Farm|NFP|JOLTS|Consumer Confidence|UoM|Industrial Production|ZEW|Ifo|Flash|Housing Starts|Building Permits|Pending Home|Existing Home|New Home|Employment Change|Unemployment Rate|Average Hourly|Trade Balance|Factory Orders|Chicago PMI/i;
+function newsWanted(e, ccys){
+  if (!e || !(ccys || []).length || (ccys || []).indexOf(e.country) < 0) return false;
+  if (/Speaks|Testifies|Minutes|Auction|Report$|Statement|Conference|Holiday|Bank Holiday/i.test(e.title || '')) return false;
+  if (e.forecast === '' || e.forecast == null) return e.impact === 'High' && /Rate|Decision/i.test(e.title || '');
+  return e.impact === 'High' || e.impact === 'Medium' || NEWS_KEY.test(e.title || '');
+}
+// Titel aus zwei Kalendern zusammenbringen (Forex Factory gegen TradingView)
+function newsMatch(a, b){
+  var w = function(s){ return String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(function(x){ return x.length > 2 && !/^(the|and|index|rate|change|final|prelim|flash|mom|yoy)$/.test(x); }); };
+  var A = w(a), B = w(b); if (!A.length || !B.length) return 0; var n = A.filter(function(x){ return B.indexOf(x) >= 0; }).length; return n / Math.min(A.length, B.length);
+}
+  return { takeState, takeCounts, newsWanted, newsMatch, newsName, newsKind, newsSurprise, newsCalls, newsNum, newsText, riskCluster, riskBudget, groupOf, groupName, dailyGroup, logSym, shadowRun, shadowCost, liveCheck, expOf, ruleSeries, ruleHit, ruleExit, ruleText, ruleId, smaAt, ibs, trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();
 const MKT_INTERVALS = ['5m', '15m', '30m', '60m', '1h', '1d', '1wk'];
 const MKT_RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y'];
@@ -3459,7 +3483,7 @@ async function tvCalendar(env, nowMs, ccys) {
     const r = await fetch(TV_CAL + '?from=' + from + '&to=' + to + '&countries=' + cc, { headers: { Origin: 'https://www.tradingview.com', 'User-Agent': UA['User-Agent'] } });
     if (!r.ok) throw new Error('TV ' + r.status);
     const j = await r.json();
-    return (j.result || []).filter((e) => e && e.importance === 1).map((e) => ({ id: String(e.id), title: String(e.title || '').slice(0, 80), indicator: String(e.indicator || '').slice(0, 80), currency: e.currency, country: e.country, category: e.category,
+    return (j.result || []).filter((e) => e && e.importance >= -1).map((e) => ({ id: String(e.id), imp: e.importance, title: String(e.title || '').slice(0, 80), indicator: String(e.indicator || '').slice(0, 80), currency: e.currency, country: e.country, category: e.category,
       actual: e.actual, forecast: e.forecast, previous: e.previous, unit: e.unit, scale: e.scale, date: e.date, period: e.period }));
   });
 }
@@ -3611,11 +3635,11 @@ async function tradeRoute(request, headers, env, nowMs) {
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
       swing: b.swing !== false, dtb: b.dtb !== false, dpm: b.dpm !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, tight: !!b.tight, ibsMax1: !!b.ibsMax1, ibsCand: t.ibsCand || null, ibsPick: t.ibsPick || null, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null),
-      shadowCap: num(b.shadow, 100, 1e7, 1000), fee: num(b.fee, 0, 20, 1), newsRes: b.newsRes !== false, dd: num(b.dd, 0, 1, 0), wkh: typeof b.wkh === 'string' && /^[a-f0-9]{64}$/.test(b.wkh) ? b.wkh : null });
+      shadowCap: num(b.shadow, 100, 1e7, 1000), fee: num(b.fee, 0, 20, 1), newsRes: b.newsRes !== false, dd: num(b.dd, 0, 1, 0), taken: mergeTaken(t.taken, b.take, nowMs), wkh: typeof b.wkh === 'string' && /^[a-f0-9]{64}$/.test(b.wkh) ? b.wkh : null });
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
-    return jsonData({ ok: true, ver: WORKER_VER, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-400), swingPos: next.swingPos, ibsPos: next.ibsPos, autoPos: next.autoPos || [], dtPos: next.dtPos || [], brief: next.brief || null, radar: next.radar || null, log: (t.log || []).slice(-40),
+    return jsonData({ ok: true, ver: WORKER_VER, taken: next.taken, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-400), swingPos: next.swingPos, ibsPos: next.ibsPos, autoPos: next.autoPos || [], dtPos: next.dtPos || [], brief: next.brief || null, radar: next.radar || null, log: (t.log || []).slice(-40),
       bak: await env.VS.get('bak:meta', 'json'), proto: next.proto || null, news: (next.newsLog || []).slice(-20), newsStat: next.newsStat || null, lc: next.lc || null, wd: { hb: next.hb || null, dataSince: next.wd && next.wd.dataSince || null, gh: next.wd && next.wd.gh || [], ghAt: next.wd && next.wd.ghAt || null }, now: nowMs }, headers);
   }
   if (path === '/trade/backup') {
@@ -3826,8 +3850,8 @@ function nyseDaysLeftInMonth(key) {
 // Kurzuebersicht fuers Homescreen-Widget: nur lesen, keine Schluessel, keine Kontodaten
 async function widgetData(env, t, nowMs) {
   const age = t.hb ? Math.round((nowMs - t.hb) / 60e3) : null, nm = (p) => String(p.name || p.k || '').slice(0, 18);
-  const open = allPos(t).filter((p) => p.state === 'offen' && !p.skip).sort((a, b) => (b.fillAt || b.at || 0) - (a.fillAt || a.at || 0)).slice(0, 6).map((p) => ({ n: nm(p), d: p.dir === -1 ? -1 : 1, e: +p.entry || null, s: +p.stop || null, at: p.fillAt || p.at || null }));
-  const wait = allPos(t).filter((p) => p.state === 'wartet' && !p.skip).slice(0, 4).map((p) => ({ n: nm(p), d: p.dir === -1 ? -1 : 1, e: +(p.px || p.entry) || null, s: +p.stop || null, until: p.expires || p.exp || null }));
+  const open = allPos(t).filter((p) => p.state === 'offen' && !p.skip && TL.takeCounts(t.taken, p, nowMs)).sort((a, b) => (b.fillAt || b.at || 0) - (a.fillAt || a.at || 0)).slice(0, 6).map((p) => ({ n: nm(p), d: p.dir === -1 ? -1 : 1, e: +p.entry || null, s: +p.stop || null, at: p.fillAt || p.at || null, q: TL.takeState(t.taken, p, nowMs) === 'offen' ? 1 : 0 }));
+  const wait = allPos(t).filter((p) => p.state === 'wartet' && !p.skip && TL.takeState(t.taken, p, nowMs) !== 'nein').slice(0, 4).map((p) => ({ n: nm(p), d: p.dir === -1 ? -1 : 1, e: +(p.px || p.entry) || null, s: +p.stop || null, until: p.expires || p.exp || null }));
   let next = null;
   try { const ccys = t.ccys && t.ccys.length ? t.ccys : ['USD', 'EUR'], cal = (await getCalendar(env, nowMs)).data || [];
     const e = cal.filter((x) => x.impact === 'High' && ccys.includes(x.country) && Date.parse(x.date) > nowMs).sort((a, b) => Date.parse(a.date) - Date.parse(b.date))[0];
@@ -3836,9 +3860,19 @@ async function widgetData(env, t, nowMs) {
   const paused = Object.keys((t.lc && t.lc.paused) || {}).map((g) => TL.groupName(g));
   return { ok: age != null && age < 45 && !(t.wd && t.wd.dataSince), age, push: !!(t.on && validSub(t.sub)), open, wait, next, last, paused, dd: t.dd || 0, now: nowMs };
 }
+// Genommen/nicht genommen aus der App (je Signal), 45 Tage behalten
+function mergeTaken(old, inc, nowMs) {
+  const o = Object.assign({}, old || {});
+  if (inc && typeof inc === 'object') Object.keys(inc).slice(0, 400).forEach((id) => { const x = inc[id], v = x && typeof x === 'object' ? x.v : x;
+    if (id.length <= 120 && (v === 0 || v === 1)) o[id] = { v, at: x && typeof x === 'object' && +x.at > 0 ? Math.min(+x.at, nowMs) : nowMs }; });
+  Object.keys(o).forEach((id) => { if (!o[id] || nowMs - (o[id].at || 0) > 45 * 864e5) delete o[id]; });
+  return o;
+}
+let NOWX = 0;
 function allPos(t) { return [].concat(t.swingPos || [], t.ibsPos || [], t.autoPos || [], t.dtPos || [], t.track || []); }
 function openRiskOf(t, except) {
-  return allPos(t).filter((p) => p.id !== except && !p.skip && (p.state === 'offen' || p.state === 'wartet'))
+  const now = NOWX || Date.now();
+  return allPos(t).filter((p) => p.id !== except && !p.skip && (p.state === 'offen' || p.state === 'wartet') && TL.takeCounts(t.taken, p, now))
     .map((p) => ({ y: p.y || TL.logSym(p), risk: p.risk != null ? p.risk : (t.riskP > 0 ? t.riskP : 1), name: p.name, id: p.id }));
 }
 function openCount(t) { return openRiskOf(t, null).length; }
@@ -3865,17 +3899,25 @@ async function runTrade(env, nowMs) {
   if (!env.VS) return { skipped: 'kv' };
   const t = await env.VS.get('trade', 'json');
   if (!t || !t.on || !validSub(t.sub)) return { skipped: 'nosub' };
-  t.sent = t.sent || {}; t.log = Array.isArray(t.log) ? t.log : [];
+  t.sent = t.sent || {}; t.log = Array.isArray(t.log) ? t.log : []; NOWX = nowMs;
   const rep = { pushed: 0, checked: 0 };
   let dirty = false, gone = false;
+  // Einmalige Korrektur 16.11.2026: nur der Dow-Jones-Trade (IBS) ist wirklich offen, alles andere nicht genommen
+  if (!t.mig1611) { t.taken = t.taken || {}; allPos(t).filter((p) => p.state === 'offen' || p.state === 'wartet' || nowMs - (p.exitAt || p.at || 0) < 48 * 3600e3)
+    .forEach((p) => { if (!t.taken[p.id]) t.taken[p.id] = { v: p.name === 'Dow Jones' && p.state === 'offen' && !p.skip ? 1 : 0, at: nowMs }; }); t.mig1611 = 1; dirty = true; }
   const send = async (key, msg) => {
     if (t.sent[key] || gone) return false;
+    // Folgemeldungen (ausgelöst, Stop, schließen ...) nur fuer Positionen, die du wirklich hast
+    const mid = /^[a-z]+:(.+):[a-z0-9]+$/.exec(key), pos0 = mid ? allPos(t).find((q) => q.id === mid[1]) : null;
+    if (mid && ((t.taken && t.taken[mid[1]] && t.taken[mid[1]].v === 0) || (pos0 && pos0.skip))) { t.sent[key] = nowMs; dirty = true; return false; }
     // Jede Meldung hat eine Kennung: Antippen oeffnet genau diese Meldung in der App, mit Einstieg, Stop und Ziel
     // Gewinnwahrscheinlichkeit: Trefferquote genau dieser Variante in der Rueckrechnung, steht in Titel und erster Zeile
     if (msg.pw && msg.pw.n && msg.pw.win != null) { const pc = Math.round(msg.pw.win * 100);
       msg = Object.assign({}, msg, { title: (msg.title || 'Trade Check') + ' · ' + pc + ' %', body: 'Gewinnwahrscheinlichkeit ' + pc + ' % (' + msg.pw.n + ' Trades in der Rückrechnung' + (msg.pw.weak ? ', unbelegte Stufe' : '') + '). ' + (msg.body || ''), d: msg.d ? Object.assign({}, msg.d, { pw: Math.round(msg.pw.win * 1000) / 1000, pn: msg.pw.n }) : msg.d }); }
     // Live-Pruefung: Strategie liegt deutlich unter der Rueckrechnung -> Signal kommt, aber als pausiert markiert
     if (msg.g && t.lc && t.lc.paused && t.lc.paused[msg.g]) msg = Object.assign({}, msg, { title: '⏸ ' + (msg.title || 'Trade Check'), body: '⏸ Pausiert: ' + TL.groupName(msg.g, msg) + ' liegt live deutlich unter der Rückrechnung. Nur beobachten, nicht handeln. Der Schatten-Bot verfolgt das Signal weiter. ' + (msg.body || '') });
+    // neues Signal einer Strategie: kurz bestaetigen lassen, damit Risiko und Folgemeldungen nur fuer echte Positionen gelten
+    if (msg.g && !mid && !(t.lc && t.lc.paused && t.lc.paused[msg.g])) msg = Object.assign({}, msg, { body: (msg.body || '') + ' Genommen? Tipp auf die Mitteilung und bestätige es in der App.' });
     const full = Object.assign({ title: 'Trade Check' }, msg, { id: key, url: './?m=' + encodeURIComponent(key), at: nowMs }); delete full.pw; delete full.g; delete full.gn;
     const r = await sendPush(env, t.sub, full, nowMs, 1800);
     t.sent[key] = nowMs; dirty = true;
@@ -3945,16 +3987,24 @@ async function runTrade(env, nowMs) {
     const ccys = t.ccys && t.ccys.length ? t.ccys : ['USD', 'EUR'];
     t.newsLog = Array.isArray(t.newsLog) ? t.newsLog : []; t.newsDone = t.newsDone || {};
     let ffc = cal; if (!ffc) { try { ffc = (await getCalendar(env, nowMs)).data; } catch (e) { ffc = []; } }
-    const recent = (ffc || []).some((e) => e.impact === 'High' && ccys.includes(e.country) && nowMs - Date.parse(e.date) >= 0 && nowMs - Date.parse(e.date) < 40 * 60e3);
+    const want = (ffc || []).filter((e) => TL.newsWanted(e, ccys) && nowMs - Date.parse(e.date) >= 0 && nowMs - Date.parse(e.date) < 90 * 60e3);
+    const wg = {}; want.forEach((e) => { (wg[Date.parse(e.date) + ':' + e.country] = wg[Date.parse(e.date) + ':' + e.country] || []).push(e); });
+    const wgOpen = Object.keys(wg).filter((k) => !t.newsDone['ff:' + k]), recent = wgOpen.length > 0;
     const pend = t.newsLog.filter((x) => !x.ev && nowMs - x.at >= 30 * 60e3 && nowMs - x.at < 4 * 3600e3);
     if (recent) {
       let tv = null; try { tv = (await tvCalendar(env, nowMs, ccys)).data; } catch (e) { tv = null; }
-      const fresh = (tv || []).filter((e) => e.actual != null && e.actual !== '' && ccys.includes(e.currency) && !t.newsDone[e.id] && nowMs - Date.parse(e.date) >= 0 && nowMs - Date.parse(e.date) < 40 * 60e3);
-      // gleichzeitige Zahlen (z. B. US-Inflation Monat und Jahr) in einer Meldung, die wichtigste zuerst
-      const byT = {}; fresh.forEach((e) => { (byT[e.date + e.currency] = byT[e.date + e.currency] || []).push(e); });
-      for (const k of Object.keys(byT).slice(0, 3)) {
-        const g = byT[k].sort((a, b) => (/Core/i.test(b.title) - /Core/i.test(a.title)) || (/MoM|Payrolls|Decision/i.test(b.title) - /MoM|Payrolls|Decision/i.test(a.title)));
-        g.forEach((e) => { t.newsDone[e.id] = nowMs; }); dirty = true;
+      // je erwartetem Termin (Zeit + Waehrung) die Zahlen von TradingView: gleiche Waehrung, hoechstens 3 Minuten Abstand, Ergebnis da
+      const byT = {};
+      for (const k of wgOpen.slice(0, 4)) {
+        const ff = wg[k], t0 = +k.split(':')[0], cur = k.split(':')[1];
+        const tvs = (tv || []).filter((e) => e.currency === cur && Math.abs(Date.parse(e.date) - t0) <= 3 * 60e3 && e.actual != null && e.actual !== '' && !t.newsDone[e.id] && (e.imp >= 0 || ff.some((f) => TL.newsMatch(f.title, e.title) >= 0.5)));
+        if (tvs.length) { const sc = (e) => Math.max(...ff.map((f) => TL.newsMatch(f.title, e.title))) * 2 + (e.imp === 1 ? 1 : 0) + (/Core/i.test(e.title) ? 0.1 : 0); byT[k] = tvs.sort((a, b) => sc(b) - sc(a)); continue; }
+        if (nowMs - t0 >= 25 * 60e3 && !t.newsDone['miss:' + k]) { t.newsDone['miss:' + k] = nowMs; dirty = true; t.wd = t.wd || {}; t.wd.newsMiss = { at: nowMs, title: ff[0].title };
+          await send('nm:' + k, { title: '📰 ' + TL.newsName(ff[0].title) + ': Ergebnis fehlt noch', body: TL.newsName(ff[0].title) + ' (' + cur + ', ' + new Date(t0).toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' }) + ' Uhr) ist erschienen, aber meine Datenquelle hat die Zahl noch nicht. Ich schicke sie nach, sobald sie da ist (bis 90 Minuten danach).' + (ff[0].forecast ? ' Prognose: ' + ff[0].forecast + '.' : ''), tag: 'newsres', url: './' }); }
+      }
+      for (const k of Object.keys(byT)) {
+        const g = byT[k];
+        g.forEach((e) => { t.newsDone[e.id] = nowMs; }); t.newsDone['ff:' + k] = nowMs; dirty = true;
         const ev = g[0], rel = Date.parse(ev.date), su = TL.newsSurprise(ev), tx = TL.newsText(ev, su), arrow = (d) => d > 0 ? '↑' : '↓';
         // erste Reaktion: Kurs jetzt gegen den Schluss der 5-Min-Kerze vor der Zahl
         const react = [], ref = {};

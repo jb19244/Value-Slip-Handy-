@@ -223,6 +223,7 @@ details.more{margin-top:4px}details.more summary{font-size:13px;color:var(--link
 .kobox{margin-top:14px;padding:12px;border-radius:12px;background:var(--surface2)}
 .kobox .fields{margin-top:6px}
 @media (min-width:700px){ .page{max-width:640px;margin:0 auto} }
+.take{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;font-size:13px}.take>span{flex:1 1 100%;color:var(--warn,#f2b84b)}
 </style>
 </head>
 <body>
@@ -1940,7 +1941,8 @@ function widgetScript(url, key, origin, app){
     '  if (d.dd > 0) line(w, "Risiko halbiert: Konto " + Math.round(d.dd * 100) + " % unter Hoch", C.warn, 11);',
     '  const open = d.open || [], wait = d.wait || [], max = big ? 3 : 2;',
     '  line(w, open.length ? open.length + (open.length === 1 ? " Position offen" : " Positionen offen") : "Keine offene Position", open.length ? C.fg : C.mut, 12, true);',
-    '  open.slice(0, max).forEach((p) => line(w, (p.d > 0 ? "▲ " : "▼ ") + p.n + (big && p.s ? "  Stop " + px(p.s) : ""), p.d > 0 ? C.good : C.bad, 11));',
+    '  open.slice(0, max).forEach((p) => line(w, (p.d > 0 ? "▲ " : "▼ ") + p.n + (p.q ? " (?)" : "") + (big && p.s ? "  Stop " + px(p.s) : ""), p.d > 0 ? C.good : C.bad, 11));',
+    '  if (open.some((p) => p.q)) line(w, "(?) = in der App noch bestätigen", C.mut, 9);',
     '  if (wait.length) { w.addSpacer(3); wait.slice(0, big ? 2 : 1).forEach((p) => line(w, "⏳ " + p.n + " " + (p.d > 0 ? "Kauf über " : "Verkauf unter ") + px(p.e) + (p.until ? " bis " + hm(p.until) : ""), C.warn, 11)); }',
     '  w.addSpacer();',
     '  if (d.next) line(w, "📅 " + hm(d.next.at) + " " + d.next.c + " " + d.next.t, C.mut, 10);',
@@ -1953,6 +1955,29 @@ function widgetScript(url, key, origin, app){
     'if (config.runsInWidget) Script.setWidget(widget); else await (fam === "small" ? widget.presentSmall() : widget.presentMedium());',
     'Script.complete();'
   ].join('\n');
+}
+// ================= Genommen oder nicht: nur echte Positionen zaehlen =================
+// take: { id: { v: 1|0, at } } aus der App. Unbeantwortete Signale zaehlen 3 Stunden lang vorsichtshalber mit, danach nicht mehr.
+var TAKE_GRACE = 3 * 3600e3;
+function takeState(take, p, now){
+  var x = take && p && take[p.id]; if (x && (x.v === 1 || x.v === 0)) return x.v === 1 ? 'ja' : 'nein';
+  if (p && p.skip) return 'nein';
+  return now - ((p && (p.fillAt || p.at)) || 0) < TAKE_GRACE ? 'offen' : 'alt';
+}
+function takeCounts(take, p, now){ var s = takeState(take, p, now); return s === 'ja' || s === 'offen'; }
+// ================= Welche Termine bekommen ein Ergebnis per Push =================
+// Jede Zahl mit Prognose in deinen Waehrungen: hoch und mittel immer, bei "niedrig" nur die marktbewegenden Klassiker
+var NEWS_KEY = /Empire State|Philly Fed|Unemployment Claims|Retail Sales|PPI|CPI|ISM|PMI|Durable Goods|GDP|PCE|Non-Farm|NFP|JOLTS|Consumer Confidence|UoM|Industrial Production|ZEW|Ifo|Flash|Housing Starts|Building Permits|Pending Home|Existing Home|New Home|Employment Change|Unemployment Rate|Average Hourly|Trade Balance|Factory Orders|Chicago PMI/i;
+function newsWanted(e, ccys){
+  if (!e || !(ccys || []).length || (ccys || []).indexOf(e.country) < 0) return false;
+  if (/Speaks|Testifies|Minutes|Auction|Report$|Statement|Conference|Holiday|Bank Holiday/i.test(e.title || '')) return false;
+  if (e.forecast === '' || e.forecast == null) return e.impact === 'High' && /Rate|Decision/i.test(e.title || '');
+  return e.impact === 'High' || e.impact === 'Medium' || NEWS_KEY.test(e.title || '');
+}
+// Titel aus zwei Kalendern zusammenbringen (Forex Factory gegen TradingView)
+function newsMatch(a, b){
+  var w = function(s){ return String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(function(x){ return x.length > 2 && !/^(the|and|index|rate|change|final|prelim|flash|mom|yoy)$/.test(x); }); };
+  var A = w(a), B = w(b); if (!A.length || !B.length) return 0; var n = A.filter(function(x){ return B.indexOf(x) >= 0; }).length; return n / Math.min(A.length, B.length);
 }
 // END LOGIC
 
@@ -2596,6 +2621,11 @@ function riskEur(){ return (+S.cfg.account || 0) * (+S.cfg.risk || 0) / 100; }
 // Rueckgang-Schutz: echtes Konto (Kontogroesse plus echte Ergebnisse) mehr als 10 % unter dem Hoch -> halbes Risiko, voll erst wieder unter 5 % Rueckgang
 function ddState(){ if (S.cfg.ddOff || !(+S.cfg.account > 0)) return { on: false, dd: 0, factor: 1, off: !!S.cfg.ddOff }; return ddGuard(+S.cfg.account, realRows()); }
 function dpmSet(){ var b = V.bdp; if (!b || !(b.passed || []).some(function(x){ return x.id === 'pm_930_60_gap_range__1045'; })) return null; return (b.best || []).filter(function(x){ return x.id === 'pm_930_60_gap_range__1045'; })[0] || null; }
+// Genommen oder nicht: Entscheidung je Signal, geht an den Dienst (Konto-Risiko, Folgemeldungen, Widget)
+function takeOut(){ var o = {}, now = Date.now(); Object.keys(S.take || {}).forEach(function(id){ var x = S.take[id]; if (x && now - (x.at || 0) < 45 * 864e5) o[id] = { v: x.v, at: x.at }; }); return o; }
+function setTake(id, v){ S.take = S.take || {}; S.take[id] = { v: v, at: Date.now() }; applyTakes(); save(); syncTrade().catch(function(){}); }
+// Abgeschlossene Signale, die du nicht genommen hast, brauchen keine Nachfrage mehr
+function applyTakes(){ var ch = false; (V.trackLog || []).forEach(function(x){ var k = S.take && S.take[x.id]; if (k && k.v === 0 && !S.real[x.id]){ S.real[x.id] = { traded: false, auto: 1 }; ch = true; } }); return ch; }
 function riskNow(){ return (+S.cfg.risk || 1) * ddState().factor; }
 // Abkuehlphase: zwei Verlust-Trades in Folge -> 60 Minuten kein neuer Trade
 function tiltState(){
@@ -2619,6 +2649,7 @@ function loadCtx(){
   });
 }
 function viewHeute(){
+  if (applyTakes()) save();
   var now = Date.now(), b = berlinParts(now), s = sessionInfo(now, instr(S.form.k) || INSTRUMENTS[0]), ts = todayState(), ctx = V.ctx;
   var next = [{ n: 'London', a: 480 }, { n: 'New York', a: 870 }].filter(function(x){ return x.a > b.min; })[0];
   var weekend = b.wd === 'Sat' || (b.wd === 'Sun' && b.min < 23 * 60);
@@ -2691,27 +2722,33 @@ function todoCard(ts){
 }
 // ================= Offene Positionen aller Strategien =================
 function openCard(ts){
-  var open = ts.open, now = Date.now(), rows = [];
+  var open = ts.open, now = Date.now(), rows = [], obs = [], rows0 = rows;
+  // jede Signal-Position: genommen -> normal, offen -> mit Frage, nicht genommen / Limit voll -> nur gezaehlt
+  var gate = function(p, html, active){ var st = takeState(S.take, p, now);
+    if (st === 'nein' || (!active && st !== 'ja')) { if (active) obs.push(p); return; }
+    if (st === 'ja') return rows0.push(html);
+    rows0.push(html.replace(/<\/div>$/, '') + '<div class="take"><span>' + (st === 'alt' ? 'Noch nicht beantwortet, zählt nicht mehr zum Konto-Risiko.' : 'Hast du das genommen?') + '</span><button class="btn sm" data-act="take" data-id="' + esc(p.id) + '" data-v="1">Genommen</button><button class="btn sm ghost" data-act="take" data-id="' + esc(p.id) + '" data-v="0">Nicht genommen</button></div></div>'); };
   var trk = (V.track || []).filter(function(x){ return (x.state === 'wartet' || x.state === 'offen') && !open.some(function(t){ return t.sig === x.id || (t.sig && t.sig.id === x.id); }); });
   open.forEach(function(t){ var r = liveR(t), i = instr(t.instr) || { dec: 2 }; rows.push('<div class="trade"><div class="row"><span><b>' + esc(t.name) + '</b> <span class="' + (t.dir > 0 ? 'good' : 'bad') + '">' + (t.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="num ' + (r == null ? 'muted' : (r >= 0 ? 'good' : 'bad')) + '" style="font-size:20px">' + (r == null ? '…' : sgn(r, 2) + 'R · ' + sgn(r * ((t.size && t.size.risk) || riskEur()), 0) + ' €') + '</span></div><div class="muted small">Tagebuch · SL ' + fmt(t.stop, i.dec) + ' · TP ' + fmt(t.target, i.dec) + '</div>' + tevBanner(t) + '</div>'); });
-  trk.forEach(function(x){ rows.push('<div class="trade"><div class="row"><span><span class="pill good">' + esc(x.cls) + '</span> <b>' + esc(x.name) + '</b></span><span class="muted small">' + (x.state === 'offen' ? 'Signal läuft' : 'Order wartet') + '</span></div><div class="muted small">' + (x.skip ? 'Limit voll: ausgelassen' : 'verfolgt, nicht im Tagebuch') + '</div></div>'); });
+  trk.forEach(function(x){ if (x.skip) { obs.push(x); return; } gate(x, '<div class="trade"><div class="row"><span><span class="pill good">' + esc(x.cls) + '</span> <b>' + esc(x.name) + '</b></span><span class="muted small">' + (x.state === 'offen' ? 'Signal läuft' : 'Order wartet') + '</span></div><div class="muted small">' + 'Signal der App' + '</div></div>', true); });
   var exitOf = function(p){ return p.kind === 'tt' ? 'Verkauf bei Schluss über dem Vortageshoch, spätestens nach 4 Tagen' : p.kind === 'd3' ? 'Verkauf bei Schluss über dem 5-Tage-Schnitt, spätestens nach 7 Tagen' : 'Verkauf bei Schluss im oberen Fünftel, spätestens nach 5 Tagen'; };
   var pill = function(p, lbl){ return '<span class="pill">' + esc(lbl) + '</span> '; };
   (V.ibsPos || []).filter(function(p){ return p.state === 'offen' || now - (p.exitAt || p.at) < 86400e3; }).forEach(function(p){ var i = instr(p.k) || { dec: 1 };
-    rows.push('<div class="trade"><div class="row"><span>' + pill(p, p.kind === 'tt' ? 'Turnaround' : p.kind === 'd3' ? 'Verlusttage' : 'IBS') + '<b>' + esc(p.name) + '</b></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : (p.skip ? 'ausgelassen' : 'offen')) + '</span></div><div class="muted small">Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + ' · ' + exitOf(p) + '</div></div>'); });
+    gate(p, '<div class="trade"><div class="row"><span>' + pill(p, p.kind === 'tt' ? 'Turnaround' : p.kind === 'd3' ? 'Verlusttage' : 'IBS') + '<b>' + esc(p.name) + '</b></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : (p.skip ? 'ausgelassen' : 'offen')) + '</span></div><div class="muted small">Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + ' · ' + exitOf(p) + '</div></div>', p.state === 'offen'); });
   (V.swingPos || []).filter(function(p){ return p.state === 'wartet' || p.state === 'offen' || now - (p.exitAt || p.at) < 86400e3; }).forEach(function(p){ var i = instr(p.k) || { dec: 2 };
-    rows.push('<div class="trade"><div class="row"><span>' + pill(p, 'Swing') + '<b>' + esc(p.name) + '</b></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Kauf zur Eröffnung' : 'offen')) + '</span></div><div class="muted small">' + (p.entry ? 'Einstieg ' + fmt(p.entry, i.dec) + ' · ' : 'zuletzt ' + fmt(p.ref, i.dec) + ' · ') + 'Stop ' + fmt(p.stop, i.dec) + ' · Verkauf über dem 5-Tage-Schnitt, spätestens nach 10 Tagen</div></div>'); });
+    gate(p, '<div class="trade"><div class="row"><span>' + pill(p, 'Swing') + '<b>' + esc(p.name) + '</b></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Kauf zur Eröffnung' : 'offen')) + '</span></div><div class="muted small">' + (p.entry ? 'Einstieg ' + fmt(p.entry, i.dec) + ' · ' : 'zuletzt ' + fmt(p.ref, i.dec) + ' · ') + 'Stop ' + fmt(p.stop, i.dec) + ' · Verkauf über dem 5-Tage-Schnitt, spätestens nach 10 Tagen</div></div>', p.state === 'wartet' || p.state === 'offen'); });
   (V.dtPos || []).filter(function(p){ return (p.state === 'wartet' || p.state === 'offen') || (p.exitAt && now - p.exitAt < 12 * 3600e3); }).forEach(function(p){
-    rows.push('<div class="trade"><div class="row"><span><span class="pill good">' + (p.pm ? 'DAX-Nachmittag' : 'DAX-Ausbruch') + '</span> <b>DAX</b> <span class="' + (p.dir > 0 ? 'good' : 'bad') + '">' + (p.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Order wartet' : 'offen')) + '</span></div><div class="muted small">' + (p.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') + fmt(p.px, 1) + ' · Stop ' + fmt(p.stop, 1) + (p.state === 'wartet' ? ' · gilt bis ' + (p.pm ? '17:25' : '12:35') : '') + ' · schließen um 17:25</div></div>'); });
+    gate(p, '<div class="trade"><div class="row"><span><span class="pill good">' + (p.pm ? 'DAX-Nachmittag' : 'DAX-Ausbruch') + '</span> <b>DAX</b> <span class="' + (p.dir > 0 ? 'good' : 'bad') + '">' + (p.dir > 0 ? 'Long' : 'Short') + '</span></span><span class="' + (p.r == null ? 'muted small' : (p.r >= 0 ? 'num good' : 'num bad')) + '">' + (p.r != null ? sgn(p.r, 2) + 'R' : (p.state === 'wartet' ? 'Order wartet' : 'offen')) + '</span></div><div class="muted small">' + (p.dir > 0 ? 'Kauf-Stopp ' : 'Verkaufs-Stopp ') + fmt(p.px, 1) + ' · Stop ' + fmt(p.stop, 1) + (p.state === 'wartet' ? ' · gilt bis ' + (p.pm ? '17:25' : '12:35') : '') + ' · schließen um 17:25</div></div>', p.state === 'wartet' || p.state === 'offen'); });
   (V.autoPos || []).filter(function(p){ return p.state === 'offen' || now - (p.exitAt || p.at) < 86400e3; }).forEach(function(p){ var i = instr(p.k) || { dec: 2 };
-    rows.push('<div class="trade"><div class="row"><span><span class="pill warn">Neu</span> <b>' + esc(p.name) + '</b></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : 'offen') + '</span></div><div class="muted small">' + esc(p.gn || '') + ' · Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + '</div></div>'); });
-  if (!rows.length) return '';
-  return '<section class="card" id="offen"><div class="row"><h2>Offene Positionen</h2><span class="muted small">' + rows.length + '</span></div>' + viewRisk() + rows.join('') + '</section>';
+    gate(p, '<div class="trade"><div class="row"><span><span class="pill warn">Neu</span> <b>' + esc(p.name) + '</b></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : 'offen') + '</span></div><div class="muted small">' + esc(p.gn || '') + ' · Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + '</div></div>', p.state === 'offen'); });
+  var obsTxt = obs.length ? '<p class="muted small" style="margin:10px 0 0">' + obs.length + (obs.length === 1 ? ' Signal läuft' : ' Signale laufen') + ' ohne dich weiter (nicht genommen oder Limit voll). Sie zählen nur für die Live-Prüfung und den Schatten-Bot, Folgemeldungen dazu bekommst du nicht.</p>' : '';
+  if (!rows.length) return obsTxt ? '<section class="card" id="offen"><div class="row"><h2>Deine Positionen</h2><span class="muted small">keine</span></div>' + obsTxt + '</section>' : '';
+  return '<section class="card" id="offen"><div class="row"><h2>Deine Positionen</h2><span class="muted small">' + rows.length + '</span></div>' + viewRisk() + rows.join('') + obsTxt + '</section>';
 }
 // ================= Konto-Risiko =================
 function openRiskList(){
   var rp = riskNow(), acct = +S.cfg.account || 0, out = [], sigIds = {};
-  var add = function(p, src){ if (p.skip) return; out.push({ y: p.y || logSym(p), risk: p.risk != null ? +p.risk : rp, name: p.name, src: src, id: p.id }); };
+  var now = Date.now(), add = function(p, src){ if (p.skip || !takeCounts(S.take, p, now)) return; out.push({ y: p.y || logSym(p), risk: p.risk != null ? +p.risk : rp, name: p.name, src: src, id: p.id, pend: takeState(S.take, p, now) === 'offen' }); };
   S.trades.filter(function(t){ return t.status === 'open'; }).forEach(function(t){ if (t.sig) sigIds[t.sig.id || t.sig] = 1; var i = instr(t.instr);
     out.push({ y: i ? i.y : String(t.instr || ''), risk: t.size && t.size.risk && acct ? t.size.risk / acct * 100 : rp, name: t.name, src: 'Tagebuch', id: t.id }); });
   (V.ibsPos || []).forEach(function(p){ if (p.state === 'offen') add(p, p.kind === 'tt' ? 'Turnaround Tuesday' : p.kind === 'd3' ? 'Drei Verlusttage' : 'IBS'); });
@@ -3559,15 +3596,16 @@ function viewCal(max){
   if (!V.cal) return V.calErr ? '<p class="err">' + esc(V.calErr) + '</p>' : '<div class="loading"><span class="spin"></span> Kalender lädt …</div>';
   var ccys = ccyList(), now = Date.now(), today = berlinParts(now).key;
   var oil = watchKeys().some(function(k){ return k === 'WTI'; });
-  var ev = V.cal.map(function(e){ return Object.assign({}, e, { t: Date.parse(e.date) }); }).filter(function(e){ return isFinite(e.t) && (e.impact === 'High' || e.impact === 'Medium') && (ccys.indexOf(e.country) >= 0 || (oil && /crude|oil/i.test(e.title))); })
+  var ev = V.cal.map(function(e){ return Object.assign({}, e, { t: Date.parse(e.date) }); }).filter(function(e){ return isFinite(e.t) && ((e.impact === 'High' || e.impact === 'Medium') && (ccys.indexOf(e.country) >= 0 || (oil && /crude|oil/i.test(e.title))) || newsWanted(e, ccys)); })
     .filter(function(e){ return e.t > now - (max ? 0 : 3 * 3600e3); }).sort(function(a, b){ return a.t - b.t; }).slice(0, max || 14);
   if (!ev.length) return '<p class="hint">Keine wichtigen Termine für deine Märkte in den nächsten Tagen.</p>';
+  var legend = S.cfg.push.on && S.cfg.push.newsRes !== false ? '<p class="muted small" style="margin:4px 0 0">📬 = Ergebnis kommt per Mitteilung, mit Einschätzung. Fehlt die Zahl 25 Minuten nach dem Termin, sage ich dir das.</p>' : '';
   var lastDay = '';
-  return '<ul class="list-plain" style="margin-top:4px">' + ev.map(function(e){
+  return legend + '<ul class="list-plain" style="margin-top:4px">' + ev.map(function(e){
     var day = berlinParts(e.t).key, head = '';
     if (day !== lastDay){ head = '<div class="label" style="margin-top:10px">' + (day === today ? 'Heute' : esc(dm(e.t))) + '</div>'; lastDay = day; }
     var soon = e.t > now && e.t - now < 3 * 3600e3 ? ' · in ' + dur(e.t - now) : '';
-    return '<li style="border:0;padding:0">' + head + '<div class="ev' + (e.t < now ? ' past' : '') + '"><span class="t">' + hm(e.t) + '</span><span><div class="ti">' + esc(e.country) + ' ' + esc(e.title) + '</div><div class="fc">' + (e.forecast ? 'Prognose ' + esc(e.forecast) : '') + (e.previous ? (e.forecast ? ' · ' : '') + 'vorher ' + esc(e.previous) : '') + esc(soon) + '</div></span><span class="pill ' + (e.impact === 'High' ? 'bad' : 'warn') + '">' + (e.impact === 'High' ? 'hoch' : 'mittel') + '</span></div></li>';
+    return '<li style="border:0;padding:0">' + head + '<div class="ev' + (e.t < now ? ' past' : '') + '"><span class="t">' + hm(e.t) + '</span><span><div class="ti">' + esc(e.country) + ' ' + esc(e.title) + '</div><div class="fc">' + (S.cfg.push.on && S.cfg.push.newsRes !== false && newsWanted(e, ccys) ? '📬 ' : '') + (e.forecast ? 'Prognose ' + esc(e.forecast) : '') + (e.previous ? (e.forecast ? ' · ' : '') + 'vorher ' + esc(e.previous) : '') + esc(soon) + '</div></span><span class="pill ' + (e.impact === 'High' ? 'bad' : e.impact === 'Medium' ? 'warn' : '') + '">' + (e.impact === 'High' ? 'hoch' : e.impact === 'Medium' ? 'mittel' : 'niedrig') + '</span></div></li>';
   }).join('') + '</ul>';
 }
 function logoTxt(i){ var m = { EURUSD: '€$', GBPUSD: '£$', USDJPY: '$¥', XAUUSD: 'Au', XAGUSD: 'Ag', WTI: 'Öl', BRENT: 'Öl', DAX: 'DAX', NDX: 'NDX', SPX: 'SPX', DJI: 'Dow' }; return m[i.k] || String(i.name).replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase(); }
@@ -3973,7 +4011,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), acct: +S.cfg.account || 0, risk: S.cfg.risk ? riskNow() : 0, dd: ddState().on ? ddState().dd : 0, wkh: S.cfg.wk && S.cfg.wkh ? S.cfg.wkh : '', heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, dtb: S.cfg.push.dtb !== false, dpm: S.cfg.push.dpm !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), take: takeOut(), acct: +S.cfg.account || 0, risk: S.cfg.risk ? riskNow() : 0, dd: ddState().on ? ddState().dd : 0, wkh: S.cfg.wk && S.cfg.wkh ? S.cfg.wkh : '', heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, dtb: S.cfg.push.dtb !== false, dpm: S.cfg.push.dpm !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -3982,6 +4020,7 @@ function syncTrade(extra){
     var hits = {}, deads = {}; (j.alerts || []).forEach(function(a){ if (a.hit) hits[a.id] = a; if (a.dead) deads[a.id] = a.dead; });
     var changed = false;
     S.alerts.forEach(function(a){ if (hits[a.id] && !a.hit){ a.hit = hits[a.id].hit; a.hitPx = hits[a.id].hitPx; changed = true; } if (deads[a.id] && !a.dead){ a.dead = deads[a.id]; changed = true; } });
+    if (j.taken){ S.take = S.take || {}; Object.keys(j.taken).forEach(function(id){ var x = j.taken[id]; if (x && (x.v === 0 || x.v === 1) && !S.take[id]){ S.take[id] = { v: x.v, at: x.at || Date.now() }; changed = true; } }); }
     V.signals = j.signals || []; V.tev = j.tev || {}; V.track = j.track || []; V.trackLog = j.trackLog || []; V.swingPos = j.swingPos || []; V.ibsPos = j.ibsPos || []; V.brief = j.brief || null; V.log = j.log || []; V.radar = j.radar || null; V.autoPos = j.autoPos || []; V.dtPos = j.dtPos || []; V.news = j.news || []; V.newsStat = j.newsStat || null; V.lc = j.lc || null; V.wd = j.wd || null; V.proto = j.proto || null; if (j.bak && j.bak.at && (!S.bakInfo || !S.bakInfo.at)) { S.bakInfo = { at: j.bak.at }; } V.syncErr = ''; appBadge();
     if (V.wantSig){ var w = V.wantSig; V.wantSig = null; useSignal(w); return j; }
     if (changed || S.tab === 'markt' || S.tab === 'buch' || S.tab === 'check'){ if (changed) save(); rerender(); }
@@ -4131,6 +4170,7 @@ function onAct(e){
   if (a === 'wkon' || a === 'wknew') return wkMake();
   if (a === 'wkoff'){ delete S.cfg.wk; delete S.cfg.wkh; save(); syncTrade().catch(function(){}); toast('Widget ausgeschaltet'); return rerender(); }
   if (a === 'wkcopy'){ var sc = wkScript(); return (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(sc) : Promise.reject()).then(function(){ toast('Script kopiert, jetzt in Scriptable einfügen'); }, function(){ var ta = $('#wkscript'); if (ta){ ta.closest('details').open = true; ta.focus(); ta.select(); } toast('Bitte das Script markieren und kopieren'); }); }
+  if (a === 'take'){ var tv = +el.dataset.v; setTake(el.dataset.id, tv); toast(tv ? 'Als deine Position gespeichert' : 'Nicht genommen: zählt nicht mehr zum Risiko'); return rerender(); }
   if (a === 'coachm'){ V.coachM = el.dataset.m; return rerender(); }
   if (a === 'risk'){ S.cfg.risk = +el.dataset.r; save(); syncTrade().catch(function(){}); return rerender(); }
   if (a === 'lead'){ S.cfg.push.lead = +el.dataset.m; save(); syncTrade(); return rerender(); }
