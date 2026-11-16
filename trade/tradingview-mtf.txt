@@ -661,14 +661,16 @@ if showPA and barstate.isconfirmed and (pSess or not paSess)
                 paLastCol := ps ? (d > 0 ? bullCol : bearCol) : m < -0.05 ? bearCol : color.new(#8A8F98, 0)
                 paGoodNow := paGoodNow or ps
 // Tages-Sweep (SMC auf Tageskerzen): das einzige Muster mit bestandener Rückrechnung (seit 2000, 16 Märkte: 1.201 Trades, 46 % Treffer, Ø +0,21 R)
-f_dsw() =>
+f_dsw(int off) =>
     float lo30 = ta.lowest(low, 30)[1]
     float a14 = ta.atr(14)
-    bool sw = not na(lo30) and close > ta.sma(close, 200) and low < lo30 and close > lo30
+    float s200 = ta.sma(close, 200)
+    bool sw = not na(lo30) and not na(s200) and close > s200 and low < lo30 and close > lo30
     float stp = math.min(low - 0.2 * a14, close - 0.5 * a14)
-    [sw, lo30, close, stp, close + 2 * (close - stp)]
-[dswNow, dswLo, dswC, dswS, dswT] = request.security(syminfo.tickerid, "D", f_dsw(), lookahead=barmerge.lookahead_off)
-[dswY, dswLoY, dswCY, dswSY, dswTY] = request.security(syminfo.tickerid, "D", f_dsw()[1], lookahead=barmerge.lookahead_on)
+    float tgt = close + 2 * (close - stp)
+    [sw[off], lo30[off], close[off], stp[off], tgt[off]]
+[dswNow, dswLo, dswC, dswS, dswT] = request.security(syminfo.tickerid, "D", f_dsw(0), lookahead=barmerge.lookahead_off)
+[dswY, dswLoY, dswCY, dswSY, dswTY] = request.security(syminfo.tickerid, "D", f_dsw(1), lookahead=barmerge.lookahead_on)
 var label dswLbl = na
 bool dswNew = showDSw and dswY and not dswY[1]
 if dswNew
