@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '10f8d011d7';
+const WORKER_VER = 'd89eab3705';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3501,13 +3501,13 @@ function millionPath(o){
   return { years: at.map(function(a, i){ return { y: i, p10: Math.round(q(a, 0.10)), p50: Math.round(q(a, 0.50)), p90: Math.round(q(a, 0.90)) }; }),
     pHit: hit / sims, medMonths: hitM.length > Math.floor(sims / 2) ? hitM[Math.floor(sims / 2)] : null, pRuin: ruin / sims, sims: sims };
 }
-// Groesster Hebel: gleiche Rechnung mit je einer Aenderung, Median nach N Jahren
+// Groesster Hebel: gleiche Rechnung mit je einer Aenderung, Median nach N Jahren (mehr Risiko ist bewusst kein Hebel: das zeigt die Ruin-Tabelle)
 function millionLevers(o, yrs){
   var base = Object.assign({}, o, { years: yrs }), med = function(x){ var r = millionPath(x); return r.years[r.years.length - 1].p50; }, b0 = med(base);
   var L = [
     { k: 'save', name: '+100 € Sparrate im Monat', v: med(Object.assign({}, base, { save: (o.save || 0) + 100 })) },
     { k: 'fee', name: 'Ordergebühren halbiert', v: med(Object.assign({}, base, { fee: (o.fee || 0) / 2 })) },
-    { k: 'risk', name: 'Risiko je Trade +0,5 %', v: med(Object.assign({}, base, { risk: (o.risk || 1) + 0.5 })) }
+    { k: 'exec', name: 'Bessere Ausführung (+0,05 R je Trade)', v: med(Object.assign({}, base, { R: Array.isArray(o.R) ? o.R.map(function(x){ return x + 0.05; }) : { mean: (o.R.mean || 0) + 0.05, sd: o.R.sd } })) }
   ];
   L.forEach(function(x){ x.gain = x.v - b0; });
   return { base: b0, levers: L.sort(function(a, b){ return b.gain - a.gain; }) };
@@ -3756,7 +3756,7 @@ async function tradeRoute(request, headers, env, nowMs) {
       scan: b.scan !== false, scanAll: !!b.scanAll, quality: ['all', 'a', 'top', 'w60', 'triple', 'mix', 'creme'].includes(b.quality) ? b.quality : 'creme',
       trades: (Array.isArray(b.trades) ? b.trades : []).slice(0, 10).map(normTrade).filter(Boolean),
       tev: t.tev || {}, signals: t.signals || [], scanAt: t.scanAt || {}, bias: t.bias || {}, log: t.log || [], track: t.track || [], trackLog: t.trackLog || [],
-      swing: b.swing !== false, dtb: b.dtb !== false, dpm: b.dpm !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, tight: !!b.tight, ibsMax1: !!b.ibsMax1, ibsCand: t.ibsCand || null, ibsPick: t.ibsPick || null, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
+      swing: b.swing !== false, dtb: b.dtb !== false, dpm: b.dpm !== false, sw: b.sw !== false, bgreen: b.bgreen !== false, finder: b.finder !== false, tight: !!b.tight, ibsMax1: !!b.ibsMax1, ibsCand: t.ibsCand || null, ibsPick: t.ibsPick || null, radar: t.radar || null, finderSent: t.finderSent || {}, ibsOn: b.ibs !== false, acct: +b.acct || 0, riskP: +b.risk || 0, heat: +b.heat || 5, depotOn: b.depot !== false, ibsPos: t.ibsPos || [], ibsSent: t.ibsSent || {}, depotMonth: t.depotMonth || null, depotLast: t.depotLast || {}, swingPos: t.swingPos || [], swingAt: t.swingAt || {},
       orbOn: b.orb !== false, orbPrep: t.orbPrep || {}, orb: t.orb || null, briefs: t.briefs || {}, brief: b.brief === false ? false : (t.brief && t.brief !== false ? t.brief : null),
       shadowCap: num(b.shadow, 100, 1e7, 1000), fee: num(b.fee, 0, 20, 1), newsRes: b.newsRes !== false, dd: num(b.dd, 0, 1, 0), taken: mergeTaken(t.taken, b.take, nowMs),
       lock: b.lock && +b.lock.until > nowMs ? { until: Math.min(+b.lock.until, nowMs + 40 * 864e5), why: String(b.lock.why || '').slice(0, 220), kind: String(b.lock.kind || '').slice(0, 10) } : null,
@@ -3933,6 +3933,12 @@ async function dtbCfg(env, nowMs) {
 }
 // DAX-Nachmittag: Kennzahlen aus der Nachmittags-Forschung (Spanne 15:30-16:30, Richtung des Tages, Order ab 16:40, Schluss 17:25)
 const DPM_ID = 'pm_930_60_gap_range__1045';
+// Liquiditaets-Sweep (Tageskerzen): Tief unter dem 30-Tage-Tief, Schluss wieder darueber, im Aufwaertstrend. Ziel 2 R, Stop unter dem Sweep-Tief, max. 10 Tage.
+const SW_ID = 'sw30_t2_h10', SW_N = 30, SW_T = 2, SW_H = 10;
+async function swCfg(env, nowMs) {
+  try { const c = await cachedKV(env, 'mkt:swcfg', 12 * 3600e3, nowMs, async () => { if (!env.PAGES_URL) return {}; const r = await fetch(env.PAGES_URL + 'dienst/backtest-sweep.json?t=' + Math.floor(nowMs / 3600e3), { headers: UA }); if (!r.ok) return {};
+    const j = await r.json(), x = j.res && j.res[SW_ID]; return x && x.pass ? { n: x.all.n, win: x.all.win, mean: x.all.mean, sd: x.all.t ? x.all.mean / x.all.t * Math.sqrt(x.all.n) : null } : {}; }); return c.data || {}; } catch (e) { return {}; }
+}
 async function dpmCfg(env, nowMs) {
   try {
     const c = await cachedKV(env, 'mkt:dpm', 12 * 3600e3, nowMs, async () => {
@@ -4618,19 +4624,25 @@ async function runTrade(env, nowMs) {
         const last = d1[d1.length - 1]; if (dKey(last.t) !== dayKey) continue;
         const ib = last.h > last.l ? (last.c - last.l) / (last.h - last.l) : 0.5;
         if (pos) {
-          const fin = (state, px, txt) => { const r = (px - pos.entry) / (3 * pos.atr); pos.state = state; pos.exit = px; pos.pct = Math.round((px / pos.entry - 1) * 10000) / 100; pos.r = Math.round(r * 100) / 100; pos.exitAt = nowMs; dirty = true;
-            logTrade({ id: pos.id, k, y: ins.y, name: ins.name, dir: 1, cls: pos.kind === 'tt' ? 'Turnaround Tuesday' : (pos.kind === 'd3' ? 'Drei Verlusttage' : 'IBS'), g: pos.g || (pos.kind === 'tt' ? 'tt' : pos.kind === 'd3' ? 'd3' : (ins.land ? 'laender' : 'ibs')), t: pos.at, x: nowMs, state, r: pos.r, e: pos.entry, xp: px, sp: 3 * pos.atr / pos.entry, pct: pos.pct, ex: pos.ex || null, risk: pos.risk, skip: pos.skip }); return send('b:' + pos.id + ':done', { body: txt + ' (' + (pos.pct >= 0 ? '+' : '') + String(pos.pct).replace('.', ',') + ' %).', tag: 'ibs-' + k }); };
-          if (last.l <= pos.stop) { await fin('stop', pos.stop, '❌ Notstop: ' + ins.name + (pos.kind === 'tt' ? ' Turnaround-Tuesday-Trade bei ' : (pos.kind === 'd3' ? ' Drei-Verlusttage-Trade bei ' : ' IBS-Trade bei ')) + fmtp(pos.stop, k)); continue; }
+          const fin = (state, px, txt) => { const r = (px - pos.entry) / (pos.kind === 'sw' ? Math.max(1e-9, pos.entry - pos.stop) : 3 * pos.atr); pos.state = state; pos.exit = px; pos.pct = Math.round((px / pos.entry - 1) * 10000) / 100; pos.r = Math.round(r * 100) / 100; pos.exitAt = nowMs; dirty = true;
+            logTrade({ id: pos.id, k, y: ins.y, name: ins.name, dir: 1, cls: pos.kind === 'sw' ? 'Liquiditäts-Sweep' : pos.kind === 'tt' ? 'Turnaround Tuesday' : (pos.kind === 'd3' ? 'Drei Verlusttage' : 'IBS'), g: pos.g || (pos.kind === 'sw' ? 'sw' : pos.kind === 'tt' ? 'tt' : pos.kind === 'd3' ? 'd3' : (ins.land ? 'laender' : 'ibs')), t: pos.at, x: nowMs, state, r: pos.r, e: pos.entry, xp: px, sp: (pos.kind === 'sw' ? pos.entry - pos.stop : 3 * pos.atr) / pos.entry, pct: pos.pct, ex: pos.ex || null, risk: pos.risk, skip: pos.skip }); return send('b:' + pos.id + ':done', { body: txt + ' (' + (pos.pct >= 0 ? '+' : '') + String(pos.pct).replace('.', ',') + ' %).', tag: 'ibs-' + k }); };
+          if (pos.kind === 'sw' && pos.day !== dayKey) {
+            if (last.l <= pos.stop) { await fin('stop', Math.min(pos.stop, last.o), '❌ Stop: ' + ins.name + ' Sweep-Trade bei ' + fmtp(pos.stop, k) + ' (unter dem Sweep-Tief).'); continue; }
+            if (last.h >= pos.tgt) { await fin('ziel', Math.max(pos.tgt, last.o), '✅ Ziel erreicht: ' + ins.name + ' Sweep-Trade bei ' + fmtp(pos.tgt, k) + ' (2 R).'); continue; } }
+          if (pos.kind !== 'sw' && last.l <= pos.stop) { await fin('stop', pos.stop, '❌ Notstop: ' + ins.name + (pos.kind === 'tt' ? ' Turnaround-Tuesday-Trade bei ' : (pos.kind === 'd3' ? ' Drei-Verlusttage-Trade bei ' : ' IBS-Trade bei ')) + fmtp(pos.stop, k)); continue; }
           // Bestaetigung nach US-Schluss: Der Einstieg zaehlt mit dem Schlusskurs, und nur der Schluss entscheidet, ob das Signal gueltig war
           if (pos.day === dayKey && !pos.conf && nyMin(nowMs) >= 16 * 60 + 5 && nyMin(nowMs) < 16 * 60 + 40) { pos.conf = nowMs; dirty = true;
-            const okC = pos.kind === 'tt' ? (last.c < d1[d1.length - 2].c && ib < 0.3) : (pos.kind === 'd3' ? last.c < d1[d1.length - 2].c : ib < 0.2), old = pos.entry;
-            pos.entry = last.c; pos.stop = last.c - 3 * pos.atr;
+            const swMin = Math.min(...d1.slice(-SW_N - 1, -1).map((x) => x.l));
+            const okC = pos.kind === 'sw' ? (last.l < swMin && last.c > swMin) : pos.kind === 'tt' ? (last.c < d1[d1.length - 2].c && ib < 0.3) : (pos.kind === 'd3' ? last.c < d1[d1.length - 2].c : ib < 0.2), old = pos.entry;
+            pos.entry = last.c;
+            if (pos.kind === 'sw') { pos.stop = Math.min(last.l - 0.2 * pos.atr, last.c - 0.5 * pos.atr); pos.tgt = last.c + SW_T * (last.c - pos.stop); } else pos.stop = last.c - 3 * pos.atr;
             await send('b:' + pos.id + ':conf', { pw: pos.pw || null, d: { k, dir: 1, entry: last.c, stop: pos.stop, kind: pos.kind || 'ibs' }, title: (okC ? 'Einstieg bestätigt · ' : 'Einstieg knapp · ') + ins.name,
-              body: okC ? '🎯 Einstieg bestätigt: ' + ins.name + ' schloss bei ' + fmtp(last.c, k) + (pos.kind === 'd3' ? '' : ' (IBS ' + ib.toFixed(2).replace('.', ',') + ')') + '. Das ist dein Einstiegskurs, Notstop ' + fmtp(pos.stop, k) + '. Ich melde mich zum Verkauf.'
+              body: okC ? '🎯 Einstieg bestätigt: ' + ins.name + ' schloss bei ' + fmtp(last.c, k) + (pos.kind === 'd3' || pos.kind === 'sw' ? '' : ' (IBS ' + ib.toFixed(2).replace('.', ',') + ')') + '. Das ist dein Einstiegskurs, ' + (pos.kind === 'sw' ? 'Stop ' + fmtp(pos.stop, k) + ', Ziel ' + fmtp(pos.tgt, k) + ' (beides als Order eintragen).' : 'Notstop ' + fmtp(pos.stop, k) + '.') + ' Ich melde mich zum Verkauf.'
                 : '⚠️ ' + ins.name + ' hat sich in den letzten Minuten erholt und schloss bei ' + fmtp(last.c, k) + ' (IBS ' + ib.toFixed(2).replace('.', ',') + '). Die Regel war am Schluss knapp nicht mehr erfüllt. Wer gekauft hat, führt den Trade normal weiter, die Trefferquote gilt dafür aber nicht voll.', tag: 'ibs-' + k });
             continue; }
           if (win && pos.day !== dayKey) {
             const held = d1.filter((x) => dKey(x.t) > pos.day).length;
+            if (pos.kind === 'sw') { if (held >= SW_H) await fin('tagesende', last.c, 'Sweep ' + ins.name + ': ' + SW_H + ' Tage erreicht, jetzt verkaufen. Stand ' + fmtp(last.c, k)); continue; }
             if (pos.kind === 'd3') { let s5 = 0; for (let q = d1.length - 5; q < d1.length; q++) s5 += d1[q].c; s5 /= 5;
               if (last.c > s5) await fin(last.c >= pos.entry ? 'ziel' : 'tagesende', last.c, '✅ Jetzt verkaufen: ' + ins.name + ' schließt über dem 5-Tage-Schnitt (Drei Verlusttage). Stand ' + fmtp(last.c, k));
               else if (held >= 7) await fin('tagesende', last.c, 'Drei Verlusttage ' + ins.name + ': 7 Tage erreicht, jetzt verkaufen. Stand ' + fmtp(last.c, k));
@@ -4649,7 +4661,17 @@ async function runTrade(env, nowMs) {
         const sma = d1.slice(-200).reduce((a, x) => a + x.c, 0) / 200, atr = TL.atrSeries(d1).pop();
         const prev = d1[d1.length - 2], isIbs = last.c > sma && ib < 0.2, isTT = ttOn && TT.includes(ins.y) && last.c < prev.c && ib < 0.3;
         const isD3 = d3On && !ins.land && last.c > sma && last.c < prev.c && prev.c < d1[d1.length - 3].c && d1[d1.length - 3].c < d1[d1.length - 4].c;
-        if (!atr || !(isIbs || isTT || isD3)) continue;
+        const swLo = Math.min(...d1.slice(-SW_N - 1, -1).map((x) => x.l)), isSw = t.sw !== false && !ins.land && last.c > sma && last.l < swLo && last.c > swLo;
+        if (!atr || !(isIbs || isTT || isD3 || isSw)) continue;
+        if (!isIbs && !isTT && !isD3) { // nur Liquiditaets-Sweep: 30-Tage-Tief geholt, Schluss zurueck, im Aufwaertstrend
+          const sc = await swCfg(env, nowMs); if (!sc.n) continue;
+          if (max1 && !picked(k)) { t.ibsCand.list.push({ k, name: ins.name, mean: 0.2, ib }); dirty = true; continue; }
+          const idS = k + ':sw:' + dayKey, stS = Math.min(last.l - 0.2 * atr, last.c - 0.5 * atr), tgS = last.c + SW_T * (last.c - stS), pwS = { n: sc.n, win: sc.win };
+          t.ibsPos.push({ id: idS, kind: 'sw', k, y: ins.y, name: ins.name, entry: last.c, stop: stS, tgt: tgS, atr, day: dayKey, state: 'offen', at: nowMs, etf: ins.type === 'etf', pw: pwS, g: 'sw', ex: { win: sc.win, mean: sc.mean, sd: sc.sd, unit: 'R', n: sc.n } });
+          await send('b:' + idS, { g: 'sw', pw: pwS, d: { k, dir: 1, entry: last.c, stop: stS, kind: 'ibs' }, title: '💧 Liquiditäts-Sweep · ' + ins.name,
+            body: ins.name + ' Long (Liquiditäts-Sweep): Heute unter das 30-Tage-Tief ' + fmtp(swLo, k) + ' gefallen und wieder darüber geschlossen, im Aufwärtstrend. Die Stopps unter dem Tief sind abgeholt, Verkäufer sind raus. Jetzt kurz vor Handelsschluss kaufen, ca. ' + fmtp(last.c, k) + '. Stop ' + fmtp(stS, k) + ' (unter dem Sweep-Tief), Ziel ' + fmtp(tgS, k) + ' (2 R) gleich als Order eintragen. Spätestens nach 10 Tagen verkaufen.' +
+              tradeTxt(t, ins, (last.c - stS) / last.c * 100, idS) + ' Rückrechnung seit 2000 (16 Märkte): ' + sc.n + ' Trades, ' + Math.round(sc.win * 100) + ' % Treffer, Ø +' + sc.mean.toFixed(2).replace('.', ',') + ' R nach Kosten. Neu, darum in Bewährung: die Live-Prüfung beobachtet sie.' + pickNote(k), tag: 'ibs-' + k, url: './' });
+          continue; }
         if (max1 && !picked(k)) { // nur vormerken
           const rsQ = TL.rsiSeries(d1, 2).pop(), dblQ = isIbs && rsQ != null && rsQ < 10, mOf = (key2) => cs[key2] && cs[key2].n ? cs[key2].mean : 0;
           const mean = isIbs ? (ins.land ? mOf('ibs:laender') : dblQ ? mOf('mr:both') : ib < 0.1 ? mOf('ibs:t00_10') : mOf('ibs:t10_20')) : isTT ? mOf('tt:hold_us') : mOf('mr:down3');
