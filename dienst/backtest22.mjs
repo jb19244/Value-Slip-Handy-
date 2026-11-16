@@ -77,14 +77,14 @@ function trendTrades(def, p, gk, opt) {
   return { trades, per, ov, nsig };
 }
 function ruleTrades(rule, gk) {
-  const G = GROUPS[gk], trades = [], per = {}; let ov = 0, nsig = 0;
+  const G = GROUPS[gk], trades = [], per = {}, sig = new Set(); let ov = 0, nsig = 0;
   for (const s of G.syms) { const d1 = D[s], S = SER[s]; if (!d1) continue; per[s] = { n: 0, sum: 0 }; let busy = -1;
     for (let i = 201; i < d1.length - 1; i++) {
       if (i <= busy || !L.ruleHit(d1, i, rule, S)) continue;
       const r = L.simDayTrade({ i, dir: 1, atr: S.atr[i] }, d1, { entry: 'close', stopAtr: 3, costPct: G.cost, maxDays: rule.max, exitFn: (k) => L.ruleExit(d1, k, rule, S) });
-      if (r.pct == null) continue; busy = r.exitI; nsig++; if (famHit(d1, i, S)) ov++;
+      if (r.pct == null) continue; busy = r.exitI; nsig++; sig.add(s + '|' + i); if (famHit(d1, i, S)) ov++;
       trades.push({ t: d1[i].t, s, cost: G.cost, pct: r.pct, days: r.days, ex: r.pct - DR[s] * r.days }); per[s].n++; per[s].sum += r.pct; } }
-  return { trades, per, ov, nsig };
+  return { trades, per, ov, nsig, sig };
 }
 function judge(x) {
   const trades = x.trades.filter((t) => t.pct != null && isFinite(t.pct));
@@ -148,19 +148,29 @@ for (const [k, def] of Object.entries(TREND)) for (const gk of ['us4', 'sek', 'e
 console.log('geprueft in', Math.round((Date.now() - t0) / 1000), 's');
 const passed = res.filter((r) => r.pass);
 console.log('BESTANDEN:', passed.length ? passed.map((r) => r.name + ' · ' + r.grp).join(', ') : 'keine');
-// ---------- Bestandene Mean-Reversion-Regeln fuer US-Maerkte in die Live-Liste der Sonntags-Suche (hoechstens 5 insgesamt, nach t-Wert)
+// ---------- Live-Liste "Neu entdeckt": bisherige Regeln der Sonntags-Suche mit derselben strengen Huerde (inkl. Vorteil gegen investiert) neu pruefen,
+// bestandene Netz-Strategien dazu, nach t-Wert, keine zwei Regeln mit mehr als der Haelfte gemeinsamer Signale, hoechstens 7.
 const readJ = (f, d) => { try { return JSON.parse(readFileSync(new URL(f, import.meta.url), 'utf8')); } catch (e) { return d; } };
-const su = readJ('./backtest-suche.json', null), added = [];
+const su = readJ('./backtest-suche.json', null), added = [], dropped = [], recheck = [];
 if (su) {
-  const live = su.live || [];
-  for (const r of passed.filter((x) => x.fam === 'mr' && GROUPS[x.gk].auto).sort((a, b) => b.o.tval - a.o.tval)) {
-    const id = L.ruleId(r.rule); if (live.some((q) => q.id === id && q.gk === r.gk)) continue;
-    const e = { id, gk: r.gk, name: r.name + ' · ' + r.grp, text: r.text, rule: r.rule, syms: GROUPS[r.gk].syms, stats: { n: r.o.all.n, win: r.o.all.win, mean: r.o.all.mean, lo: r.o.all.lo }, tval: r.o.tval, perYear: r.o.perYear, checked: 'netz', src: r.src };
-    live.push(e); added.push(e.name);
-  }
-  live.sort((a, b) => b.tval - a.tval); su.live = live.slice(0, 5); su.reserveRules = (su.reserveRules || []).concat(live.slice(5)).slice(0, 10); su.netz = { at: new Date().toISOString(), added };
+  const pool = [];
+  for (const e of (su.live || []).concat(su.reserveRules || [])) { if (!GROUPS[e.gk] || pool.some((p) => p.e.id === e.id && p.e.gk === e.gk)) continue;
+    const x = ruleTrades(e.rule, e.gk), o = judge(x); o.why = o.why.slice(); const keep = o.core && o.overlap <= 0.5;
+    recheck.push({ name: e.name, gk: e.gk, wasLive: (su.live || []).some((q) => q.id === e.id && q.gk === e.gk), keep, tval: o.tval, tex: o.tex, n: o.all.n, mean: o.all.mean, why: o.overlap > 0.5 ? o.why.concat(['gleiche Tage wie die App']) : o.why });
+    if (keep) pool.push({ e: Object.assign({}, e, { stats: { n: o.all.n, win: o.all.win, mean: o.all.mean, lo: o.all.lo }, tval: o.tval, tex: o.tex }), sig: x.sig });
+    else if ((su.live || []).some((q) => q.id === e.id && q.gk === e.gk)) dropped.push(e.name + ' (' + o.why.join(', ') + ')'); }
+  for (const r of passed.filter((q) => q.fam === 'mr' && GROUPS[q.gk].auto)) { const id = L.ruleId(r.rule); if (pool.some((p) => p.e.id === id && p.e.gk === r.gk)) continue;
+    pool.push({ new: true, e: { id, gk: r.gk, name: r.name + ' · ' + r.grp, text: r.text, rule: r.rule, syms: GROUPS[r.gk].syms, stats: { n: r.o.all.n, win: r.o.all.win, mean: r.o.all.mean, lo: r.o.all.lo }, tval: r.o.tval, tex: r.o.tex, perYear: r.o.perYear, checked: 'netz', src: r.src }, sig: ruleTrades(r.rule, r.gk).sig }); }
+  pool.sort((a, b) => b.e.tval - a.e.tval);
+  const ovl = (a, b) => { let n = 0; a.forEach((k) => { if (b.has(k)) n++; }); return n / Math.max(1, Math.min(a.size, b.size)); };
+  const live = [], reserve = [];
+  for (const p of pool) { const twin = live.find((q) => q.e.gk === p.e.gk && ovl(q.sig, p.sig) > 0.5); if (twin) { if (p.new) console.log('  ' + p.e.name + ': mehr als die Hälfte gleiche Signale wie ' + twin.e.name); reserve.push(p); continue; } (live.length < 7 ? live : reserve).push(p); }
+  live.filter((p) => p.new).forEach((p) => added.push(p.e.name));
+  su.live = live.map((p) => p.e); su.reserveRules = reserve.slice(0, 10).map((p) => p.e); su.netz = { at: new Date().toISOString(), added, dropped, recheck };
   writeFileSync(new URL('./backtest-suche.json', import.meta.url), JSON.stringify(su));
+  recheck.forEach((r) => console.log('NACHPRUEFUNG ' + (r.keep ? 'bleibt   ' : 'faellt raus') + ' ' + r.name.padEnd(44), 't', r.tval, 't-ex', r.tex, '|', r.why.join('; ')));
+  console.log('Live jetzt:', su.live.map((e) => e.name + ' (t ' + e.tval + ')').join(', '));
 }
 console.log('In die App (Neu entdeckt):', added.length ? added.join(', ') : 'keine');
-writeFileSync(new URL('./backtest-netz.json', import.meta.url), JSON.stringify({ at: new Date().toISOString(), n: res.length, passed: passed.map((r) => ({ name: r.name, grp: r.grp, gk: r.gk, fam: r.fam, k: r.k, src: r.src, n: r.o.all.n, win: r.o.all.win, mean: r.o.all.mean, tval: r.o.tval })), added,
+writeFileSync(new URL('./backtest-netz.json', import.meta.url), JSON.stringify({ at: new Date().toISOString(), n: res.length, dropped, passed: passed.map((r) => ({ name: r.name, grp: r.grp, gk: r.gk, fam: r.fam, k: r.k, src: r.src, n: r.o.all.n, win: r.o.all.win, mean: r.o.all.mean, tval: r.o.tval })), added,
   res: res.map((r) => ({ fam: r.fam, k: r.k, name: r.name, src: r.src, grp: r.grp, gk: r.gk, pass: r.pass, n: r.o.all.n, win: r.o.all.win, mean: r.o.all.mean, ex: r.o.ex.all.mean, tval: r.o.tval, tex: r.o.tex, breadth: r.o.breadth, overlap: r.o.overlap, perYear: r.o.perYear, days: r.o.days, cost2: r.o.cost2.mean, why: r.o.why, nb: r.o.nb || null })) }));

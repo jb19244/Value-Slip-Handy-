@@ -9,7 +9,7 @@
 //  4. doppelte Kosten: weiter im Plus;  5. mind. 60 % der Jahre im Plus;  6. mind. 5 Trades pro Jahr
 //  7. robust: die Nachbarn (Schwelle eine Stufe enger/weiter, 5 statt 10 Tage, anderer Ausstieg) sind ebenfalls im Plus, die Haelfte davon sicher
 //  8. neu: hoechstens die Haelfte der Signale faellt auf Tage, an denen schon IBS, RSI-2, drei Verlusttage oder Turnaround Tuesday kaufen
-// Was besteht, geht im Dienst als "Neu entdeckt" in Bewaehrung (hoechstens 5 Regeln), mit Live-Pruefung gegen diese Rueckrechnung.
+// Was besteht, geht im Dienst als "Neu entdeckt" in Bewaehrung (hoechstens 7 Regeln), mit Live-Pruefung gegen diese Rueckrechnung.
 import { readFileSync, writeFileSync } from 'node:fs';
 const html = readFileSync(new URL('../trade/index.html', import.meta.url), 'utf8');
 const src = html.split('// BEGIN LOGIC')[1].split('// END LOGIC')[0];
@@ -88,7 +88,9 @@ function evalRule(rule, gk) {
   const se = o.day && o.day.mean != null && o.day.lo != null && o.day.mean > o.day.lo ? (o.day.mean - o.day.lo) / 1.96 : null;
   o.tval = se ? +(o.day.mean / se).toFixed(2) : 0; const ps = Object.values(per).filter((p) => p.n >= 10);
   o.breadth = ps.length ? +(ps.filter((p) => p.sum > 0).length / ps.length).toFixed(2) : 0; o.overlap = nsig ? +(ov / nsig).toFixed(2) : 0;
-  o.core = !!(o.passed && o.tval >= 3 && o.breadth >= 0.75 && o.cost2 && o.cost2.mean > 0 && o.yearsUp >= 0.6 * o.yearsN && o.perYear >= 5);
+  // seit 16.11.2026: der Vorteil gegen einfach investiert muss nach Tagen gebuendelt ebenfalls sicher sein (t >= 2)
+  const dx = byDay(trades.map((t) => ({ t: t.t, pct: t.ex }))), sx = dx.mean != null && dx.lo != null && dx.mean > dx.lo ? (dx.mean - dx.lo) / 1.96 : null; o.tex = sx ? +(dx.mean / sx).toFixed(2) : 0;
+  o.core = !!(o.passed && o.tval >= 3 && o.tex >= 2 && o.breadth >= 0.75 && o.cost2 && o.cost2.mean > 0 && o.yearsUp >= 0.6 * o.yearsN && o.perYear >= 5);
   delete o.years; Object.defineProperty(o, 'sig', { value: sig, enumerable: false }); return o;
 }
 function neighbors(rule) {
@@ -121,7 +123,7 @@ pool.sort((a, b) => b.e.tval - a.e.tval);
 // nur deutlich verschiedene Regeln: hoechstens die Haelfte gemeinsamer Signale mit einer schon gewaehlten
 const ovl = (a, b) => { let n = 0; a.forEach((k) => { if (b.has(k)) n++; }); return n / Math.max(1, Math.min(a.size, b.size)); };
 const live = [], reserveRules = [];
-for (const p of pool) { if (live.some((q) => q.e.gk === p.e.gk && ovl(q.sig, p.sig) > 0.5)) continue; (live.length < 5 ? live : reserveRules).push(p); }
+for (const p of pool) { if (live.some((q) => q.e.gk === p.e.gk && ovl(q.sig, p.sig) > 0.5)) continue; (live.length < 7 ? live : reserveRules).push(p); }
 const top = res.slice().sort((a, b) => (b.o.core - a.o.core) || (b.o.tval - a.o.tval)).slice(0, 15).map((r) => ({ name: shortName(r.rule) || 'nur Trend', text: L.ruleText(r.rule), grp: GROUPS[r.gk].name, n: r.o.all.n, win: r.o.all.win, mean: r.o.all.mean, tval: r.o.tval, breadth: r.o.breadth, overlap: r.o.overlap, perYear: r.o.perYear, status: r.status,
   why: r.status === 'durchgefallen' ? [!r.o.passed && 'Grundhürde', r.o.tval < 3 && 't-Wert ' + String(r.o.tval).replace('.', ','), r.o.breadth < 0.75 && 'zu wenig Märkte', r.o.cost2 && r.o.cost2.mean <= 0 && 'doppelte Kosten', r.o.perYear < 5 && 'zu selten'].filter(Boolean).join(', ') : r.status === 'Variante' ? 'gleiche Tage wie bestehende Strategien' : r.status === 'nicht robust' ? 'Nachbar-Einstellungen halten nicht' : '' }));
 const out = { at: new Date().toISOString(), week: wk, space: cands.length, testedTotal: Object.keys(reg.tested).length, batch: todo.length, groups: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.name])),
