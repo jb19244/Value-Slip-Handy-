@@ -15,7 +15,8 @@ jobs:
         run: |
           fail=0
           for f in trade/tradingview-*.txt; do
-            R=$(curl -s -m 60 -F "source=<$f" "https://pine-facade.tradingview.com/pine-facade/translate_light?user_name=Guest&v=3")
+            R=$(curl -s -m 60 -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" -H "Origin: https://www.tradingview.com" -H "Referer: https://www.tradingview.com/" -F "source=<$f" "https://pine-facade.tradingview.com/pine-facade/translate_light?user_name=Guest&pine_id=00000000-0000-0000-0000-000000000000")
+            echo "$R" | head -c 300; echo
             node -e "const j = JSON.parse(process.argv[1]); const e = (j.result && (j.result.errors2 || j.result.errors)) || []; const w = (j.result && (j.result.warnings2 || j.result.warnings)) || [];
               console.log(process.argv[2] + ': ' + (j.success ? 'ok' : 'FEHLER') + ', ' + e.length + ' Fehler, ' + w.length + ' Warnungen');
               e.concat(w).slice(0, 40).forEach((x) => console.log('  Zeile ' + x.start.line + ':' + x.start.column + ' ' + x.message + ' ' + JSON.stringify(x.ctx || {})));
