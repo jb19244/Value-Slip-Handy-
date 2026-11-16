@@ -224,6 +224,7 @@ details.more{margin-top:4px}details.more summary{font-size:13px;color:var(--link
 .kobox .fields{margin-top:6px}
 @media (min-width:700px){ .page{max-width:640px;margin:0 auto} }
 .take{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;font-size:13px}.take>span{flex:1 1 100%;color:var(--warn,#f2b84b)}
+.mp-hit{display:flex;gap:12px;align-items:baseline;margin:12px 0 6px}.mp-hit b{font-size:30px}.mp-hit span{color:var(--muted,#8a96a6);font-size:13px}.mp-risk{display:flex;gap:6px;margin-top:6px}.mp-risk span{flex:1;text-align:center;padding:6px 0;border-radius:10px;background:rgba(255,255,255,.05);font-weight:600}.mp-risk span.cur{outline:1px solid currentColor}.mp-risk small{display:block;font-weight:400;opacity:.7;font-size:11px}.stress{display:grid;gap:2px;margin:10px 0;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);font-size:13px}.stress small{opacity:.7}.desk dd+small{display:block;font-size:11px;opacity:.6}
 </style>
 </head>
 <body>
@@ -885,6 +886,7 @@ function riskEur(){ return (+S.cfg.account || 0) * (+S.cfg.risk || 0) / 100; }
 function ddState(){ if (S.cfg.ddOff || !(+S.cfg.account > 0)) return { on: false, dd: 0, factor: 1, off: !!S.cfg.ddOff }; return ddGuard(+S.cfg.account, realRows()); }
 function dpmSet(){ var b = V.bdp; if (!b || !(b.passed || []).some(function(x){ return x.id === 'pm_930_60_gap_range__1045'; })) return null; return (b.best || []).filter(function(x){ return x.id === 'pm_930_60_gap_range__1045'; })[0] || null; }
 // Genommen oder nicht: Entscheidung je Signal, geht an den Dienst (Konto-Risiko, Folgemeldungen, Widget)
+function lockOut(){ var l = lockState(); return l.lock ? { until: l.until, why: l.why, kind: l.kind } : null; }
 function takeOut(){ var o = {}, now = Date.now(); Object.keys(S.take || {}).forEach(function(id){ var x = S.take[id]; if (x && now - (x.at || 0) < 45 * 864e5) o[id] = { v: x.v, at: x.at }; }); return o; }
 function setTake(id, v){ S.take = S.take || {}; S.take[id] = { v: v, at: Date.now() }; applyTakes(); save(); syncTrade().catch(function(){}); }
 // Abgeschlossene Signale, die du nicht genommen hast, brauchen keine Nachfrage mehr
@@ -896,13 +898,15 @@ function tiltState(){
   if (cl.length < 2 || !((tradeR(cl[0]) || 0) < 0 && (tradeR(cl[1]) || 0) < 0)) return null;
   var until = (cl[0].closedAt || cl[0].at) + 60 * 60e3; return Date.now() < until ? { until: until } : null;
 }
+function lockState(){ return lossLocks(realRows(), riskEur(), { wk: +S.cfg.wkR || 4, mo: +S.cfg.moR || 8, streak: 3 }, Date.now()); }
 function todayState(){
   var day = berlinParts(Date.now()).key, mine = S.trades.filter(function(t){ return berlinParts(t.at).key === day; });
   var closedR = mine.filter(function(t){ return t.status === 'closed'; }).reduce(function(a, t){ return a + (tradeR(t) || 0); }, 0);
   var open = S.trades.filter(function(t){ return t.status === 'open'; });
   var stop = mine.length >= (+S.cfg.maxTrades || 2) ? 'Heute schon ' + mine.length + ' Trades. Dein Limit ist erreicht, keine neuen Trades mehr.' : (closedR <= -(+S.cfg.maxLossR || 2) ? 'Tagesverlust von ' + fmt(-closedR, 1) + 'R erreicht. Für heute Schluss, morgen ist ein neuer Tag.' : '');
   var tl = tiltState(); if (tl && !stop) stop = 'Zwei Verluste in Folge. Abkühlphase bis ' + hm(tl.until) + ' Uhr: kein neuer Trade aus Frust. Steh kurz auf, das Setup kommt wieder.';
-  return { n: mine.length, r: closedR, open: open, stop: stop, tilt: tl };
+  var lk = lockState(); if (lk.lock) stop = '🔒 ' + lk.why + ' Gesperrt bis ' + dm(lk.until) + ' ' + hm(lk.until) + '.';
+  return { n: mine.length, r: closedR, open: open, stop: stop, tilt: tl, lock: lk };
 }
 function loadCtx(){
   if (V.ctx || V.ctxLoading) return; V.ctxLoading = true;
@@ -936,6 +940,8 @@ function viewHeute(){
   var kb = V.bk && V.bk.korb, cal = (V.cal || []).filter(function(e){ var t = Date.parse(e.date); return e.impact === 'High' && berlinParts(t).key === b.key && t > now; });
   h += '<div class="label fold-lbl">Mehr</div>';
   h += fold('markt', 'Markt heute', (hot != null ? (hot ? hot + (hot === 1 ? ' Markt' : ' Märkte') + ' am Tagestief' : 'kein Markt am Tagestief') + ' · ' : '') + (ctx && ctx.vix ? 'VIX ' + fmt(ctx.vix, 1) : esc(s.label)), radarCard() + briefCard() + dayCard);
+  var mpo = S.fold && S.fold.million;
+  h += fold('million', 'Road to Million', mpo && V.mp ? fmt(V.mp.p.pHit * 100, 0) + ' % Chance auf ' + fmt(+S.cfg.goal || 1e6, 0) + ' €' : 'Hochrechnung aus deinen Ergebnissen', mpo ? viewMillion() : '<p class="hint">Öffnen rechnet 600 mögliche Verläufe durch.</p>');
   h += fold('schatten', 'Schatten-Bot', sh.n ? '<span class="' + (sh.net >= 0 ? 'good' : 'bad') + '">' + sgn(sh.net, 0) + ' €</span> · ' + sh.n + ' Trades' : 'startet mit dem ersten Signal', viewShadow(sh));
   var mk0 = monthKeys(), cpv = coachMonth(mk0.prev), cc0 = coachMonth(mk0.cur), cTop = (cc0.n >= 3 ? cc0 : cpv).tips[0];
   if (cpv.yes + cpv.no >= 3 && S.coachSeen !== mk0.prev){ S.fold = S.fold || {}; S.fold.coach = true; S.coachSeen = mk0.prev; V.coachM = mk0.prev; save(); }
@@ -1006,14 +1012,14 @@ function openCard(ts){
     gate(p, '<div class="trade"><div class="row"><span><span class="pill warn">Neu</span> <b>' + esc(p.name) + '</b></span><span class="' + (p.pct == null ? 'muted small' : (p.pct >= 0 ? 'num good' : 'num bad')) + '">' + (p.pct != null ? sgn(p.pct, 2) + ' %' : 'offen') + '</span></div><div class="muted small">' + esc(p.gn || '') + ' · Einstieg ' + fmt(p.entry, i.dec) + ' · Notstop ' + fmt(p.stop, i.dec) + '</div></div>', p.state === 'offen'); });
   var obsTxt = obs.length ? '<p class="muted small" style="margin:10px 0 0">' + obs.length + (obs.length === 1 ? ' Signal läuft' : ' Signale laufen') + ' ohne dich weiter (nicht genommen oder Limit voll). Sie zählen nur für die Live-Prüfung und den Schatten-Bot, Folgemeldungen dazu bekommst du nicht.</p>' : '';
   if (!rows.length) return obsTxt ? '<section class="card" id="offen"><div class="row"><h2>Deine Positionen</h2><span class="muted small">keine</span></div>' + obsTxt + '</section>' : '';
-  return '<section class="card" id="offen"><div class="row"><h2>Deine Positionen</h2><span class="muted small">' + rows.length + '</span></div>' + viewRisk() + rows.join('') + obsTxt + '</section>';
+  return '<section class="card" id="offen"><div class="row"><h2>Deine Positionen</h2><span class="muted small">' + rows.length + '</span></div>' + viewRisk() + viewStress() + rows.join('') + obsTxt + '</section>';
 }
 // ================= Konto-Risiko =================
 function openRiskList(){
   var rp = riskNow(), acct = +S.cfg.account || 0, out = [], sigIds = {};
-  var now = Date.now(), add = function(p, src){ if (p.skip || !takeCounts(S.take, p, now)) return; out.push({ y: p.y || logSym(p), risk: p.risk != null ? +p.risk : rp, name: p.name, src: src, id: p.id, pend: takeState(S.take, p, now) === 'offen' }); };
+  var now = Date.now(), add = function(p, src){ if (p.skip || !takeCounts(S.take, p, now)) return; out.push({ y: p.y || logSym(p), risk: p.risk != null ? +p.risk : rp, name: p.name, src: src, id: p.id, pend: takeState(S.take, p, now) === 'offen', entry: +(p.entry || p.px || p.e) || null, stop: +p.stop || null, dir: p.dir || 1, etf: !!p.etf }); };
   S.trades.filter(function(t){ return t.status === 'open'; }).forEach(function(t){ if (t.sig) sigIds[t.sig.id || t.sig] = 1; var i = instr(t.instr);
-    out.push({ y: i ? i.y : String(t.instr || ''), risk: t.size && t.size.risk && acct ? t.size.risk / acct * 100 : rp, name: t.name, src: 'Tagebuch', id: t.id }); });
+    out.push({ y: i ? i.y : String(t.instr || ''), risk: t.size && t.size.risk && acct ? t.size.risk / acct * 100 : rp, name: t.name, src: 'Tagebuch', id: t.id, entry: +t.entry || null, stop: +t.stop || null, dir: t.dir || 1, etf: false }); });
   (V.ibsPos || []).forEach(function(p){ if (p.state === 'offen') add(p, p.kind === 'tt' ? 'Turnaround Tuesday' : p.kind === 'd3' ? 'Drei Verlusttage' : 'IBS'); });
   (V.swingPos || []).forEach(function(p){ if (p.state === 'offen' || p.state === 'wartet') add(p, 'Swing'); });
   (V.autoPos || []).forEach(function(p){ if (p.state === 'offen') add(p, 'Neu entdeckt'); });
@@ -1126,8 +1132,9 @@ function viewLiveCheck(lc){
   if (!lc.length) return h + '<p class="hint">Sobald Signale abgeschlossen sind, steht hier je Strategie, ob die echten Ergebnisse im erwarteten Bereich der Rückrechnung liegen.</p>' + viewProto() + '</section>';
   var u = function(v, unit){ return v == null ? '–' : sgn(v, 2) + (unit === 'R' ? ' R' : ' %'); };
   var pill = function(q){ return paused[q.g] ? '<span class="pill bad">pausiert</span>' : q.status === 'warnung' ? '<span class="pill bad">Warnung</span>' : q.status === 'beobachten' ? '<span class="pill warn">beobachten</span>' : q.status === 'ok' ? '<span class="pill good">im Rahmen</span>' : '<span class="pill">sammelt</span>'; };
+  var am = allocMult(lc);
   h += '<ul class="lvl">' + lc.map(function(q){
-    return '<li><div class="row"><b>' + esc(q.name) + '</b>' + pill(q) + '</div><div class="lv-n"><span><small>Trades</small>' + q.n + '</span><span><small>Treffer live / Soll</small>' + (q.win != null ? fmt(q.win * 100, 0) + ' %' : '–') + (q.expWin != null ? ' <em>/ ' + fmt(q.expWin * 100, 0) + ' %</em>' : '') + '</span><span><small>Ø live / Soll</small>' + u(q.mean, q.unit) + (q.expMean != null ? ' <em>/ ' + u(q.expMean, q.unit) + '</em>' : '') + '</span></div></li>'; }).join('') + '</ul>';
+    return '<li><div class="row"><b>' + esc(q.name) + '</b><span>' + (am[q.g] ? '<span class="pill ' + (am[q.g] > 1 ? 'good' : 'warn') + '">Risiko ×' + fmt(am[q.g], 2).replace(/0$/, '') + '</span> ' : '') + pill(q) + '</span></div><div class="lv-n"><span><small>Trades</small>' + q.n + '</span><span><small>Treffer live / Soll</small>' + (q.win != null ? fmt(q.win * 100, 0) + ' %' : '–') + (q.expWin != null ? ' <em>/ ' + fmt(q.expWin * 100, 0) + ' %</em>' : '') + '</span><span><small>Ø live / Soll</small>' + u(q.mean, q.unit) + (q.expMean != null ? ' <em>/ ' + u(q.expMean, q.unit) + '</em>' : '') + '</span></div></li>'; }).join('') + '</ul>';
   return h + more('Live / Soll: links das echte Ergebnis, rechts die Erwartung aus der Rückrechnung. Ab 10 Trades wird gerechnet, ab 15 kann eine Strategie pausiert werden.',
     'Jeder Trade trägt die Erwartung seiner Variante vom Zeitpunkt des Signals. Geprüft wird, ob Trefferquote und Durchschnitt so weit darunter liegen, dass normales Pech es kaum erklärt (mehr als 2,5 Standardabweichungen). Dann pausiert die Strategie: Ihre Signale kommen weiter, aber mit „Pausiert“, und der Schatten-Bot verfolgt sie. Liegt sie wieder im Rahmen, hebt der Dienst die Pause auf und meldet sich. „Beobachten“ heißt: schwächer als erwartet, aber noch im Bereich normaler Schwankung.') + viewProto() + '</section>';
 }
@@ -1497,6 +1504,72 @@ function viewCoach(){
   if (c.open) h += '<p class="hint">' + c.open + (c.open === 1 ? ' Signal ist' : ' Signale sind') + ' nicht abgehakt (unter „Echtes Geld“: gehandelt oder ausgelassen). Je vollständiger, desto genauer der Coach.</p>';
   return h + more('Ein Hinweis kommt erst ab drei gleichartigen Fällen und nur, wenn es wirklich Geld kostet.', 'Ausgelassen: was die Signale laut Rückrechnung gebracht hätten, abzüglich Gebühren. Einstieg und Ausstieg: Abstand deiner echten Kauf- und Verkaufskurse zu den Signalkursen, umgerechnet auf den Schein (braucht Kurse, Bezugsverhältnis und KO-Schwelle beim Abhaken oder aus der PDF). Pause und Limit: Trades, die du gehandelt hast, obwohl die Strategie pausiert war oder ⚠️ in der Mitteilung stand.');
 }
+// ================= Road to Million: Hochrechnung aus deinen Ergebnissen =================
+function rSample(){
+  var real = realRows().filter(function(x){ return x.r != null && isFinite(x.r); }).map(function(x){ return x.r; });
+  if (real.length >= 30) return { R: real, src: 'deine ' + real.length + ' echten Trades' };
+  var sig = (V.trackLog || []).filter(function(x){ return x.r != null && isFinite(x.r) && Math.abs(x.r) < 20; }).map(function(x){ return x.r; });
+  if (sig.length >= 30) return { R: sig, src: 'die ' + sig.length + ' abgeschlossenen Signale der App' };
+  return { R: { mean: 0.12, sd: 1.3 }, src: 'eine vorsichtige Annahme (Ø +0,12 R je Trade), bis 30 Signale abgeschlossen sind' };
+}
+function tpmEst(){
+  if (+S.cfg.tpm > 0) return +S.cfg.tpm;
+  var since = Date.now() - 180 * 864e5, n = realRows().filter(function(x){ return x.t > since; }).length;
+  return n >= 6 ? Math.round(n / 6 * 10) / 10 : 8;
+}
+function mpInput(){ var rs = rSample(); return { start: Math.max(0, +S.cfg.account > 0 ? ddGuard(+S.cfg.account, realRows()).eq : 0), save: +S.cfg.save || 0, years: Math.max(0.1, +S.cfg.goalY || 20), tpm: tpmEst(), risk: +S.cfg.risk || 1,
+  R: rs.R, src: rs.src, fee: S.cfg.fee != null ? +S.cfg.fee : 1, target: +S.cfg.goal || 1e6, sims: 600, seed: 11, free: S.cfg.free != null ? +S.cfg.free : 1000, dd: !S.cfg.ddOff }; }
+function viewMillion(){
+  var o = mpInput(), key = JSON.stringify([o.start, o.save, o.years, o.tpm, o.risk, o.fee, o.target, o.free, Array.isArray(o.R) ? o.R.length + ':' + o.R.reduce(function(a, b){ return a + b; }, 0) : 'a']);
+  if (!V.mp || V.mp.key !== key){ var p = millionPath(o), yl = Math.max(1, Math.round(Math.min(o.years, 20))); V.mp = { key: key, p: p, lev: millionLevers(o, yl), ruin: ruinRisk(Object.assign({}, o, { years: 5, save: 0 }), [0.5, 1, 2, 3, 5]), yl: yl }; }
+  var p = V.mp.p, lev = V.mp.lev, ru = V.mp.ruin, e0 = function(v){ return fmt(v, 0) + ' €'; };
+  var h = '<div class="fields f2"><label class="field"><span>Sparrate je Monat (€)</span><input inputmode="decimal" data-cfg="save" value="' + esc(fmtIn(+S.cfg.save || 0, 0)) + '"></label><label class="field"><span>Trades je Monat</span><input inputmode="decimal" data-cfg="tpm" placeholder="' + esc(fmtIn(tpmEst(), 1)) + '" value="' + (+S.cfg.tpm > 0 ? esc(fmtIn(+S.cfg.tpm, 1)) : '') + '"></label>' +
+    '<label class="field"><span>Ziel (€)</span><input inputmode="decimal" data-cfg="goal" value="' + esc(fmtIn(o.target, 0)) + '"></label><label class="field"><span>in Jahren</span><input inputmode="decimal" data-cfg="goalY" value="' + esc(fmtIn(o.years, 1)) + '"></label></div>';
+  h += '<div class="mp-hit"><b>' + fmt(p.pHit * 100, 0) + ' %</b><span>Chance auf ' + e0(o.target) + ' in ' + fmt(o.years, o.years < 1 ? 1 : 0) + (o.years === 1 ? ' Jahr' : ' Jahren') + (p.medMonths ? ' · im Mittel nach ' + (p.medMonths >= 24 ? fmt(p.medMonths / 12, 1) + ' Jahren' : p.medMonths + ' Monaten') : '') + '</span></div>';
+  var show = p.years.filter(function(y){ return y.y > 0 && (y.y <= 3 || y.y % 5 === 0 || y.y === p.years.length - 1); });
+  if (show.length) h += '<table class="tbl"><thead><tr><th>nach</th><th>schlecht</th><th>normal</th><th>gut</th></tr></thead><tbody>' + show.map(function(y){ return '<tr><td>' + y.y + (y.y === 1 ? ' Jahr' : ' Jahren') + '</td><td>' + e0(y.p10) + '</td><td><b>' + e0(y.p50) + '</b></td><td>' + e0(y.p90) + '</td></tr>'; }).join('') + '</tbody></table>';
+  h += '<div class="label" style="margin-top:12px">Was bringt am meisten (normal, nach ' + V.mp.yl + (V.mp.yl === 1 ? ' Jahr' : ' Jahren') + ')</div><ul class="list-plain">' + lev.levers.map(function(x, i){ return '<li>' + (i === 0 ? '🥇 ' : '') + esc(x.name) + ': <b>' + sgn(x.gain, 0) + ' €</b></li>'; }).join('') + '</ul>';
+  var bad = ru.filter(function(x){ return x.pRuin >= 0.1; })[0];
+  h += '<div class="label" style="margin-top:12px">Risiko je Trade: Chance, in 5 Jahren irgendwann die Hälfte zu verlieren</div><div class="mp-risk">' + ru.map(function(x){ return '<span class="' + (x.pRuin >= 0.1 ? 'bad' : x.pRuin >= 0.03 ? 'warn' : 'good') + (Math.abs(x.risk - (+S.cfg.risk || 1)) < 1e-9 ? ' cur' : '') + '"><small>' + fmt(x.risk, 1).replace(/,0$/, '') + ' %</small>' + fmt(x.pRuin * 100, 0) + ' %</span>'; }).join('') + '</div>' +
+    (bad ? '<p class="hint warn">Ab ' + fmt(bad.risk, 1).replace(/,0$/, '') + ' % je Trade wird es gefährlich. Mehr Risiko macht das Ziel nicht sicherer, nur schneller oder gar nicht.</p>' : '');
+  return h + more('Gerechnet mit ' + esc(o.src) + ', ' + fmt(o.tpm, 1) + ' Trades im Monat, ' + fmt(o.risk, 2).replace(/,?0+$/, '') + ' % Risiko, Gebühren, Rückgang-Schutz und Abgeltungsteuer nach Freibetrag. 600 mögliche Verläufe; „schlecht“ und „gut“ sind die 10 % schwächsten und stärksten.',
+    'Die Rechnung zieht zufällig aus deinen bisherigen Ergebnissen, so oft wie du im Monat handelst, und legt die Sparrate oben drauf. Das zeigt die Bandbreite, nicht die Zukunft: Märkte können sich ändern, und wenige Trades machen die Schätzung unsicher. Ehrlich gesagt: Bei kleinen Konten kommt der Großteil des Wegs aus Einzahlungen und Geduld, nicht aus höherem Risiko.');
+}
+// ================= Crash-Test: deine offenen Positionen an einem Tag wie im März 2020 =================
+function viewStress(){
+  var acct = +S.cfg.account || 0, L = openRiskList().filter(function(x){ return x.entry > 0; }); if (!L.length || !acct) return '';
+  var st = stressTest(L.map(function(x){ return { name: x.name, y: x.y, dir: x.dir, entry: x.entry, stop: x.stop, risk: acct * x.risk / 100, ko: !x.etf }; }));
+  return '<div class="stress"><span>Crash-Test (Tag wie März 2020)</span><b class="' + (st.loss > acct * 0.1 ? 'bad' : '') + '">−' + fmt(st.loss, 0) + ' € · ' + fmt(st.loss / acct * 100, 1) + ' % vom Konto</b>' +
+    (st.extra > 0 ? '<small>davon ' + fmt(st.extra, 0) + ' € über deinem geplanten Risiko, weil Stops ohne Hebel überrannt werden können. Knock-outs verlieren höchstens den Einsatz.</small>' : '<small>Mehr als dein geplantes Risiko geht nicht verloren: die Knock-outs fallen höchstens auf null.</small>') + '</div>';
+}
+// ================= Desk-Bericht, Kosten nach Uhrzeit, Steuer =================
+function expR(x){ var e = x.ex; if (!e || e.mean == null) return 0; if (e.unit === 'R') return e.mean; return x.pct ? e.mean * x.r / x.pct : 0; }
+function viewDesk(){
+  var mk = monthKeys(), sel = V.deskM || mk.cur, re = riskEur(), cost = (+S.cfg.fee || 0) * 2, inM = function(t){ return berlinParts(t).key.slice(0, 7) === sel; };
+  var items = (V.trackLog || []).filter(function(x){ var m = S.real[x.id]; return x.r != null && m && m.traded && inM(x.x || x.t); }).map(function(x){ return { r: x.r, exp: expR(x), eur: S.real[x.id].eur }; });
+  var c = coachMonth(sel), d = deskReport(items, re, cost, Math.max(0, c.skipEur), c.ownEur), row = function(k, v, hint){ return '<div><dt>' + k + '</dt><dd class="' + (v > 0 ? 'good' : v < 0 ? 'bad' : '') + '">' + sgn(v, 0) + ' €</dd>' + (hint ? '<small>' + hint + '</small>' : '') + '</div>'; };
+  var h = '<section class="card" id="desk"><div class="row"><h2>Desk-Bericht</h2><div class="seg">' + [mk.prev, mk.cur].map(function(m){ return '<button data-act="deskm" data-m="' + m + '" aria-pressed="' + (m === sel) + '">' + esc(monthName(m)) + '</button>'; }).join('') + '</div></div>';
+  if (!d.n && !c.own) return h + '<p class="hint">Sobald gehandelte Signale abgeschlossen sind, zerlege ich dein Ergebnis wie am Bank-Desk: Was war Erwartung, was Glück oder Pech, was hat die Ausführung gekostet, was die Disziplin.</p></section>';
+  return h + '<dl class="kv desk">' + row('Erwartung der Strategien', d.erwartung, d.n + ' Trades × Rückrechnung') + row('Glück / Pech', d.glueck, 'normale Schwankung') + row('Ausführung', d.ausfuehrung, 'Spread, Aufgeld, Gebühren, Timing') + row('Ausgelassene Signale', d.ausgelassen, 'was du verpasst hast') + row('Eigene Trades', d.eigene, 'ohne Signal') + row('Ergebnis', d.gesamt, '') + '</dl>' +
+    '<p class="hint">' + (d.ausfuehrung < -Math.abs(d.erwartung) * 0.5 && d.n >= 3 ? 'Die Ausführung frisst mehr als die Hälfte der Erwartung: das ist dein größter Hebel. Schau in „Kosten nach Uhrzeit“.' : d.glueck < 0 && d.erwartung > 0 ? 'Die Strategien lagen im Plus, das Pech hat es verdeckt. Das gleicht sich über viele Trades aus, nicht über einen Monat.' : 'Nur die ersten beiden Zeilen hast du nicht in der Hand. Alles darunter schon.') + '</p></section>';
+}
+function viewCostRep(){
+  var re = riskEur(); if (!re) return '';
+  var items = (V.trackLog || []).filter(function(x){ var m = S.real[x.id]; return m && m.traded; }).map(function(x){ var m = S.real[x.id], c = execCost(x, m); return c && c.entry != null ? { t: x.t, prod: m.prod, entryR: c.entry / re, exitR: c.exit != null ? c.exit / re : null } : null; }).filter(Boolean);
+  if (items.length < 3) return '';
+  var r = costReport(items);
+  return '<section class="card" id="kosten"><div class="row"><h2>Kosten nach Uhrzeit</h2><span class="muted small">' + r.n + ' Trades · Ø ' + fmt(r.avg, 2) + ' R</span></div><table class="tbl"><thead><tr><th></th><th>Trades</th><th>Einstieg</th><th>Ausstieg</th></tr></thead><tbody>' +
+    r.rows.map(function(x){ return '<tr><td>' + esc(x.k.replace(/^(Zeit|Produkt): /, '')) + '</td><td>' + x.n + '</td><td>' + (x.entry != null ? fmt(x.entry, 2) + ' R' : '–') + '</td><td>' + (x.exit != null ? fmt(x.exit, 2) + ' R' : '–') + '</td></tr>'; }).join('') + '</tbody></table>' +
+    (r.rules.length ? '<ul class="list-plain">' + r.rules.map(function(t){ return '<li class="warn">⚠️ ' + esc(t) + '</li>'; }).join('') + '</ul>' : '<p class="hint">Keine Uhrzeit fällt aus dem Rahmen.</p>') + '</section>';
+}
+function viewTax(){
+  var y = berlinParts(Date.now()).key.slice(0, 4), g = realRows().filter(function(x){ return berlinParts(x.t).key.slice(0, 4) === y; }).map(function(x){ return x.eur; });
+  if (!g.length) return '';
+  var free = S.cfg.free != null ? +S.cfg.free : 1000, t = taxEst(g, free, +S.cfg.kist || 0);
+  return '<section class="card" id="steuer"><div class="row"><h2>Steuer ' + y + ' (Schätzung)</h2><span class="muted small">Trade Republic führt sie selbst ab</span></div><dl class="kv"><div><dt>Ergebnis</dt><dd class="' + (t.net >= 0 ? 'good' : 'bad') + '">' + sgn(t.net, 0) + ' €</dd></div><div><dt>Freibetrag übrig</dt><dd>' + fmt(t.freeLeft, 0) + ' €</dd></div><div><dt>Steuer</dt><dd>' + fmt(t.tax, 0) + ' €</dd></div><div><dt>Bleibt dir</dt><dd class="' + (t.after >= 0 ? 'good' : 'bad') + '">' + sgn(t.after, 0) + ' €</dd></div></dl>' +
+    '<div class="fields f2"><label class="field"><span>Freibetrag (€)</span><input inputmode="decimal" data-cfg="free" value="' + esc(fmtIn(free, 0)) + '"></label><label class="field"><span>Kirchensteuer (%)</span><input inputmode="decimal" data-cfg="kist" value="' + esc(fmtIn(+S.cfg.kist || 0, 0)) + '"></label></div>' +
+    '<p class="hint">Abgeltungsteuer 25 % plus Soli' + (+S.cfg.kist ? ' und Kirchensteuer' : '') + ' auf alles über dem Freibetrag. Verluste werden im selben Jahr verrechnet. Schätzung aus deinen Einträgen unter „Echtes Geld“; maßgeblich ist die Jahressteuerbescheinigung von Trade Republic. Keine Steuerberatung.</p></section>';
+}
 function viewReal(){
   var rows = realRows(), L2 = (V.trackLog || []).filter(function(x){ return x.r != null; });
   var asked = L2.filter(function(x){ return !S.real[x.id]; }).slice(-5).reverse();
@@ -1548,7 +1621,7 @@ function parseTradeCsv(txt){
   lines.slice(1).forEach(function(l){ var c = csvSplit(l, d), t = dateAny(c[iD]), v = iP >= 0 ? numDE(c[iP]) : (numDE(c[iR]) != null ? numDE(c[iR]) * re : null); if (t == null || v == null) return; rows.push({ t: t, name: iN >= 0 ? (c[iN] || 'Import').slice(0, 40) : 'Import', eur: Math.round(v * 100) / 100 }); });
   return { rows: rows, cols: { datum: lines[0] && csvSplit(lines[0], d)[iD], name: iN >= 0 ? csvSplit(lines[0], d)[iN] : null, ergebnis: csvSplit(lines[0], d)[iP >= 0 ? iP : iR] } };
 }
-document.addEventListener('toggle', function(ev){ var d = ev.target; if (d && d.dataset && d.dataset.fold){ S.fold = S.fold || {}; if (d.open) S.fold[d.dataset.fold] = 1; else delete S.fold[d.dataset.fold]; save(); } }, true);
+document.addEventListener('toggle', function(ev){ var d = ev.target; if (d && d.dataset && d.dataset.fold){ S.fold = S.fold || {}; if (d.open) S.fold[d.dataset.fold] = 1; else delete S.fold[d.dataset.fold]; save(); if (d.open && d.dataset.fold === 'million' && !d.querySelector('.mp-hit')) setTimeout(rerender, 30); } }, true);
 document.addEventListener('change', function(ev){ var fi = ev.target; if (fi && fi.id === 'realfile' && fi.files && fi.files[0]){ realImport(fi.files[0]); fi.value = ''; }
   if (fi && fi.id === 'trpdffile' && fi.files && fi.files.length){ var fl = Array.prototype.slice.call(fi.files); fi.value = ''; trImport(fl); }
   if (fi && fi.id === 'bakfile' && fi.files && fi.files[0]){ var f0 = fi.files[0]; fi.value = ''; f0.text().then(function(tx){ restoreFrom(tx, false); toast('Daten eingelesen'); rerender(); }).catch(function(e){ toast(e.message || 'Datei nicht lesbar'); }); } });
@@ -1936,7 +2009,7 @@ function viewBuch(){
       (s.n < 20 ? '<p class="hint">Ab etwa 20 Trades werden die Zahlen aussagekräftig.</p>' : (s.lo != null ? '<p class="hint">Mit 95 % Sicherheit liegt dein echter Schnitt zwischen ' + sgn(s.lo, 2) + ' und ' + sgn(s.hi, 2) + ' R je Trade.</p>' : '')) + '</section>';
     h += '<section class="card"><h2>Was bei dir funktioniert</h2>' + statTable('Ampel beim Einstieg', a.byAmpel.map(function(x){ return Object.assign({}, x, { key: { gruen: 'Grün', gelb: 'Gelb', rot: 'Rot' }[x.key] || x.key }); })) + statTable('Setup', a.bySetup) + statTable('Markt', a.byInstr) + checkTable(a.checks) + (adv && adv.tips.length ? '<div class="label" style="margin-top:14px">Stops und Ziele</div><ul class="list-plain">' + adv.tips.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') + '</section>';
   } else h += '<section class="card"><h2>Tagebuch</h2><p class="hint">Trag Trades über „Setup prüfen“ ein. Nach dem Schließen zeige ich dir, welche Setups und welche Bestätigungen bei dir wirklich Geld bringen.</p></section>';
-  h = viewReal() + h;
+  h = viewReal() + viewDesk() + viewCostRep() + viewTax() + h;
   h += '<section class="card"><div class="row"><h2>Offen</h2><span class="muted small">' + open.length + '</span></div>' + (open.length ? open.map(viewTrade).join('') : '<p class="hint">Keine offenen Trades.</p>') + '</section>';
   h += viewLive();
   h += viewAudit();
@@ -2227,6 +2300,8 @@ function viewMehr(){
     '<p class="hint">Bei ' + eur(c.account) + ' riskierst du ' + eur(c.account * c.risk / 100) + ' pro Trade. Die Positionsgröße im Check richtet sich danach.</p>' +
     '<label class="switch"><span>Rückgang-Schutz: ab 10 % unter dem Kontohoch halbes Risiko, bis der Rückgang wieder unter 5 % liegt</span><input type="checkbox" data-cfgb="ddGuard"' + (c.ddOff ? '' : ' checked') + '></label>' + (function(){ var d = ddState(); return d.on ? '<p class="hint warn">Aktiv: Konto ' + fmt(d.dd * 100, 1).replace(/,0$/, '') + ' % unter dem Hoch, du riskierst gerade ' + eur((+c.account || 0) * riskNow() / 100) + ' je Trade.</p>' : (!c.ddOff && d.peak ? '<p class="hint">Echtes Konto ' + eur(d.eq) + ', Hoch ' + eur(d.peak) + (d.dd > 0 ? ', ' + fmt(d.dd * 100, 1).replace(/,0$/, '') + ' % darunter' : '') + '. Grundlage sind deine Einträge unter „Echtes Geld“.</p>' : ''); })() +
     '<div class="label" style="margin-top:14px">Tagesgrenzen</div><div class="fields f2"><label class="field"><span>Max. Trades pro Tag</span><input inputmode="numeric" data-cfg="maxTrades" value="' + esc(c.maxTrades || 2) + '"></label><label class="field"><span>Schluss bei Tagesverlust (R)</span><input inputmode="decimal" data-cfg="maxLossR" value="' + esc(fmtIn(c.maxLossR || 2, 1)) + '"></label></div>' +
+    '<div class="fields f2" style="margin-top:8px"><label class="field"><span>Sperre bei Wochenverlust (R)</span><input inputmode="decimal" data-cfg="wkR" value="' + esc(fmtIn(c.wkR || 4, 1)) + '"></label><label class="field"><span>Sperre bei Monatsverlust (R)</span><input inputmode="decimal" data-cfg="moR" value="' + esc(fmtIn(c.moR || 8, 1)) + '"></label></div>' +
+    '<p class="hint">Wie am Desk: Ist die Grenze erreicht, sperrt die App neue Signale bis Montag bzw. Monatsende. Nach drei Verlusten in Folge gibt es 24 Stunden Pause. Laufende Positionen werden weiter betreut.</p>' +
     '<div class="fields f2" style="margin-top:8px"><label class="field"><span>Max. Risiko aller offenen Trades (% vom Konto)</span><input inputmode="decimal" data-cfg="heat" value="' + esc(fmtIn(c.heat || 5, 1)) + '"></label></div>' +
     '<p class="hint">Wenn viele Signale gleichzeitig kommen, verkleinert jede Mitteilung das Risiko automatisch, damit alle offenen Trades zusammen diese Grenze nicht überschreiten. Ist sie voll, steht ⚠️ in der Mitteilung.</p>' +
     '<p class="hint">Profis hören nach einem schlechten Tag auf. Unter „Heute“ siehst du, wenn die Grenze erreicht ist.</p></section>' + viewSim();
@@ -2274,7 +2349,7 @@ function post(path, body){
 function syncBody(extra){
   var kw = []; if (S.watch.indexOf('WTI') >= 0) kw.push('crude|oil');
   var trades = S.trades.filter(function(t){ return t.status === 'open'; }).slice(0, 10).map(function(t){ return { id: t.id, k: t.instr, name: t.name, dir: t.dir, entry: t.entry, stop: t.stop, target: t.target, off: t.off || 0, at: t.at, ko: t.ko || 0, sig: t.sig || null }; });
-  return Object.assign({ token: token(), take: takeOut(), acct: +S.cfg.account || 0, risk: S.cfg.risk ? riskNow() : 0, dd: ddState().on ? ddState().dd : 0, wkh: S.cfg.wk && S.cfg.wkh ? S.cfg.wkh : '', heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, dtb: S.cfg.push.dtb !== false, dpm: S.cfg.push.dpm !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
+  return Object.assign({ token: token(), take: takeOut(), lock: lockOut(), alloc: allocMult(liveCheck(V.trackLog || [])), acct: +S.cfg.account || 0, risk: S.cfg.risk ? riskNow() : 0, dd: ddState().on ? ddState().dd : 0, wkh: S.cfg.wk && S.cfg.wkh ? S.cfg.wkh : '', heat: +S.cfg.heat || 5, shadow: +S.cfg.shadow || 1000, fee: S.cfg.fee != null ? +S.cfg.fee : 1, etf: S.cfg.push.etf !== false, ccys: ccyList(), kw: kw, lead: S.cfg.push.lead, kz: S.cfg.push.kz, on: S.cfg.push.on, watch: S.watch.slice(0, 8), scan: S.cfg.push.scan !== false, orb: S.cfg.push.orb !== false, ibs: S.cfg.push.ibs !== false, depot: S.cfg.push.depot !== false, brief: S.cfg.push.brief !== false, dtb: S.cfg.push.dtb !== false, dpm: S.cfg.push.dpm !== false, newsRes: S.cfg.push.newsRes !== false, finder: S.cfg.push.finder !== false, tight: !!S.cfg.push.tight, ibsMax1: S.cfg.push.ibsMax1 !== false, bgreen: S.cfg.push.bgreen !== false, swing: S.cfg.push.swing !== false, scanAll: S.cfg.push.quality === 'all', quality: 'creme', trades: trades, alerts: S.alerts.filter(function(a){ return !a.dead || Date.now() - a.since < 86400e3; }).slice(0, 20).map(function(a){ return { id: a.id, kind: a.kind, sym: a.sym, name: a.name, lo: a.lo, hi: a.hi, note: a.note, since: a.since, hit: a.hit, dir: a.dir, entry: a.entry, stop: a.stop, target: a.target, exp: a.exp, mode: a.mode, ccy: a.ccy, dec: a.dec, dead: a.dead }; }) }, extra || {});
 }
 function syncTrade(extra){
   if (!S.cfg.push.on && !(extra && extra.sub)) return Promise.resolve(null);
@@ -2320,7 +2395,7 @@ function bind(root){
   $$('[data-act]', root).forEach(function(el){ el.addEventListener('click', onAct); });
   $$('input[data-f]', root).forEach(function(el){ el.addEventListener('input', function(){ S.form[el.dataset.f] = el.value; if (el.dataset.f === 'ratio') S.ko[S.form.k] = el.value; save();
     if (el.dataset.f === 'entry' || el.dataset.f === 'stop'){ var kb = $('.kobox:not(.calc)'), i = instr(S.form.k); if (kb && i){ var w = document.createElement('div'); w.innerHTML = viewKo(S.form, i); var nb = w.firstChild; kb.replaceWith(nb); bind(nb); } } calcRefresh(); }); });
-  $$('input[data-cfg]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.cfg; if (k === 'url'){ S.cfg.url = el.value.trim(); mem = {}; } else { var v = pnum(el.value); if (v >= 0) S.cfg[k] = v; } save(); if (['account', 'risk', 'heat', 'shadow', 'fee'].indexOf(k) >= 0) syncTrade().catch(function(){}); rerender(); }); });
+  $$('input[data-cfg]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.cfg; if (k === 'url'){ S.cfg.url = el.value.trim(); mem = {}; } else { var v = pnum(el.value); if (v >= 0) S.cfg[k] = v; } save(); if (['account', 'risk', 'heat', 'shadow', 'fee', 'wkR', 'moR'].indexOf(k) >= 0) syncTrade().catch(function(){}); rerender(); }); });
   $$('input[data-watch]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.watch, i = S.watch.indexOf(k); if (el.checked && i < 0) S.watch.push(k); if (!el.checked && i >= 0) S.watch.splice(i, 1); save(); syncTrade(); }); });
   $$('input[data-cfgb]', root).forEach(function(el){ el.addEventListener('change', function(){ if (el.dataset.cfgb === 'ddGuard') S.cfg.ddOff = !el.checked; save(); syncTrade().catch(function(){}); rerender(); }); });
   $$('input[data-push]', root).forEach(function(el){ el.addEventListener('change', function(){ S.cfg.push[el.dataset.push] = el.checked; save(); syncTrade(); }); });
@@ -2434,6 +2509,7 @@ function onAct(e){
   if (a === 'wkoff'){ delete S.cfg.wk; delete S.cfg.wkh; save(); syncTrade().catch(function(){}); toast('Widget ausgeschaltet'); return rerender(); }
   if (a === 'wkcopy'){ var sc = wkScript(); return (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(sc) : Promise.reject()).then(function(){ toast('Script kopiert, jetzt in Scriptable einfügen'); }, function(){ var ta = $('#wkscript'); if (ta){ ta.closest('details').open = true; ta.focus(); ta.select(); } toast('Bitte das Script markieren und kopieren'); }); }
   if (a === 'take'){ var tv = +el.dataset.v; setTake(el.dataset.id, tv); toast(tv ? 'Als deine Position gespeichert' : 'Nicht genommen: zählt nicht mehr zum Risiko'); return rerender(); }
+  if (a === 'deskm'){ V.deskM = el.dataset.m; return rerender(); }
   if (a === 'coachm'){ V.coachM = el.dataset.m; return rerender(); }
   if (a === 'risk'){ S.cfg.risk = +el.dataset.r; save(); syncTrade().catch(function(){}); return rerender(); }
   if (a === 'lead'){ S.cfg.push.lead = +el.dataset.m; save(); syncTrade(); return rerender(); }
