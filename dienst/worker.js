@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '5b490c0ed7';
+const WORKER_VER = 'c64065558b';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3959,7 +3959,7 @@ async function autoCfg(env, nowMs) {
       if (!r.ok) return {};
       const j = await r.json();
       return { at: j.at, week: j.week, batch: j.batch || 0, testedTotal: j.testedTotal || 0, space: j.space || 0, found: (j.found || []).map((f) => ({ id: f.id, name: f.name })),
-        live: (j.live || []).filter((l) => l && l.rule && Array.isArray(l.rule.c) && Array.isArray(l.syms) && l.stats).slice(0, 5).map((l) => ({ id: String(l.id).slice(0, 80), name: String(l.name).slice(0, 80), text: String(l.text).slice(0, 300), rule: l.rule, syms: l.syms.slice(0, 12), stats: l.stats, tval: +l.tval || 0, since: l.since })) };
+        live: (j.live || []).filter((l) => l && l.rule && Array.isArray(l.rule.c) && Array.isArray(l.syms) && l.stats).slice(0, 7).map((l) => ({ id: String(l.id).slice(0, 80), name: String(l.name).slice(0, 80), text: String(l.text).slice(0, 300), rule: l.rule, syms: l.syms.slice(0, 12), stats: l.stats, tval: +l.tval || 0, since: l.since })) };
     });
     return c.data || {};
   } catch (e) { return {}; }
@@ -4796,7 +4796,7 @@ async function runTrade(env, nowMs) {
       const st1 = (R) => R.stats.n + ' Trades, ' + Math.round(R.stats.win * 100) + ' % Gewinner, Ø +' + (+R.stats.mean).toFixed(2).replace('.', ',') + ' %';
       await send('aa:' + fresh.map((R) => R.id).join('|').slice(0, 80), { title: '🧪 ' + (fresh.length === 1 ? 'Neue Strategie entdeckt' : fresh.length + ' neue Strategien entdeckt'), body: (fresh.length === 1 ? fresh[0].name + ': ' + fresh[0].text + ' Rückrechnung seit 2000: ' + st1(fresh[0]) + ' nach Kosten.' : fresh.map((R) => R.name + ' (' + st1(R) + ')').join('; ') + '. Alle nach Kosten, Rückrechnung seit 2000.') + ' Alle Hürden der Sonntags-Suche genommen, ab jetzt in Bewährung: höchstens ein Signal pro Abend, mit „Neu entdeckt“ markiert, erst mit halber Größe handeln. Die Live-Prüfung vergleicht jeden Trade mit der Rückrechnung.', tag: 'auto', url: './' }); }
     const ny = nyMin(nowMs), win = ny >= 15 * 60 + 40 && ny < 15 * 60 + 56, confW = ny >= 16 * 60 + 5 && ny < 16 * 60 + 40;
-    let fetches = 12;
+    let fetches = 16; // echte Abrufe (US-Indizes + Sektoren = 13), geteilt von allen Regeln
     for (const p of t.autoPos.filter((q) => q.state === 'offen')) {
       const needConf = confW && p.day === dayKey && !p.conf;
       if (!win && !needConf && nowMs - (p.chk || 0) < 55 * 60e3) continue;
@@ -4820,7 +4820,8 @@ async function runTrade(env, nowMs) {
       const key = R.id + '|' + y; if (t.autoSent[key] === dayKey || fetches <= 0) continue;
       if (t.autoPos.some((q) => q.y === y && q.rid === R.id && q.state === 'offen')) continue;
       const pr = TL.trProduct(y); if (pr.none || (t.tight && pr.etf)) continue;
-      fetches--; const d1 = await candlesOf(y, '1d', '2y'); if (!d1 || d1.length < 210) continue;
+      if (!((y + '1d2y') in cache)) fetches--; // nur echte Abrufe zaehlen: mehrere Regeln auf demselben Markt teilen sich die Kerzen
+      const d1 = await candlesOf(y, '1d', '2y'); if (!d1 || d1.length < 210) continue;
       const li = d1.length - 1, last = d1[li]; if (dKey(last.t) !== dayKey) continue;
       t.autoSent[key] = dayKey; dirty = true;
       const S = TL.ruleSeries(d1); if (!TL.ruleHit(d1, li, R.rule, S)) continue;
