@@ -1,311 +1,398 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 // TRADE CHECK · AMPEL
-// Eine klare Antwort statt vieler Zonen: Lohnt sich jetzt ein Trade, und in welche Richtung?
+// Eine Antwort statt vieler Zonen: Gibt es JETZT einen Trade, der sich nachweislich lohnt?
 //
-// So entscheidet die Ampel (alles nur aus abgeschlossenen Kerzen, nichts wird nachgezeichnet):
-//  1) RICHTUNG   aus der 4h-Struktur: Schluss über dem letzten 4h-Hoch = aufwärts, Schluss unter dem
-//                geschützten 4h-Tief = Wende abwärts (und umgekehrt).
-//  2) KORREKTUR  Ein guter Einstieg kommt erst, wenn der Kurs in die günstige Hälfte der letzten
-//                4h-Bewegung zurückläuft (Long: untere Hälfte, Short: obere Hälfte), ohne das
-//                geschützte Tief/Hoch zu brechen.
-//  3) WENDE      Korrigiert der Kurs weiter oder dreht er? Das zeigt das Chart-Zeitfenster (15 Min):
-//                Solange es tiefere Hochs macht, läuft die Korrektur. Erst ein Schluss über dem letzten
-//                Hoch (Long) ist die Bestätigung, dass der Kurs in deine Richtung dreht.
-//  4) LOHNT ES?  Stop unter dem Korrektur-Tief, Ziel ist das 4h-Hoch (dort liegt die Liquidität).
-//                Signal nur, wenn das Chance-Risiko-Verhältnis (CRV) mindestens 2 beträgt.
-//  5) BILANZ     Die Ampel rechnet jedes ihrer Signale auf diesem Chart nach (Ziel oder Stop zuerst,
-//                Spread als Kosten) und sagt dir ehrlich, ob die Regel auf DIESEM Markt bisher Geld bringt.
+// Warum keine Zonen mehr (FVG, Order Blocks, Liquidität über 15 Min / 1 h / 4 h)?
+// Wir haben genau die Frage "korrigiert der Kurs weiter oder dreht er in meine Richtung?" mit
+// 5-Minuten-Kursen seit 2013 auf DAX, Nasdaq, S&P 500, Dow, Gold, EUR/USD und GBP/USD nachgerechnet:
+// 4h-Richtung + Rücklauf in die günstige Hälfte + 15-Min-Wende (CHoCH) + Ziel 4h-Hoch.
+// Ergebnis: auf keinem der 7 Märkte ein Plus nach Spread, nicht besser als auf Zufallskursen.
+// Die Zonen sehen überzeugend aus, sagen aber die nächste Bewegung nicht voraus.
 //
-// Empfohlen: 15-Minuten-Chart. Die Zonen-Ansicht (Order Blocks, FVG) gibt es weiter im Indikator
-// "Trade Check · Zonen", für die Entscheidung brauchst du sie nicht.
+// Die Ampel zeigt darum nur Regeln, die die Rückrechnung bestanden haben, und rechnet sie auf
+// deinem Chart selbst nach:
+//  · IBS (Tag): Index schließt im unteren Fünftel der Tagesspanne über dem 200-Tage-Schnitt → kaufen
+//  · Turnaround Tuesday (US-Indizes): schwacher Montag → kaufen
+//  · Drei Verlusttage im Aufwärtstrend → kaufen
+//  · DAX-Trend-Ausbruch (9:00–9:15, Order ab 9:35) und DAX-Nachmittag (15:30–16:30, Order ab 16:40)
+// Grün heißt: Signal nach einer belegten Regel und auf diesem Markt bisher im Plus. Sonst nicht.
+// Alles nur aus abgeschlossenen Kerzen; Tagessignale gelten, wenn der Tag so schließt.
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-indicator("Trade Check · Ampel", shorttitle="TC Ampel", overlay=true, max_lines_count=60, max_labels_count=60, max_boxes_count=10)
+indicator("Trade Check · Ampel", shorttitle="TC Ampel", overlay=true, max_lines_count=40, max_labels_count=80)
 
 // ───────── Einstellungen ─────────
-grpR = "Regel"
-htf = input.timeframe("240", "Richtung aus Zeitebene", group=grpR)
-hL = input.int(3, "Swing-Länge Richtung (Kerzen links/rechts)", minval=1, maxval=10, group=grpR)
-lL = input.int(2, "Swing-Länge Wende im Chart", minval=1, maxval=10, group=grpR)
-disc = input.float(0.5, "Korrektur mindestens bis (Anteil der Bewegung)", options=[0.5, 0.618], group=grpR)
-minCrv = input.float(2.0, "Mindest-CRV", minval=1.0, step=0.5, group=grpR)
-costTicks = input.float(0.0, "Spread in Kurspunkten (0 = automatisch 2 Ticks)", minval=0.0, group=grpR)
 grpA = "Anzeige"
-showZone = input.bool(true, "Kaufzone / Verkaufszone und 4h-Marken zeigen", group=grpA)
-showSig = input.bool(true, "Signale im Chart (▲ / ▼)", group=grpA)
-showPos = input.bool(true, "Laufenden Trade zeigen (Einstieg, Stop, Ziel)", group=grpA)
 tabPos = input.string("Oben rechts", "Ampel: Position", options=["Oben rechts", "Unten rechts", "Oben links", "Unten links"], group=grpA)
-big = input.bool(true, "Große Schrift", group=grpA)
-upCol = input.color(#2FD07A, "Farbe Long", group=grpA)
-dnCol = input.color(#FF5A5F, "Farbe Short", group=grpA)
+big = input.bool(true, "Große Überschrift", group=grpA)
+showLines = input.bool(true, "Order, Stop und Spanne im Chart", group=grpA)
+showMarks = input.bool(true, "Vergangene Signale markieren", group=grpA)
+upCol = input.color(#2FD07A, "Farbe Long / lohnt", group=grpA)
+dnCol = input.color(#FF5A5F, "Farbe Short / Verlust", group=grpA)
 amb = input.color(#F2B84B, "Farbe Warten", group=grpA)
+grpR = "Regeln"
+useIbs = input.bool(true, "IBS (Tag)", group=grpR)
+useTT = input.bool(true, "Turnaround Tuesday (nur US-Indizes)", group=grpR)
+useD3 = input.bool(true, "Drei Verlusttage im Aufwärtstrend", group=grpR)
+useDtb = input.bool(true, "DAX-Trend-Ausbruch (9:35)", group=grpR)
+useDpm = input.bool(true, "DAX-Nachmittag (16:40)", group=grpR)
+daxCost = input.float(1.2, "DAX: Spread in Punkten", minval=0.0, step=0.1, group=grpR)
 
-// ───────── 4h-Richtung (nur abgeschlossene Kerzen der höheren Zeitebene) ─────────
-f_htf(int L) =>
-    var int trend = 0
-    var float legLow = na
-    var float legHigh = na
-    var int extT = 0
-    var float lastPH = na
-    var int lastPHt = 0
-    var float lastPL = na
-    var int lastPLt = 0
-    ph = ta.pivothigh(high, L, L)
-    pl = ta.pivotlow(low, L, L)
-    if not na(ph)
-        lastPH := ph
-        lastPHt := time[L]
-    if not na(pl)
-        lastPL := pl
-        lastPLt := time[L]
-    if trend == 1
-        if close < legLow
-            trend := -1
-            legLow := low
-            extT := time
-        else if high > legHigh
-            if not na(lastPL) and lastPLt > extT and lastPL > legLow
-                legLow := lastPL
-            legHigh := high
-            extT := time
-    else if trend == -1
-        if close > legHigh
-            trend := 1
-            legHigh := high
-            extT := time
-        else if low < legLow
-            if not na(lastPH) and lastPHt > extT and lastPH < legHigh
-                legHigh := lastPH
-            legLow := low
-            extT := time
-    else
-        if not na(lastPH) and not na(lastPL) and close > lastPH
-            trend := 1
-            legLow := lastPL
-            legHigh := high
-            extT := time
-        else if not na(lastPH) and not na(lastPL) and close < lastPL
-            trend := -1
-            legHigh := lastPH
-            legLow := low
-            extT := time
-    [trend[1], legLow[1], legHigh[1], extT[1]]
-
-[hTrend, hLow, hHigh, hExt] = request.security(syminfo.tickerid, htf, f_htf(hL), lookahead=barmerge.lookahead_on)
-tfOk = timeframe.in_seconds() < timeframe.in_seconds(htf)
-
-// ───────── Wende im Chart-Zeitfenster ─────────
-atrC = ta.atr(14)
-cost = costTicks > 0 ? costTicks : 2 * syminfo.mintick
-cph = ta.pivothigh(high, lL, lL)
-cpl = ta.pivotlow(low, lL, lL)
-var float lastLH = na
-var int lastLHt = 0
-var float lastHL = na
-var int lastHLt = 0
-var int usedPiv = 0
-var float pbEx = na
-var string pbKey = ""
-// laufender Trade und angekündigter Einstieg (Füllung zur nächsten Kerze)
-var int posDir = 0
-var float posE = na
-var float posStop = na
-var float posTgt = na
-var float posRisk = na
-var int posBar = 0
-var int pendDir = 0
-var float pendStop = na
-var float pendTgt = na
-// Bilanz
-var array<float> Rs = array.new<float>()
-var int nWin = 0
-var array<label> sigLabels = array.new<label>()
+TZ = "Europe/Berlin"
+tk = syminfo.ticker
+isDax = str.contains(tk, "DAX") or str.contains(tk, "DE40") or str.contains(tk, "GER40") or str.contains(tk, "DE30") or str.contains(tk, "GER30")
+isUS = tk == "SPX" or tk == "NDX" or tk == "DJI" or tk == "RUT" or str.contains(tk, "US500") or str.contains(tk, "US100") or str.contains(tk, "US30") or str.contains(tk, "NAS100") or str.contains(tk, "SPX500") or tk == "SPY" or tk == "QQQ" or tk == "DIA" or tk == "IWM" or str.startswith(tk, "ES1") or str.startswith(tk, "NQ1") or str.startswith(tk, "YM1")
+isIndex = isDax or isUS or syminfo.type == "index" or syminfo.type == "fund"
 
 f_fmt(float v) => str.tostring(v, format.mintick)
-f_pct(float v) => str.tostring(math.round(v * 100)) + " %"
+f_pc(float v) => (v >= 0 ? "+" : "−") + str.tostring(math.abs(v), "#.##") + " %"
 f_r(float v) => (v >= 0 ? "+" : "−") + str.tostring(math.abs(v), "#.##") + " R"
+f_q(int w, int n) => n > 0 ? str.tostring(math.round(w * 100.0 / n)) + " %" : "–"
 
-// 1) angekündigten Einstieg zur Eröffnung dieser Kerze füllen
-if pendDir != 0 and posDir == 0
-    e = open
-    st = pendDir > 0 ? math.min(pendStop, e - 0.5 * atrC[1]) : math.max(pendStop, e + 0.5 * atrC[1])
-    rk = (e - st) * pendDir
-    crvNow = (pendTgt - e) * pendDir / rk
-    if rk > cost * 3 and crvNow >= minCrv * 0.9
-        posDir := pendDir
-        posE := e
-        posStop := st
-        posTgt := pendTgt
-        posRisk := rk
-        posBar := bar_index
-    pendDir := 0
+// ═════════ TAGESREGELN (auf Tageskerzen gerechnet, ein Platz je Markt wie im Push-Dienst) ═════════
+// kind: 1 = IBS, 2 = Turnaround Tuesday, 3 = Drei Verlusttage. Einstieg zum Schluss des Signaltags.
+f_day(bool uI, bool uT, bool uD, bool usIdx) =>
+    rng = high - low
+    ib = rng > 0 ? (close - low) / rng : 0.5
+    s200 = ta.sma(close, 200)
+    s5 = ta.sma(close, 5)
+    a14 = ta.atr(14)
+    mon = dayofweek == dayofweek.monday
+    sI = uI and not na(s200) and close > s200 and ib < 0.2
+    sT = uT and usIdx and mon and close < close[1] and ib < 0.3
+    sD = uD and not na(s200) and close > s200 and close < close[1] and close[1] < close[2] and close[2] < close[3]
+    var int kind = 0
+    var float e = na
+    var float st = na
+    var int held = 0
+    var int eTime = 0
+    var int n1 = 0
+    var float s1 = 0.0
+    var int w1 = 0
+    var int n2 = 0
+    var float s2 = 0.0
+    var int w2 = 0
+    var int n3 = 0
+    var float s3 = 0.0
+    var int w3 = 0
+    float xp = na
+    int xk = 0
+    if kind != 0
+        held += 1
+        if low <= st
+            xp := math.min(st, open)
+        else if kind == 1 and (ib > 0.8 or held >= 5)
+            xp := close
+        else if kind == 2 and (close > high[1] or held >= 4)
+            xp := close
+        else if kind == 3 and (close > s5 or held >= 7)
+            xp := close
+        if not na(xp)
+            pct = (xp / e - 1) * 100
+            xk := kind
+            if kind == 1
+                n1 += 1
+                s1 += pct
+                w1 += pct > 0 ? 1 : 0
+            else if kind == 2
+                n2 += 1
+                s2 += pct
+                w2 += pct > 0 ? 1 : 0
+            else
+                n3 += 1
+                s3 += pct
+                w3 += pct > 0 ? 1 : 0
+            kind := 0
+    int newK = 0
+    if kind == 0 and na(xp) and not na(a14)
+        newK := sI ? 1 : sT ? 2 : sD ? 3 : 0
+        if newK != 0
+            kind := newK
+            e := close
+            st := close - 3 * a14
+            held := 0
+            eTime := time
+    // Wie tief müsste der Tag schließen, damit IBS < 0,2 wird?
+    ibsLvl = low + 0.2 * rng
+    [ib, close, s200, s5, a14, sI, sT, sD, kind, e, st, held, eTime, newK, xk, ibsLvl, mon, n1, s1, w1, n2, s2, w2, n3, s3, w3]
 
-// 2) laufenden Trade abrechnen (ab der Kerze nach dem Einstieg; Stop zählt zuerst, wenn beides in einer Kerze)
-float exitPx = na
-if posDir != 0 and bar_index > posBar
-    hitS = posDir > 0 ? low <= posStop : high >= posStop
-    hitT = posDir > 0 ? high >= posTgt : low <= posTgt
-    if hitS
-        exitPx := posStop
-    else if hitT
-        exitPx := posTgt
-    else if bar_index - posBar > 480
-        exitPx := close
-    if not na(exitPx)
-        r = ((exitPx - posE) * posDir - cost) / posRisk
-        array.push(Rs, r)
-        if r > 0
-            nWin += 1
-        posDir := 0
+[dIb, dClose, dS200, dS5, dAtr, dSI, dST, dSD, dKind, dE, dSt, dHeld, dETime, dNewK, dXk, dIbsLvl, dMon, n1, s1, w1, n2, s2, w2, n3, s3, w3] = request.security(syminfo.tickerid, "D", f_day(useIbs, useTT, useD3, isUS), lookahead=barmerge.lookahead_off)
+m1 = n1 > 0 ? s1 / n1 : 0.0
+m2 = n2 > 0 ? s2 / n2 : 0.0
+m3 = n3 > 0 ? s3 / n3 : 0.0
+kindName(int k) => k == 1 ? "IBS" : k == 2 ? "Turnaround Tuesday" : k == 3 ? "Drei Verlusttage" : ""
+kindExit(int k) => k == 1 ? "raus bei Schluss im oberen Fünftel der Tagesspanne, spätestens nach 5 Tagen" : k == 2 ? "raus bei Schluss über dem Vortageshoch, spätestens nach 4 Tagen" : "raus bei Schluss über dem 5-Tage-Schnitt, spätestens nach 7 Tagen"
+// Urteil je Regel auf diesem Markt: belegt in der großen Rückrechnung UND hier nicht im Minus
+okHere(int n, float m) => n < 15 or m > 0
 
-// 3) Swing-Punkte im Chart
-if not na(cph)
-    lastLH := cph
-    lastLHt := time[lL]
-if not na(cpl)
-    lastHL := cpl
-    lastHLt := time[lL]
+// ═════════ DAX-TAGESHANDEL (nur auf DAX, Chart 1 bis 15 Minuten) ═════════
+barMin = timeframe.in_seconds() / 60
+intraOk = timeframe.isintraday and barMin <= 15
+[pC, pS20, pAtr] = request.security(syminfo.tickerid, "D", [close[1], ta.sma(close, 20)[1], ta.sma(high - low, 14)[1]], lookahead=barmerge.lookahead_on)
+bm = hour(time, TZ) * 60 + minute(time, TZ)
+newDay = dayofmonth(time, TZ) != dayofmonth(time[1], TZ)
+// Zustand: 0 nichts, 1 Order wartet, 2 offen, 3 erledigt/aus
+var float mHi = na
+var float mLo = na
+var int mN = 0
+var int mS = 0
+var int mDir = 0
+var float mPx = na
+var float mStop = na
+var float mE = na
+var string mWhy = ""
+var float aHi = na
+var float aLo = na
+var int aN = 0
+var float aO = na
+var int aS = 0
+var int aDir = 0
+var float aPx = na
+var float aStop = na
+var float aE = na
+var string aWhy = ""
+var int nM = 0
+var float sM = 0.0
+var int wM = 0
+var int nA = 0
+var float sA = 0.0
+var int wA = 0
+var array<label> marks = array.new<label>()
+f_mark(bool up, float y, string t) =>
+    if showMarks
+        lb = label.new(bar_index, y, t, style=up ? label.style_label_up : label.style_label_down, color=color.new(up ? upCol : dnCol, 15), textcolor=color.black, size=size.tiny)
+        array.push(marks, lb)
+        if array.size(marks) > 70
+            label.delete(array.shift(marks))
 
-// 4) Korrektur verfolgen und Wende prüfen
-dir = tfOk ? hTrend : 0
-rng = hHigh - hLow
-lvl = dir > 0 ? hHigh - disc * rng : dir < 0 ? hLow + disc * rng : na
-key = str.tostring(hExt) + ":" + str.tostring(dir)
-if key != pbKey
-    pbKey := key
-    pbEx := na
-if dir != 0
-    pbEx := na(pbEx) ? (dir > 0 ? low : high) : (dir > 0 ? math.min(pbEx, low) : math.max(pbEx, high))
-inZone = dir > 0 ? pbEx <= lvl : dir < 0 ? pbEx >= lvl : false
-intact = dir > 0 ? pbEx > hLow : dir < 0 ? pbEx < hHigh : false
-pivOk = dir > 0 ? (not na(lastLH) and lastLHt > hExt and lastLHt != usedPiv) : dir < 0 ? (not na(lastHL) and lastHLt > hExt and lastHLt != usedPiv) : false
-trigLvl = dir > 0 ? lastLH : dir < 0 ? lastHL : na
-trig = barstate.isconfirmed and posDir == 0 and pendDir == 0 and inZone and intact and pivOk and (dir > 0 ? close > lastLH : close < lastHL)
-sigStop = dir > 0 ? math.min(pbEx - 0.1 * atrC, close - 0.5 * atrC) : math.max(pbEx + 0.1 * atrC, close + 0.5 * atrC)
-sigTgt = dir > 0 ? hHigh : hLow
-sigRisk = (close - sigStop) * dir
-sigCrv = sigRisk > 0 ? (sigTgt - close) * dir / sigRisk : 0.0
-// Was wäre, wenn die Wende jetzt käme (für die Vorschau "lohnt es sich überhaupt?")
-prevStop = dir > 0 ? math.min(pbEx - 0.1 * atrC, trigLvl - 0.5 * atrC) : math.max(pbEx + 0.1 * atrC, trigLvl + 0.5 * atrC)
-prevCrv = pivOk and not na(trigLvl) and (trigLvl - prevStop) * dir > 0 ? (sigTgt - trigLvl) * dir / ((trigLvl - prevStop) * dir) : na
-longSig = trig and dir > 0 and sigCrv >= minCrv
-shortSig = trig and dir < 0 and sigCrv >= minCrv
-weakSig = trig and sigCrv < minCrv
-if trig
-    usedPiv := dir > 0 ? lastLHt : lastHLt
-if longSig or shortSig
-    pendDir := dir
-    pendStop := sigStop
-    pendTgt := sigTgt
+if isDax and intraOk and newDay
+    mHi := na
+    mLo := na
+    mN := 0
+    mS := 0
+    mWhy := ""
+    aHi := na
+    aLo := na
+    aN := 0
+    aO := na
+    aS := 0
+    aWhy := ""
 
-// ───────── Bilanz dieser Regel auf diesem Chart ─────────
-n = array.size(Rs)
-meanR = n > 0 ? array.avg(Rs) : 0.0
-sdR = n > 1 ? array.stdev(Rs, false) : 0.0
-tR = sdR > 0 ? meanR / sdR * math.sqrt(n) : 0.0
-sumR = n > 0 ? array.sum(Rs) : 0.0
-proven = n >= 20 and meanR > 0.1 and tR >= 1.5
-losing = n >= 20 and meanR < 0
-verdictTxt = n < 20 ? "noch zu wenig Signale für ein Urteil" : proven ? "lohnt sich auf diesem Markt" : losing ? "bisher Verlust auf diesem Markt: Signale auslassen" : "Vorteil unsicher, nur mit kleinem Risiko"
-verdictCol = n < 20 ? color.gray : proven ? upCol : losing ? dnCol : amb
+if isDax and intraOk and useDtb and not na(pS20)
+    // Spanne 9:00 bis 9:15
+    if bm >= 540 and bm < 555
+        mHi := na(mHi) ? high : math.max(mHi, high)
+        mLo := na(mLo) ? low : math.min(mLo, low)
+        mN += 1
+    // ab 9:35: Order (nur in Trendrichtung: gestriger Schluss über/unter dem 20-Tage-Schnitt)
+    if mS == 0 and mN > 0 and bm >= 575 and bm < 755
+        mDir := pC > pS20 ? 1 : -1
+        buf = 0.03 * pAtr
+        mPx := mDir > 0 ? mHi + buf : mLo - buf
+        mStop := mDir > 0 ? mLo - buf : mHi + buf
+        rk = math.abs(mPx - mStop)
+        if (open - mPx) * mDir > 0
+            mS := 3
+            mWhy := "schon durchgelaufen, nicht hinterher"
+        else if not (rk > 3.6 and rk <= 3 * pAtr)
+            mS := 3
+            mWhy := "Spanne untypisch"
+        else
+            mS := 1
+    if mS == 1
+        if bm >= 755
+            mS := 3
+            mWhy := "bis 12:35 nicht ausgelöst"
+        else if mDir > 0 ? high >= mPx : low <= mPx
+            mS := 2
+            mE := mDir > 0 ? math.max(mPx, open) : math.min(mPx, open)
+            f_mark(mDir > 0, mDir > 0 ? low : high, mDir > 0 ? "▲ DAX-Ausbruch" : "▼ DAX-Ausbruch")
+    if mS == 2
+        float xp = na
+        if mDir > 0 ? low <= mStop : high >= mStop
+            xp := mStop
+        else if bm >= 1045
+            xp := open
+        else if bm + barMin >= 1050
+            xp := close
+        if not na(xp)
+            r = ((xp - mE) * mDir - daxCost) / math.abs(mE - mStop)
+            nM += 1
+            sM += r
+            wM += r > 0 ? 1 : 0
+            mS := 3
+            mWhy := "erledigt: " + f_r(r)
 
-// Signale im Chart
-if showSig and (longSig or shortSig)
-    lb = label.new(bar_index, longSig ? low : high, longSig ? "▲ LONG" : "▼ SHORT", style=longSig ? label.style_label_up : label.style_label_down, color=color.new(longSig ? upCol : dnCol, 10), textcolor=color.black, size=size.small)
-    array.push(sigLabels, lb)
-    if array.size(sigLabels) > 40
-        label.delete(array.shift(sigLabels))
+if isDax and intraOk and useDpm and not na(pC)
+    // Spanne 15:30 bis 16:30, Richtung = wohin der DAX seit gestern 17:30 gelaufen ist (Stand 15:30)
+    if bm >= 930 and bm < 990
+        aHi := na(aHi) ? high : math.max(aHi, high)
+        aLo := na(aLo) ? low : math.min(aLo, low)
+        aN += 1
+        if na(aO)
+            aO := open
+    if aS == 0 and aN > 0 and bm >= 1000 and bm < 1045
+        aDir := aO > pC ? 1 : aO < pC ? -1 : 0
+        buf = 0.03 * pAtr
+        aPx := aDir > 0 ? aHi + buf : aLo - buf
+        aStop := aDir > 0 ? aLo - buf : aHi + buf
+        rk = math.abs(aPx - aStop)
+        if aDir == 0
+            aS := 3
+            aWhy := "keine Tagesrichtung"
+        else if (open - aPx) * aDir > 0
+            aS := 3
+            aWhy := "schon durchgelaufen, nicht hinterher"
+        else if not (rk > 3.6 and rk <= 3 * pAtr)
+            aS := 3
+            aWhy := "Spanne untypisch"
+        else
+            aS := 1
+    if aS == 1
+        if bm >= 1045
+            aS := 3
+            aWhy := "bis 17:25 nicht ausgelöst"
+        else if aDir > 0 ? high >= aPx : low <= aPx
+            aS := 2
+            aE := aDir > 0 ? math.max(aPx, open) : math.min(aPx, open)
+            f_mark(aDir > 0, aDir > 0 ? low : high, aDir > 0 ? "▲ DAX-Nachmittag" : "▼ DAX-Nachmittag")
+    if aS == 2
+        float xq = na
+        if aDir > 0 ? low <= aStop : high >= aStop
+            xq := aStop
+        else if bm >= 1045
+            xq := open
+        else if bm + barMin >= 1050
+            xq := close
+        if not na(xq)
+            r = ((xq - aE) * aDir - daxCost) / math.abs(aE - aStop)
+            nA += 1
+            sA += r
+            wA += r > 0 ? 1 : 0
+            aS := 3
+            aWhy := "erledigt: " + f_r(r)
 
-// ───────── Zonen und Marken (nur am letzten Balken neu gezeichnet) ─────────
-var box zBox = na
-var line lTop = na
-var line lBot = na
-var line lMid = na
-var line lTrig = na
-var line pE = na
-var line pS = na
-var line pT = na
-var label zLab = na
-f_hl(line l, float y, color c, string st, int w) =>
+// Tagessignale markieren (auf dem Chart dort, wo der Signaltag schließt)
+if showMarks and dNewK != 0 and dNewK != dNewK[1] and barstate.isconfirmed and not barstate.isrealtime
+    f_mark(true, low, "▲ " + kindName(dNewK))
+
+// ═════════ Linien am letzten Balken ═════════
+var line L1 = na
+var line L2 = na
+var line L3 = na
+var line L4 = na
+f_line(line l, float y, color c, string s, int w) =>
     line.delete(l)
-    na(y) ? line(na) : line.new(bar_index - 30, y, bar_index + 25, y, color=c, style=st, width=w)
-if barstate.islast
-    box.delete(zBox)
-    label.delete(zLab)
-    if showZone and dir != 0 and not na(lvl)
-        zTop = dir > 0 ? lvl : hHigh
-        zBot = dir > 0 ? hLow : lvl
-        zc = dir > 0 ? upCol : dnCol
-        zBox := box.new(bar_index - 30, zTop, bar_index + 25, zBot, border_color=color.new(zc, 75), bgcolor=color.new(zc, 90))
-        zLab := label.new(bar_index + 25, dir > 0 ? zTop : zBot, dir > 0 ? "Kaufzone" : "Verkaufszone", style=label.style_label_left, color=color.new(zc, 75), textcolor=color.white, size=size.tiny)
-        lTop := f_hl(lTop, hHigh, color.new(dir > 0 ? upCol : dnCol, 20), line.style_solid, 1)
-        lBot := f_hl(lBot, hLow, color.new(dir > 0 ? dnCol : upCol, 20), line.style_solid, 1)
-    else
-        lTop := f_hl(lTop, na, color.gray, line.style_solid, 1)
-        lBot := f_hl(lBot, na, color.gray, line.style_solid, 1)
-    lTrig := f_hl(lTrig, dir != 0 and posDir == 0 and inZone and intact and pivOk ? trigLvl : na, amb, line.style_dashed, 2)
-    pE := f_hl(pE, showPos and posDir != 0 ? posE : na, color.gray, line.style_solid, 1)
-    pS := f_hl(pS, showPos and posDir != 0 ? posStop : na, dnCol, line.style_solid, 2)
-    pT := f_hl(pT, showPos and posDir != 0 ? posTgt : na, upCol, line.style_solid, 2)
+    na(y) ? line(na) : line.new(bar_index - 20, y, bar_index + 15, y, color=c, style=s, width=w)
 
-// ───────── Die Ampel ─────────
+// ═════════ DIE AMPEL ═════════
 tpos = tabPos == "Oben rechts" ? position.top_right : tabPos == "Unten rechts" ? position.bottom_right : tabPos == "Oben links" ? position.top_left : position.bottom_left
-var table tb = table.new(tpos, 1, 6, bgcolor=color.new(#0F1012, 4), frame_color=color.new(#2A2D33, 0), frame_width=1, border_width=0)
-if barstate.islast
-    string head = ""
-    string why = ""
-    string plan = ""
-    color hc = color.gray
-    trendTxt = dir > 0 ? "4h aufwärts" : dir < 0 ? "4h abwärts" : "4h ohne klare Richtung"
-    retr = dir != 0 and rng > 0 ? (dir > 0 ? (hHigh - pbEx) / rng : (pbEx - hLow) / rng) : na
-    if not tfOk
-        head := "CHART-ZEITEBENE ZU GROSS"
-        why := "Die Ampel braucht ein kleineres Zeitfenster als " + htf + ". Am besten 15 Minuten."
-    else if posDir != 0
-        curR = (close - posE) * posDir / posRisk
-        head := (posDir > 0 ? "LONG LÄUFT  " : "SHORT LÄUFT  ") + f_r(curR)
-        hc := posDir > 0 ? upCol : dnCol
-        why := "Stop und Ziel stehen. Nichts nachziehen, nicht vorher raus: die Bilanz unten gilt nur so."
-        plan := "Einstieg " + f_fmt(posE) + " · Stop " + f_fmt(posStop) + " · Ziel " + f_fmt(posTgt)
-    else if longSig or shortSig or pendDir != 0
-        d0 = pendDir != 0 ? pendDir : dir
-        head := (d0 > 0 ? "LONG" : "SHORT") + (losing ? " · HIER BISHER VERLUST" : " · LOHNT SICH")
-        hc := losing ? amb : d0 > 0 ? upCol : dnCol
-        why := (d0 > 0 ? "Korrektur in der Kaufzone beendet: 15 Min schließt über dem letzten Hoch." : "Erholung in der Verkaufszone beendet: 15 Min schließt unter dem letzten Tief.") + (losing ? " Auf diesem Markt hat die Regel bisher verloren: auslassen." : "")
-        plan := "Einstieg ~" + f_fmt(close) + " · Stop " + f_fmt(pendStop) + " · Ziel " + f_fmt(pendTgt) + " · CRV " + str.tostring(sigCrv, "#.#")
-    else if dir == 0
-        head := "KEIN TRADE"
-        why := "Die 4h-Struktur hat keine klare Richtung. Abwarten, bis ein 4h-Hoch oder -Tief mit Schluss gebrochen wird."
-    else if not intact
-        head := "ACHTUNG: WENDE MÖGLICH"
-        hc := amb
-        why := "Der Kurs ist unter das geschützte 4h-" + (dir > 0 ? "Tief " : "Hoch ") + f_fmt(dir > 0 ? hLow : hHigh) + " gelaufen. Schließt die 4h-Kerze dort, dreht die Richtung. Kein Trade."
-    else if not inZone
-        head := "WARTEN · KORREKTUR ZU KLEIN"
-        hc := amb
-        why := "Der Kurs ist erst " + f_pct(nz(retr)) + " der 4h-Bewegung zurückgelaufen. " + (dir > 0 ? "Kaufen lohnt erst in der unteren Hälfte, " : "Verkaufen lohnt erst in der oberen Hälfte, ") + "sonst ist der Stop zu weit und das Ziel zu nah."
-        plan := (dir > 0 ? "Kaufzone ab " : "Verkaufszone ab ") + f_fmt(lvl) + " · Ziel später " + f_fmt(sigTgt)
-    else if weakSig
-        head := "WENDE, ABER LOHNT NICHT"
-        hc := amb
-        why := "15 Min hat gedreht, aber bis zum Ziel ist zu wenig Platz: CRV nur " + str.tostring(sigCrv, "#.#") + " (mindestens " + str.tostring(minCrv, "#.#") + ")."
-    else
-        stillCorr = pivOk and (dir > 0 ? close <= trigLvl : close >= trigLvl)
-        head := "BEREIT · " + (dir > 0 ? "LONG" : "SHORT") + " WENN BESTÄTIGT"
-        hc := amb
-        why := "Der Kurs ist in der " + (dir > 0 ? "Kaufzone" : "Verkaufszone") + " (" + f_pct(nz(retr)) + " zurück). " + (stillCorr ? "15 Min korrigiert noch (" + (dir > 0 ? "tiefere Hochs" : "höhere Tiefs") + "). " : "Warte auf das nächste 15-Min-" + (dir > 0 ? "Hoch" : "Tief") + ". ") + "Erst die Bestätigung zeigt, dass er in deine Richtung dreht."
-        plan := pivOk ? ((dir > 0 ? "Long bei 15-Min-Schluss über " : "Short bei 15-Min-Schluss unter ") + f_fmt(trigLvl) + (not na(prevCrv) ? " · CRV dann ca. " + str.tostring(prevCrv, "#.#") + (prevCrv < minCrv ? " (zu wenig)" : "") : "")) : "Bestätigung kommt nach dem nächsten 15-Min-" + (dir > 0 ? "Hoch" : "Tief")
-    fs = big ? size.large : size.normal
-    table.cell(tb, 0, 0, head, text_color=color.black, bgcolor=hc, text_size=fs, text_halign=text.align_left)
-    table.cell(tb, 0, 1, why, text_color=color.white, text_size=size.small, text_halign=text.align_left)
-    table.cell(tb, 0, 2, plan, text_color=color.white, text_size=size.small, text_halign=text.align_left)
-    table.cell(tb, 0, 3, trendTxt + (dir != 0 ? " · Bewegung " + f_fmt(dir > 0 ? hLow : hHigh) + " → " + f_fmt(dir > 0 ? hHigh : hLow) : ""), text_color=color.new(color.white, 35), text_size=size.small, text_halign=text.align_left)
-    table.cell(tb, 0, 4, "Bilanz hier: " + str.tostring(n) + " Signale · " + (n > 0 ? str.tostring(math.round(nWin * 100.0 / n)) + " % Treffer · Ø " + f_r(meanR) + " · Summe " + f_r(sumR) : "noch keine"), text_color=color.new(color.white, 35), text_size=size.small, text_halign=text.align_left)
-    table.cell(tb, 0, 5, "Urteil: " + verdictTxt, text_color=verdictCol, text_size=size.small, text_halign=text.align_left)
+var table tb = table.new(tpos, 2, 9, bgcolor=color.new(#0F1012, 4), frame_color=color.new(#2A2D33, 0), frame_width=1, border_width=0)
+f_row(int r, string a, string b, color c) =>
+    table.cell(tb, 0, r, a, text_color=color.new(color.white, 25), text_size=size.small, text_halign=text.align_left)
+    table.cell(tb, 1, r, b, text_color=c, text_size=size.small, text_halign=text.align_left)
 
-// ───────── Alarme ─────────
-alertcondition(longSig, "Long lohnt sich", "Trade Check Ampel: LONG bestätigt auf {{ticker}} ({{interval}}), Einstieg ~{{close}}")
-alertcondition(shortSig, "Short lohnt sich", "Trade Check Ampel: SHORT bestätigt auf {{ticker}} ({{interval}}), Einstieg ~{{close}}")
-alertcondition(dir != 0 and inZone and intact and not (inZone[1] and intact[1]), "Bereit: Kurs in der Zone", "Trade Check Ampel: {{ticker}} ist in der Zone, warte auf die 15-Min-Bestätigung")
-if longSig or shortSig
-    alert((longSig ? "LONG" : "SHORT") + " " + syminfo.ticker + ": Einstieg ~" + f_fmt(close) + ", Stop " + f_fmt(sigStop) + ", Ziel " + f_fmt(sigTgt) + ", CRV " + str.tostring(sigCrv, "#.#") + (losing ? " (auf diesem Markt bisher Verlust)" : ""), alert.freq_once_per_bar_close)
+if barstate.islast
+    table.clear(tb, 0, 0, 1, 8)
+    string head = "KEIN BELEGTER TRADE JETZT"
+    string why = "Keine der geprüften Regeln gibt gerade ein Signal. Nicht handeln ist hier die richtige Entscheidung."
+    color hc = color.new(color.gray, 0)
+    // Tagesregeln: heutiger Stand (gilt, wenn der Tag so schließt)
+    todayK = dKind == 0 ? (dSI ? 1 : dST ? 2 : dSD ? 3 : 0) : 0
+    todayOk = todayK == 1 ? okHere(n1, m1) : todayK == 2 ? okHere(n2, m2) : todayK == 3 ? okHere(n3, m3) : false
+    lnE = float(na)
+    lnS = float(na)
+    lnT = float(na)
+    // Priorität: laufende Position, Order jetzt, Signal heute, demnächst
+    if isDax and intraOk and mS == 2
+        cr = (close - mE) * mDir / math.abs(mE - mStop)
+        head := "DAX-AUSBRUCH LÄUFT  " + f_r(cr)
+        hc := mDir > 0 ? upCol : dnCol
+        why := (mDir > 0 ? "Long" : "Short") + " seit " + f_fmt(mE) + ". Stop " + f_fmt(mStop) + " bleibt, kein Ziel: um 17:25 schließen."
+        lnE := mE
+        lnS := mStop
+    else if isDax and intraOk and aS == 2
+        cr = (close - aE) * aDir / math.abs(aE - aStop)
+        head := "DAX-NACHMITTAG LÄUFT  " + f_r(cr)
+        hc := aDir > 0 ? upCol : dnCol
+        why := (aDir > 0 ? "Long" : "Short") + " seit " + f_fmt(aE) + ". Stop " + f_fmt(aStop) + " bleibt, um 17:25 schließen."
+        lnE := aE
+        lnS := aStop
+    else if dKind != 0
+        pcNow = (close / dE - 1) * 100
+        head := kindName(dKind) + " LÄUFT  " + f_pc(pcNow)
+        hc := upCol
+        why := "Long seit " + f_fmt(dE) + " (Tag " + str.tostring(dHeld) + "). Notstop " + f_fmt(dSt) + ", " + kindExit(dKind) + "."
+        lnE := dE
+        lnS := dSt
+    else if isDax and intraOk and mS == 1
+        head := (mDir > 0 ? "LONG" : "SHORT") + " LOHNT SICH · DAX-AUSBRUCH"
+        hc := mDir > 0 ? upCol : dnCol
+        why := (mDir > 0 ? "Kauf-Stopp " : "Verkaufs-Stopp ") + f_fmt(mPx) + ", Stop " + f_fmt(mStop) + " (KO-Schwelle), gilt bis 12:35, kein Ziel, um 17:25 schließen."
+        lnE := mPx
+        lnS := mStop
+    else if isDax and intraOk and aS == 1
+        head := (aDir > 0 ? "LONG" : "SHORT") + " · DAX-NACHMITTAG"
+        hc := aDir > 0 ? upCol : dnCol
+        why := (aDir > 0 ? "Kauf-Stopp " : "Verkaufs-Stopp ") + f_fmt(aPx) + ", Stop " + f_fmt(aStop) + ", gilt bis 17:25, dann schließen. Kleiner Vorteil: lohnt erst ab ca. 60 € Risiko je Trade (Ordergebühren)."
+        lnE := aPx
+        lnS := aStop
+    else if todayK != 0
+        head := todayOk ? "LONG ZUM TAGESSCHLUSS · " + kindName(todayK) : kindName(todayK) + " · HIER BISHER VERLUST"
+        hc := todayOk ? upCol : amb
+        why := (todayK == 1 ? "Der Tag schließt bisher im unteren Fünftel (IBS " + str.tostring(dIb, "#.##") + ") über dem 200-Tage-Schnitt." : todayK == 2 ? "Schwacher Montag mit Schluss im unteren Drittel." : "Dritter schwächerer Schluss in Folge im Aufwärtstrend.") + " Kurz vor Handelsschluss kaufen, wenn es so bleibt. Notstop " + f_fmt(dClose - 3 * dAtr) + ", " + kindExit(todayK) + "." + (todayOk ? "" : " Auf diesem Markt hat die Regel bisher verloren: auslassen.")
+        lnE := dClose
+        lnS := dClose - 3 * dAtr
+    else if isDax and intraOk and useDtb and mS == 0 and bm < 575
+        head := "WARTEN · DAX-AUSBRUCH AB 9:35"
+        hc := amb
+        why := mN > 0 ? "Spanne 9:00–9:15: " + f_fmt(mLo) + " bis " + f_fmt(mHi) + ". Richtung " + (pC > pS20 ? "Long" : "Short") + " (Trend). Order kommt um 9:35." : "Um 9:15 steht die Spanne, um 9:35 die Order. Richtung heute: " + (pC > pS20 ? "Long" : "Short") + "."
+        lnT := mN > 0 ? (pC > pS20 ? mHi + 0.03 * pAtr : mLo - 0.03 * pAtr) : na
+    else if isDax and intraOk and useDpm and aS == 0 and bm >= 900 and bm < 1000
+        head := "WARTEN · DAX-NACHMITTAG AB 16:40"
+        hc := amb
+        why := aN > 0 ? "Spanne seit 15:30: " + f_fmt(aLo) + " bis " + f_fmt(aHi) + ". Richtung " + (nz(aO) > pC ? "Long" : "Short") + " (DAX seit gestern " + (nz(aO) > pC ? "im Plus" : "im Minus") + ")." : "Die Spanne beginnt um 15:30, die Order kommt um 16:40."
+    else if useIbs and isIndex and not na(dS200)
+        why := why + (dClose > dS200 ? " Nächste Chance (IBS): wenn der Tag unter " + f_fmt(dIbsLvl) + " schließt." : " IBS ruht: Kurs unter dem 200-Tage-Schnitt (Abwärtstrend).")
+    table.cell(tb, 0, 0, head, text_color=color.black, bgcolor=hc, text_size=big ? size.large : size.normal, text_halign=text.align_left)
+    table.merge_cells(tb, 0, 0, 1, 0)
+    table.cell(tb, 0, 1, why, text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.merge_cells(tb, 0, 1, 1, 1)
+    // Regeln mit Beleg (große Rückrechnung) und Bilanz auf diesem Chart
+    int r = 2
+    if useIbs
+        f_row(r, "IBS (Tag)", "Rückrechnung: 66 % Treffer, Ø +0,23 % (unter 0,1) · hier: " + str.tostring(n1) + " Trades, " + f_q(w1, n1) + ", Ø " + f_pc(m1), okHere(n1, m1) ? upCol : dnCol)
+        r += 1
+    if useTT and isUS
+        f_row(r, "Turnaround Tuesday", "Rückrechnung: 67 % Treffer, Ø +0,48 % · hier: " + str.tostring(n2) + " Trades, " + f_q(w2, n2) + ", Ø " + f_pc(m2), okHere(n2, m2) ? upCol : dnCol)
+        r += 1
+    if useD3
+        f_row(r, "Drei Verlusttage", "Rückrechnung: 71 % Treffer, Ø +0,29 % · hier: " + str.tostring(n3) + " Trades, " + f_q(w3, n3) + ", Ø " + f_pc(m3), okHere(n3, m3) ? upCol : dnCol)
+        r += 1
+    if isDax and useDtb
+        f_row(r, "DAX-Ausbruch 9:35", "Rückrechnung: 1.391 Trades, 42 % Treffer, Ø +0,15 R · hier: " + str.tostring(nM) + " Trades, Ø " + f_r(nM > 0 ? sM / nM : 0.0) + (mWhy != "" ? " · heute " + mWhy : ""), color.new(upCol, 0))
+        r += 1
+    if isDax and useDpm
+        f_row(r, "DAX-Nachmittag 16:40", "Rückrechnung: 827 Trades, 54 % Treffer, Ø +0,06 R · hier: " + str.tostring(nA) + " Trades, Ø " + f_r(nA > 0 ? sA / nA : 0.0) + (aWhy != "" ? " · heute " + aWhy : ""), color.new(upCol, 0))
+        r += 1
+    if isDax and not intraOk
+        f_row(r, "DAX-Tageshandel", "nur auf 1- bis 15-Minuten-Chart", color.gray)
+        r += 1
+    if not isIndex
+        f_row(r, "Achtung", "Die Regeln sind für Aktienindizes belegt, nicht für diesen Markt.", amb)
+        r += 1
+    f_row(r, "Nicht mehr drin", "FVG, Order Blocks, CHoCH: in der Rückrechnung auf 7 Märkten im Minus", color.new(color.white, 45))
+    if showLines
+        L1 := f_line(L1, lnE, color.new(color.white, 30), line.style_solid, 1)
+        L2 := f_line(L2, lnS, dnCol, line.style_solid, 2)
+        L3 := f_line(L3, lnT, amb, line.style_dashed, 2)
+        L4 := f_line(L4, isDax and intraOk and (mS == 1 or mS == 2) and not na(mHi) ? (mDir > 0 ? mHi : mLo) : na, color.new(color.gray, 30), line.style_dotted, 1)
+
+// ═════════ Alarme ═════════
+alertcondition(isDax and mS == 1 and mS[1] == 0, "DAX-Ausbruch: Order jetzt", "Trade Check Ampel: DAX-Trend-Ausbruch, Order jetzt eingeben")
+alertcondition(isDax and aS == 1 and aS[1] == 0, "DAX-Nachmittag: Order jetzt", "Trade Check Ampel: DAX-Nachmittag, Order jetzt eingeben")
+alertcondition((dSI or dST or dSD) and dKind == 0, "Tagessignal heute (vor Schluss prüfen)", "Trade Check Ampel: {{ticker}} hat heute ein Tagessignal, kurz vor Schluss prüfen")
+if isDax and mS == 1 and mS[1] == 0
+    alert("DAX-Trend-Ausbruch " + (mDir > 0 ? "LONG" : "SHORT") + ": " + (mDir > 0 ? "Kauf-Stopp " : "Verkaufs-Stopp ") + f_fmt(mPx) + ", Stop " + f_fmt(mStop) + ", bis 12:35, Schluss 17:25", alert.freq_once_per_bar_close)
+if isDax and aS == 1 and aS[1] == 0
+    alert("DAX-Nachmittag " + (aDir > 0 ? "LONG" : "SHORT") + ": " + (aDir > 0 ? "Kauf-Stopp " : "Verkaufs-Stopp ") + f_fmt(aPx) + ", Stop " + f_fmt(aStop) + ", bis 17:25", alert.freq_once_per_bar_close)
