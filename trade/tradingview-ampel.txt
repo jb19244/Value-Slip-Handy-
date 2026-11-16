@@ -15,6 +15,8 @@
 //  · IBS (Tag): Index schließt im unteren Fünftel der Tagesspanne über dem 200-Tage-Schnitt → kaufen
 //  · Turnaround Tuesday (US-Indizes): schwacher Montag → kaufen
 //  · Drei Verlusttage im Aufwärtstrend → kaufen
+//  · Liquiditäts-Sweep (SMC): Tag fällt unter das 30-Tage-Tief und schließt wieder darüber, im Aufwärtstrend → kaufen
+//    (seit 2000 auf 16 Märkten: 1.201 Trades, 46 % Treffer, Ø +0,21 R; auf 15 Min dagegen im Minus)
 //  · DAX-Trend-Ausbruch (9:00–9:15, Order ab 9:35) und DAX-Nachmittag (15:30–16:30, Order ab 16:40)
 // Grün heißt: Signal nach einer belegten Regel und auf diesem Markt bisher im Plus. Sonst nicht.
 // Alles nur aus abgeschlossenen Kerzen; Tagessignale gelten, wenn der Tag so schließt.
@@ -34,6 +36,7 @@ grpR = "Regeln"
 useIbs = input.bool(true, "IBS (Tag)", group=grpR)
 useTT = input.bool(true, "Turnaround Tuesday (nur US-Indizes)", group=grpR)
 useD3 = input.bool(true, "Drei Verlusttage im Aufwärtstrend", group=grpR)
+useSw = input.bool(true, "Liquiditäts-Sweep (30-Tage-Tief geholt, Schluss zurück)", group=grpR)
 useDtb = input.bool(true, "DAX-Trend-Ausbruch (9:35)", group=grpR)
 useDpm = input.bool(true, "DAX-Nachmittag (16:40)", group=grpR)
 daxCost = input.float(1.2, "DAX: Spread in Punkten", minval=0.0, step=0.1, group=grpR)
@@ -51,7 +54,7 @@ f_q(int w, int n) => n > 0 ? str.tostring(math.round(w * 100.0 / n)) + " %" : "�
 
 // ═════════ TAGESREGELN (auf Tageskerzen gerechnet, ein Platz je Markt wie im Push-Dienst) ═════════
 // kind: 1 = IBS, 2 = Turnaround Tuesday, 3 = Drei Verlusttage. Einstieg zum Schluss des Signaltags.
-f_day(bool uI, bool uT, bool uD, bool usIdx) =>
+f_day(bool uI, bool uT, bool uD, bool uS, bool usIdx) =>
     rng = high - low
     ib = rng > 0 ? (close - low) / rng : 0.5
     s200 = ta.sma(close, 200)
@@ -61,11 +64,17 @@ f_day(bool uI, bool uT, bool uD, bool usIdx) =>
     sI = uI and not na(s200) and close > s200 and ib < 0.2
     sT = uT and usIdx and mon and close < close[1] and ib < 0.3
     sD = uD and not na(s200) and close > s200 and close < close[1] and close[1] < close[2] and close[2] < close[3]
+    lo30 = ta.lowest(low, 30)[1]
+    sS = uS and not na(s200) and not na(lo30) and close > s200 and low < lo30 and close > lo30
     var int kind = 0
     var float e = na
     var float st = na
     var int held = 0
     var int eTime = 0
+    var float tg = na
+    var int n4 = 0
+    var float s4 = 0.0
+    var int w4 = 0
     var int n1 = 0
     var float s1 = 0.0
     var int w1 = 0
@@ -81,6 +90,10 @@ f_day(bool uI, bool uT, bool uD, bool usIdx) =>
         held += 1
         if low <= st
             xp := math.min(st, open)
+        else if kind == 4 and high >= tg
+            xp := math.max(tg, open)
+        else if kind == 4 and held >= 10
+            xp := close
         else if kind == 1 and (ib > 0.8 or held >= 5)
             xp := close
         else if kind == 2 and (close > high[1] or held >= 4)
@@ -98,30 +111,36 @@ f_day(bool uI, bool uT, bool uD, bool usIdx) =>
                 n2 += 1
                 s2 += pct
                 w2 += pct > 0 ? 1 : 0
-            else
+            else if kind == 3
                 n3 += 1
                 s3 += pct
                 w3 += pct > 0 ? 1 : 0
+            else
+                n4 += 1
+                s4 += pct
+                w4 += pct > 0 ? 1 : 0
             kind := 0
     int newK = 0
     if kind == 0 and na(xp) and not na(a14)
-        newK := sI ? 1 : sT ? 2 : sD ? 3 : 0
+        newK := sI ? 1 : sT ? 2 : sD ? 3 : sS ? 4 : 0
         if newK != 0
             kind := newK
             e := close
-            st := close - 3 * a14
+            st := newK == 4 ? math.min(low - 0.2 * a14, close - 0.5 * a14) : close - 3 * a14
+            tg := newK == 4 ? close + 2 * (close - st) : na
             held := 0
             eTime := time
     // Wie tief müsste der Tag schließen, damit IBS < 0,2 wird?
     ibsLvl = low + 0.2 * rng
-    [ib, close, s200, s5, a14, sI, sT, sD, kind, e, st, held, eTime, newK, xk, ibsLvl, mon, n1, s1, w1, n2, s2, w2, n3, s3, w3]
+    [ib, close, s200, s5, a14, sI, sT, sD, kind, e, st, held, eTime, newK, xk, ibsLvl, mon, n1, s1, w1, n2, s2, w2, n3, s3, w3, sS, tg, lo30, n4, s4, w4, low]
 
-[dIb, dClose, dS200, dS5, dAtr, dSI, dST, dSD, dKind, dE, dSt, dHeld, dETime, dNewK, dXk, dIbsLvl, dMon, n1, s1, w1, n2, s2, w2, n3, s3, w3] = request.security(syminfo.tickerid, "D", f_day(useIbs, useTT, useD3, isUS), lookahead=barmerge.lookahead_off)
+[dIb, dClose, dS200, dS5, dAtr, dSI, dST, dSD, dKind, dE, dSt, dHeld, dETime, dNewK, dXk, dIbsLvl, dMon, n1, s1, w1, n2, s2, w2, n3, s3, w3, dSS, dTg, dLo30, n4, s4, w4, dLow] = request.security(syminfo.tickerid, "D", f_day(useIbs, useTT, useD3, useSw, isUS), lookahead=barmerge.lookahead_off)
 m1 = n1 > 0 ? s1 / n1 : 0.0
 m2 = n2 > 0 ? s2 / n2 : 0.0
 m3 = n3 > 0 ? s3 / n3 : 0.0
-kindName(int k) => k == 1 ? "IBS" : k == 2 ? "Turnaround Tuesday" : k == 3 ? "Drei Verlusttage" : ""
-kindExit(int k) => k == 1 ? "raus bei Schluss im oberen Fünftel der Tagesspanne, spätestens nach 5 Tagen" : k == 2 ? "raus bei Schluss über dem Vortageshoch, spätestens nach 4 Tagen" : "raus bei Schluss über dem 5-Tage-Schnitt, spätestens nach 7 Tagen"
+m4 = n4 > 0 ? s4 / n4 : 0.0
+kindName(int k) => k == 1 ? "IBS" : k == 2 ? "Turnaround Tuesday" : k == 3 ? "Drei Verlusttage" : k == 4 ? "Liquiditäts-Sweep" : ""
+kindExit(int k) => k == 4 ? "Ziel (2 R) und Stop gleich als Order, spätestens nach 10 Tagen verkaufen" : k == 1 ? "raus bei Schluss im oberen Fünftel der Tagesspanne, spätestens nach 5 Tagen" : k == 2 ? "raus bei Schluss über dem Vortageshoch, spätestens nach 4 Tagen" : "raus bei Schluss über dem 5-Tage-Schnitt, spätestens nach 7 Tagen"
 // Urteil je Regel auf diesem Markt: belegt in der großen Rückrechnung UND hier nicht im Minus
 okHere(int n, float m) => n < 15 or m > 0
 
@@ -287,19 +306,19 @@ f_line(line l, float y, color c, string s, int w) =>
 
 // ═════════ DIE AMPEL ═════════
 tpos = tabPos == "Oben rechts" ? position.top_right : tabPos == "Unten rechts" ? position.bottom_right : tabPos == "Oben links" ? position.top_left : position.bottom_left
-var table tb = table.new(tpos, 2, 9, bgcolor=color.new(#0F1012, 4), frame_color=color.new(#2A2D33, 0), frame_width=1, border_width=0)
+var table tb = table.new(tpos, 2, 10, bgcolor=color.new(#0F1012, 4), frame_color=color.new(#2A2D33, 0), frame_width=1, border_width=0)
 f_row(int r, string a, string b, color c) =>
     table.cell(tb, 0, r, a, text_color=color.new(color.white, 25), text_size=size.small, text_halign=text.align_left)
     table.cell(tb, 1, r, b, text_color=c, text_size=size.small, text_halign=text.align_left)
 
 if barstate.islast
-    table.clear(tb, 0, 0, 1, 8)
+    table.clear(tb, 0, 0, 1, 9)
     string head = "KEIN BELEGTER TRADE JETZT"
     string why = "Keine der geprüften Regeln gibt gerade ein Signal. Nicht handeln ist hier die richtige Entscheidung."
     color hc = color.new(color.gray, 0)
     // Tagesregeln: heutiger Stand (gilt, wenn der Tag so schließt)
-    todayK = dKind == 0 ? (dSI ? 1 : dST ? 2 : dSD ? 3 : 0) : 0
-    todayOk = todayK == 1 ? okHere(n1, m1) : todayK == 2 ? okHere(n2, m2) : todayK == 3 ? okHere(n3, m3) : false
+    todayK = dKind == 0 ? (dSI ? 1 : dST ? 2 : dSD ? 3 : dSS ? 4 : 0) : 0
+    todayOk = todayK == 1 ? okHere(n1, m1) : todayK == 2 ? okHere(n2, m2) : todayK == 3 ? okHere(n3, m3) : todayK == 4 ? okHere(n4, m4) : false
     lnE = float(na)
     lnS = float(na)
     lnT = float(na)
@@ -322,7 +341,7 @@ if barstate.islast
         pcNow = (close / dE - 1) * 100
         head := kindName(dKind) + " LÄUFT  " + f_pc(pcNow)
         hc := upCol
-        why := "Long seit " + f_fmt(dE) + " (Tag " + str.tostring(dHeld) + "). Notstop " + f_fmt(dSt) + ", " + kindExit(dKind) + "."
+        why := "Long seit " + f_fmt(dE) + " (Tag " + str.tostring(dHeld) + "). " + (dKind == 4 ? "Stop " + f_fmt(dSt) + ", Ziel " + f_fmt(dTg) : "Notstop " + f_fmt(dSt)) + ", " + kindExit(dKind) + "."
         lnE := dE
         lnS := dSt
     else if isDax and intraOk and mS == 1
@@ -340,9 +359,11 @@ if barstate.islast
     else if todayK != 0
         head := todayOk ? "LONG ZUM TAGESSCHLUSS · " + kindName(todayK) : kindName(todayK) + " · HIER BISHER VERLUST"
         hc := todayOk ? upCol : amb
-        why := (todayK == 1 ? "Der Tag schließt bisher im unteren Fünftel (IBS " + str.tostring(dIb, "#.##") + ") über dem 200-Tage-Schnitt." : todayK == 2 ? "Schwacher Montag mit Schluss im unteren Drittel." : "Dritter schwächerer Schluss in Folge im Aufwärtstrend.") + " Kurz vor Handelsschluss kaufen, wenn es so bleibt. Notstop " + f_fmt(dClose - 3 * dAtr) + ", " + kindExit(todayK) + "." + (todayOk ? "" : " Auf diesem Markt hat die Regel bisher verloren: auslassen.")
+        float sStop = math.min(dLow - 0.2 * dAtr, dClose - 0.5 * dAtr)
+        float sTgt = dClose + 2 * (dClose - sStop)
+        why := (todayK == 1 ? "Der Tag schließt bisher im unteren Fünftel (IBS " + str.tostring(dIb, "#.##") + ") über dem 200-Tage-Schnitt." : todayK == 2 ? "Schwacher Montag mit Schluss im unteren Drittel." : todayK == 3 ? "Dritter schwächerer Schluss in Folge im Aufwärtstrend." : "Heute unter das 30-Tage-Tief " + f_fmt(dLo30) + " gefallen und wieder darüber: die Stopps sind abgeholt (Sweep), im Aufwärtstrend.") + " Kurz vor Handelsschluss kaufen, wenn es so bleibt. " + (todayK == 4 ? "Stop " + f_fmt(sStop) + " (unter dem Tagestief), Ziel " + f_fmt(sTgt) + " (2 R)" : "Notstop " + f_fmt(dClose - 3 * dAtr)) + ", " + kindExit(todayK) + "." + (todayOk ? "" : " Auf diesem Markt hat die Regel bisher verloren: auslassen.")
         lnE := dClose
-        lnS := dClose - 3 * dAtr
+        lnS := todayK == 4 ? sStop : dClose - 3 * dAtr
     else if isDax and intraOk and useDtb and mS == 0 and bm < 575
         head := "WARTEN · DAX-AUSBRUCH AB 9:35"
         hc := amb
@@ -369,6 +390,9 @@ if barstate.islast
     if useD3
         f_row(r, "Drei Verlusttage", "Rückrechnung: 71 % Treffer, Ø +0,29 % · hier: " + str.tostring(n3) + " Trades, " + f_q(w3, n3) + ", Ø " + f_pc(m3), okHere(n3, m3) ? upCol : dnCol)
         r += 1
+    if useSw
+        f_row(r, "Liquiditäts-Sweep", "Rückrechnung: 1.201 Trades, 46 % Treffer, Ø +0,21 R · hier: " + str.tostring(n4) + " Trades, " + f_q(w4, n4) + ", Ø " + f_pc(m4), okHere(n4, m4) ? upCol : dnCol)
+        r += 1
     if isDax and useDtb
         f_row(r, "DAX-Ausbruch 9:35", "Rückrechnung: 1.391 Trades, 42 % Treffer, Ø +0,15 R · hier: " + str.tostring(nM) + " Trades, Ø " + f_r(nM > 0 ? sM / nM : 0.0) + (mWhy != "" ? " · heute " + mWhy : ""), color.new(upCol, 0))
         r += 1
@@ -381,7 +405,7 @@ if barstate.islast
     if not isIndex
         f_row(r, "Achtung", "Die Regeln sind für Aktienindizes belegt, nicht für diesen Markt.", amb)
         r += 1
-    f_row(r, "Nicht mehr drin", "FVG, Order Blocks, CHoCH: in der Rückrechnung auf 7 Märkten im Minus", color.new(color.white, 45))
+    f_row(r, "Nicht drin", "15-Min-Muster, FVG, Order Blocks, CHoCH: in der Rückrechnung im Minus. Sweep wirkt nur auf Tageskerzen.", color.new(color.white, 45))
     if showLines
         L1 := f_line(L1, lnE, color.new(color.white, 30), line.style_solid, 1)
         L2 := f_line(L2, lnS, dnCol, line.style_solid, 2)
@@ -391,7 +415,7 @@ if barstate.islast
 // ═════════ Alarme ═════════
 alertcondition(isDax and mS == 1 and mS[1] == 0, "DAX-Ausbruch: Order jetzt", "Trade Check Ampel: DAX-Trend-Ausbruch, Order jetzt eingeben")
 alertcondition(isDax and aS == 1 and aS[1] == 0, "DAX-Nachmittag: Order jetzt", "Trade Check Ampel: DAX-Nachmittag, Order jetzt eingeben")
-alertcondition((dSI or dST or dSD) and dKind == 0, "Tagessignal heute (vor Schluss prüfen)", "Trade Check Ampel: {{ticker}} hat heute ein Tagessignal, kurz vor Schluss prüfen")
+alertcondition((dSI or dST or dSD or dSS) and dKind == 0, "Tagessignal heute (vor Schluss prüfen)", "Trade Check Ampel: {{ticker}} hat heute ein Tagessignal, kurz vor Schluss prüfen")
 if isDax and mS == 1 and mS[1] == 0
     alert("DAX-Trend-Ausbruch " + (mDir > 0 ? "LONG" : "SHORT") + ": " + (mDir > 0 ? "Kauf-Stopp " : "Verkaufs-Stopp ") + f_fmt(mPx) + ", Stop " + f_fmt(mStop) + ", bis 12:35, Schluss 17:25", alert.freq_once_per_bar_close)
 if isDax and aS == 1 and aS[1] == 0

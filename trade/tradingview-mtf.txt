@@ -10,7 +10,8 @@ indicator("Trade Check · Zonen (alle Zeitebenen)", shorttitle="TC Zonen", overl
 // abgeholte Liquidität mit Schluss zurück wird als Sweep markiert, und Fair Value Gaps schrumpfen beim Füllen.
 // Price Action: 15 Kerzen- und Chartmuster werden markiert, jedes mit seinem Ergebnis aus der Rückrechnung
 // (15 Min, DAX, Nasdaq, S&P 500, Dow, Gold, EUR/USD, GBP/USD seit 2013; allein, in Trendrichtung, in Zonen, beides).
-// Ehrlich: Kein Muster hat nach Kosten bestanden, auch nicht mit Trend oder Zone. Darum sind die Marken grau,
+// Ehrlich: Auf 15 Min hat kein Muster nach Kosten bestanden, auch nicht mit Trend oder Zone. Darum sind die Marken grau.
+// Bestanden hat der Liquiditäts-Sweep auf TAGESKERZEN (30-Tage-Tief geholt, Schluss zurück, Aufwärtstrend): grüne Marke „💧 SWEEP“,
 // und der Tooltip sagt, wie das Muster abgeschnitten hat. Für Entscheidungen: Indikator "Trade Check · Ampel".
 
 // ───────── Einstellungen ─────────
@@ -57,6 +58,7 @@ paTrendOnly = input.bool(false, "Nur in 4h-Trendrichtung", group=grpP)
 paZoneOnly = input.bool(false, "Nur in einer offenen 1h-Zone (FVG / Order Block)", group=grpP)
 paSess = input.bool(true, "Nur zur Haupthandelszeit des Marktes", group=grpP)
 paMax = input.int(40, "Muster-Marken im Chart", minval=5, maxval=200, group=grpP)
+showDSw = input.bool(true, "Tages-Sweep zeigen (30-Tage-Tief geholt, Schluss zurück, Aufwärtstrend: bestanden)", group=grpP)
 
 // ───────── Typen ─────────
 type Zone
@@ -658,6 +660,26 @@ if showPA and barstate.isconfirmed and (pSess or not paSess)
                 paLast := array.get(paName, id) + (d > 0 ? " ▲ " : " ▼ ") + "(" + fl + "): " + verdict
                 paLastCol := ps ? (d > 0 ? bullCol : bearCol) : m < -0.05 ? bearCol : color.new(#8A8F98, 0)
                 paGoodNow := paGoodNow or ps
+// Tages-Sweep (SMC auf Tageskerzen): das einzige Muster mit bestandener Rückrechnung (seit 2000, 16 Märkte: 1.201 Trades, 46 % Treffer, Ø +0,21 R)
+f_dsw() =>
+    float lo30 = ta.lowest(low, 30)[1]
+    float a14 = ta.atr(14)
+    bool sw = not na(lo30) and close > ta.sma(close, 200) and low < lo30 and close > lo30
+    float stp = math.min(low - 0.2 * a14, close - 0.5 * a14)
+    [sw, lo30, close, stp, close + 2 * (close - stp)]
+[dswNow, dswLo, dswC, dswS, dswT] = request.security(syminfo.tickerid, "D", f_dsw(), lookahead=barmerge.lookahead_off)
+[dswY, dswLoY, dswCY, dswSY, dswTY] = request.security(syminfo.tickerid, "D", f_dsw()[1], lookahead=barmerge.lookahead_on)
+var label dswLbl = na
+bool dswNew = showDSw and dswY and not dswY[1]
+if dswNew
+    label.new(bar_index, low, "💧 SWEEP ▲", style=label.style_label_up, color=color.new(bullCol, 0), textcolor=color.black, size=size.small,
+         tooltip="Tages-Sweep gestern: unter das 30-Tage-Tief " + str.tostring(dswLoY, format.mintick) + " und wieder darüber geschlossen, im Aufwärtstrend.\nBESTANDEN: seit 2000 auf 16 Märkten 1.201 Trades, 46 % Treffer, Ø +0,21 R nach Kosten.\nEinstieg zum Schluss " + str.tostring(dswCY, format.mintick) + " · Stop " + str.tostring(dswSY, format.mintick) + " · Ziel 2R " + str.tostring(dswTY, format.mintick) + " · max. 10 Tage")
+if showDSw and barstate.islast
+    label.delete(dswLbl)
+    if dswNow and timeframe.isintraday
+        dswLbl := label.new(bar_index, low, "💧 Heute Sweep (wenn der Tag so schließt)", style=label.style_label_up, color=color.new(bullCol, 30), textcolor=color.black, size=size.small,
+             tooltip="Heute unter das 30-Tage-Tief " + str.tostring(dswLo, format.mintick) + " und aktuell darüber. Gilt erst mit dem Tagesschluss. Kauf kurz vor Schluss, Stop " + str.tostring(dswS, format.mintick) + ", Ziel " + str.tostring(dswT, format.mintick) + " (2R), max. 10 Tage.")
+alertcondition(dswNow and not dswNow[1], "Tages-Sweep heute (belegt)", "Trade Check: {{ticker}} holt das 30-Tage-Tief und liegt wieder darüber. Kurz vor Schluss prüfen.")
 alertcondition(paGoodNow, "Price Action: belegtes Muster", "Trade Check: belegtes Price-Action-Muster auf {{ticker}} ({{interval}})")
 
 
