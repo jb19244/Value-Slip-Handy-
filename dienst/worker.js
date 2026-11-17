@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = 'c64065558b';
+const WORKER_VER = '0033517c4e';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3648,6 +3648,54 @@ function dangerState(o){
   if (o.ddOn) yel.push('Das Konto liegt ' + pc((o.dd || 0) * 100) + ' % unter dem Hoch, Risiko ist halbiert.');
   if ((o.watch || 0) >= 2) yel.push(o.watch + ' Strategien stehen unter Beobachtung.');
   return { level: red.length ? 'rot' : yel.length ? 'gelb' : 'gruen', red: red, yellow: yel };
+}
+// Zahl wie man sie in Deutschland tippt: "23.810,5", "23810,5", "23.810" (Tausenderpunkt) oder "4.18"
+function parseDe(v){
+  var t = String(v == null ? '' : v).replace(/[\s€$%]/g, ''); if (!t) return null;
+  if (t.indexOf(',') >= 0) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  var n = parseFloat(t); return isFinite(n) ? n : null;
+}
+// ================= KO-Rechner fuer Stop-Loss und Take-Profit =================
+// Rechnet zwischen Basiswert und Schein hin und her, so wie Trade Republic die Werte zeigt.
+// p: dir (1 Long/Call, -1 Short/Put), under (Basiswert jetzt), ko (KO-Schwelle), ratio (Bezugsverhaeltnis, optional wenn ask da ist),
+//    ask (Schein-Kaufkurs jetzt), bid (Schein-Verkaufskurs jetzt, optional, fuer den Spread), conv (Euro je Einheit der Basiswert-Waehrung),
+//    sl, tp (Marken), mode: 'basis' (sl/tp im Basiswert) oder 'schein' (sl/tp als Verkaufskurs des Scheins), riskEur, qty, fee (Euro je Order)
+// Stop-Orders bei Trade Republic loesen auf den Verkaufskurs (Geld) des Scheins aus, deshalb sind Order-Kurse Geldkurse.
+function koPlan(p){
+  var dir = p.dir < 0 ? -1 : 1, u = +p.under, ko = +p.ko, conv = +p.conv > 0 ? +p.conv : 1, ask = +p.ask > 0 ? +p.ask : null, bid = +p.bid > 0 ? +p.bid : null, ratio = +p.ratio > 0 ? +p.ratio : null;
+  if (!(u > 0) || !(ko > 0)) return { error: 'fehlt' };
+  if ((u - ko) * dir <= 0) return { error: dir > 0 ? 'Bei Long (Call) liegt die KO-Schwelle unter dem Kurs des Basiswerts.' : 'Bei Short (Put) liegt die KO-Schwelle über dem Kurs des Basiswerts.' };
+  var derived = false;
+  if (!ratio){ if (!ask) return { error: 'Trag das Bezugsverhältnis oder den Kaufkurs des Scheins ein.' }; ratio = ask / ((u - ko) * dir * conv); derived = true; }
+  var inner = function(lv){ return Math.max(0, (lv - ko) * dir) * ratio * conv; };
+  var prem = ask && !derived ? ask - inner(u) : 0, spread = ask && bid && ask > bid ? ask - bid : 0;
+  if (ask && !derived && Math.abs(prem) > 0.5 * ask) return { error: 'Kaufkurs, KO-Schwelle und Bezugsverhältnis passen nicht zusammen. Prüf das Bezugsverhältnis (z. B. 0,01 oder 0,1) und die Währung.' };
+  var askAt = function(lv){ var x = inner(lv); return x > 0 ? Math.max(0, x + prem) : 0; }, bidAt = function(lv){ var x = inner(lv); return x > 0 ? Math.max(0, x + prem - spread) : 0; };
+  var lvOfBid = function(b){ return ko + dir * (b + spread - prem) / (ratio * conv); };
+  var pe = ask || askAt(u), r2 = function(v){ return Math.round(v * 100) / 100; }, slB = null, tpB = null, slLv = null, tpLv = null, sl = +p.sl, tp = +p.tp;
+  if (p.mode === 'schein'){ if (sl > 0){ slB = sl; slLv = lvOfBid(sl); } if (tp > 0){ tpB = tp; tpLv = lvOfBid(tp); } }
+  else { if (sl > 0){ slLv = sl; slB = bidAt(sl); } if (tp > 0){ tpLv = tp; tpB = bidAt(tp); } }
+  var out = { dir: dir, ratio: ratio, ratioDerived: derived, prem: prem, spread: spread, entry: { lv: u, ask: r2(pe), bid: r2(bid || bidAt(u)) }, leverage: pe > 0 ? u * ratio * conv / pe : null, koDist: Math.abs(u - ko) / u, ko: ko, warn: [] };
+  if (slLv != null){
+    if ((u - slLv) * dir <= 0) return { error: dir > 0 ? 'Der Stop muss unter dem aktuellen Kurs liegen (Long).' : 'Der Stop muss über dem aktuellen Kurs liegen (Short).' };
+    out.sl = { lv: slLv, bid: r2(Math.max(0, slB)), pct: pe > 0 ? slB / pe - 1 : null, beyondKo: (slLv - ko) * dir <= 0, gapKo: Math.abs(slLv - ko) / Math.abs(u - slLv) };
+    if (out.sl.beyondKo) out.warn.push({ bad: true, t: 'Der Stop liegt hinter der KO-Schwelle. Der Schein ist vorher wertlos, der Stop greift nie. Nimm einen Schein mit weiter entfernter Schwelle oder einen engeren Stop.' });
+    else if (out.sl.gapKo < 0.3) out.warn.push({ t: 'Die KO-Schwelle liegt sehr nah hinter dem Stop. Bei einer Kurslücke kann der Schein ausknocken, bevor die Stop-Order ausgeführt ist.' });
+    if (!out.sl.beyondKo && out.sl.bid < 0.01) out.warn.push({ bad: true, t: 'Am Stop wäre der Schein fast nichts mehr wert. Stop-Kurs unter 0,01 € geht als Order nicht.' }); }
+  if (tpLv != null){
+    if ((tpLv - u) * dir <= 0) return { error: dir > 0 ? 'Das Ziel muss über dem aktuellen Kurs liegen (Long).' : 'Das Ziel muss unter dem aktuellen Kurs liegen (Short).' };
+    out.tp = { lv: tpLv, bid: r2(tpB), pct: pe > 0 ? tpB / pe - 1 : null }; }
+  var fee = +p.fee >= 0 ? +p.fee : 1, lossPer = out.sl && !out.sl.beyondKo ? pe - out.sl.bid : (out.sl ? pe : null), gainPer = out.tp ? out.tp.bid - pe : null;
+  if (out.sl && out.tp && lossPer > 0) out.rr = gainPer / lossPer;
+  var q = +p.qty > 0 ? Math.floor(+p.qty) : (+p.riskEur > 0 && lossPer > 0 ? Math.floor(Math.max(0, +p.riskEur - 2 * fee) / lossPer) : null);
+  if (q != null && q > 0){
+    out.qty = q; out.invest = q * pe; out.fees = 2 * fee;
+    if (lossPer != null) out.atSl = -q * lossPer - 2 * fee;
+    if (gainPer != null) out.atTp = q * gainPer - 2 * fee;
+    if (lossPer > 0 && fee > 0 && 2 * fee > 0.2 * q * lossPer) out.warn.push({ bad: 2 * fee >= q * lossPer * 0.5, t: 'Die Ordergebühren (' + (2 * fee).toFixed(0) + ' € für Kauf und Verkauf) sind ' + Math.round(2 * fee / (q * lossPer) * 100) + ' % deines Risikos bis zum Stop. Damit es höchstens 10 % sind, brauchst du mindestens ' + Math.ceil(2 * fee / (0.1 * lossPer)) + ' Stück.' });
+  } else if (q === 0 && lossPer > 0) out.warn.push({ bad: true, t: 'Mit deinem Risiko geht sich nicht einmal 1 Stück aus. Ein Stück verliert bis zum Stop ' + lossPer.toFixed(2).replace('.', ',') + ' €.' });
+  return out;
 }
   return { edgeCheck, dangerState, koHitRate, lossLocks, allocMult, takeState, takeCounts, newsWanted, newsMatch, newsName, newsKind, newsSurprise, newsCalls, newsNum, newsText, riskCluster, riskBudget, groupOf, groupName, dailyGroup, logSym, shadowRun, shadowCost, liveCheck, expOf, ruleSeries, ruleHit, ruleExit, ruleText, ruleId, smaAt, ibs, trProduct, depotText, DEPOT_NAMES, rsi2DailySignals, rsiSeries, atrSeries, PLAY_STOCKS, stockInstrument, confluence, marketContext, scanSetups, scanPullbacks, scanAll, setupName, scanUniverse, gradeMatch, gradeName, parseYahoo, instrumentByKey, biasAt, killzones, berlinFast, simulate, scoreCheck, gradeById, GRADES, INSTRUMENTS };
 })();

@@ -220,6 +220,7 @@ details.more{margin-top:4px}details.more summary{font-size:13px;color:var(--link
 .sig .sub{font-size:12px;color:var(--muted)}
 .banner{margin-top:8px;padding:8px 10px;border-radius:10px;font-size:13px;font-weight:500;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .banner.good{background:var(--good-bg);color:var(--good)} .banner.bad{background:var(--bad-bg);color:var(--bad)}
+.kr-tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}.kr-t{padding:12px;border-radius:12px;background:var(--surface2);border:1px solid var(--line)}.kr-t.bad{border-color:color-mix(in srgb,var(--bad) 45%,transparent)}.kr-t.good{border-color:color-mix(in srgb,var(--good) 45%,transparent)}.kr-l{font-size:12px;color:var(--muted)}.kr-v{font-family:var(--font-d);font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}.kr-t.bad .kr-v{color:var(--bad)}.kr-t.good .kr-v{color:var(--good)}.kr-s{font-size:12px;color:var(--muted);margin-top:2px}.buysell.sm button{font-size:13px;padding:8px;min-height:44px}.buysell.sm button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
 .kobox{margin-top:14px;padding:12px;border-radius:12px;background:var(--surface2)}
 .kobox .fields{margin-top:6px}
 @media (min-width:700px){ .page{max-width:640px;margin:0 auto} }
@@ -359,6 +360,61 @@ function after(){
 
 // ===================== Check =====================
 function watchKeys(){ var ks = S.watch.slice(); if (ks.indexOf(S.form.k) < 0) ks.unshift(S.form.k); return ks; }
+// ================= KO-Rechner: Stop-Loss und Take-Profit fuer den Schein =================
+function krS(){ S.kr = S.kr || { dir: 1, mode: 'basis', ccy: 'EUR' }; return S.kr; }
+function krDec(k){ if (k.dec != null) return k.dec; var u = parseDe(k.under) || 0; return u >= 1000 ? 1 : u >= 10 ? 2 : 4; }
+function krFmt(v, d){ var t = fmt(v, d); return d > 0 ? t.replace(/,0+$/, '') : t; }
+function krConv(k){ if (k.ccy === 'EUR') return 1; if (k.ccy === 'USD' && parseDe(k.fx) > 0) return 1 / parseDe(k.fx); return V.rates ? eurPer(k.ccy, V.rates) : null; }
+function krCalc(){ var k = krS(), conv = krConv(k);
+  if (!conv) return { error: 'Wechselkurs wird geladen …' };
+  return koPlan({ dir: k.dir, under: parseDe(k.under), ko: parseDe(k.ko), ratio: parseDe(k.ratio), ask: parseDe(k.ask), bid: parseDe(k.bid), conv: conv, sl: parseDe(k.sl), tp: parseDe(k.tp), mode: k.mode,
+    riskEur: parseDe(k.risk) > 0 ? parseDe(k.risk) : (+S.cfg.account || 0) * riskNow() / 100, qty: parseDe(k.qty), fee: S.cfg.fee != null && S.cfg.fee !== '' ? +S.cfg.fee : 1 }); }
+function krOut(){
+  var k = krS(), c = krCalc(), dl = krDec(k), e2 = function(v){ return fmt(v, 2) + ' €'; };
+  if (c.error) return c.error === 'fehlt' ? '<p class="hint">Trag ein, was Trade Republic beim Schein zeigt: Kurs des Basiswerts, KO-Schwelle und Bezugsverhältnis (oder den Kaufkurs des Scheins). Dazu deinen Stop und dein Ziel.</p>' : '<p class="err" style="margin:6px 0 0">' + esc(c.error) + '</p>';
+  var tile = function(cls, t, v, sub){ return '<div class="kr-t ' + cls + '"><div class="kr-l">' + t + '</div><div class="kr-v">' + v + '</div><div class="kr-s">' + sub + '</div></div>'; };
+  var other = k.mode === 'schein' ? function(x){ return 'Basiswert ' + fmt(x.lv, dl); } : function(x){ return (x.pct != null ? sgn(x.pct * 100, 0) + ' % beim Schein' : ''); };
+  var h = '<div class="kr-tiles">' +
+    (c.sl ? tile('bad', 'Stop-Loss-Order', c.sl.beyondKo ? 'KO' : e2(c.sl.bid), c.sl.beyondKo ? 'Schein vorher wertlos' : other(c.sl)) : tile('', 'Stop-Loss-Order', '–', 'Stop eintragen')) +
+    (c.tp ? tile('good', 'Take-Profit (Limit-Verkauf)', e2(c.tp.bid), other(c.tp)) : tile('', 'Take-Profit (Limit-Verkauf)', '–', 'Ziel eintragen')) + '</div>';
+  var kv = [];
+  if (c.qty){ kv.push(['Stück', fmt(c.qty, 0)]); kv.push(['Einsatz', fmt(c.invest, 0) + ' €']); if (c.atSl != null) kv.push(['Am Stop', '<span class="bad">' + sgn(c.atSl, 0) + ' €</span>']); if (c.atTp != null) kv.push(['Am Ziel', '<span class="good">' + sgn(c.atTp, 0) + ' €</span>']); }
+  kv.push(['Chance : Risiko', c.rr != null ? fmt(c.rr, 1) + ' : 1' : '–']); kv.push(['Hebel', c.leverage ? fmt(c.leverage, 1) + '×' : '–']); kv.push(['Abstand zur KO-Schwelle', fmt(c.koDist * 100, 2) + ' %']); kv.push(['Schein jetzt', (c.spread ? fmt(c.entry.ask, 2) + ' / ' + fmt(c.entry.bid, 2) + ' €' : e2(c.entry.ask))]);
+  h += '<dl class="kv">' + kv.map(function(x){ return '<div><dt>' + x[0] + '</dt><dd>' + x[1] + '</dd></div>'; }).join('') + '</dl>';
+  c.warn.forEach(function(w){ h += '<div class="banner' + (w.bad ? ' bad' : '') + '" style="margin-top:8px"><span>' + esc(w.t) + '</span></div>'; });
+  h += '<p class="hint" style="margin-top:10px">' + (c.qty ? 'Ergebnisse nach ' + fmt(c.fees, 0) + ' € Ordergebühren' + (parseDe(k.risk) > 0 ? '' : ', Risiko aus deinen Einstellungen') + '. ' : 'Für die Stückzahl trag dein Risiko in Euro oder die Stückzahl ein. ') +
+    (c.ratioDerived ? 'Bezugsverhältnis aus dem Kaufkurs berechnet: ' + fmt(c.ratio, c.ratio < 0.1 ? 4 : 3) + '. ' : '') +
+    'So legst du es bei Trade Republic an: Schein öffnen → Verkaufen → Stop-Order mit Stop-Kurs ' + (c.sl && !c.sl.beyondKo ? e2(c.sl.bid) : 'aus dem Rechner') + '. Für das Ziel eine Limit-Order' + (c.tp ? ' zu ' + e2(c.tp.bid) : '') + '. Beide Kurse sind Verkaufskurse des Scheins, darauf löst Trade Republic aus. Lässt die App keine zweite Verkaufsorder für dieselben Stücke zu, setz zuerst den Stop und für das Ziel einen Kursalarm.</p>';
+  return h;
+}
+function viewKr(){
+  var k = krS(), i = instr(S.form.k), fx = V.rates && V.rates.EURUSD ? fmtIn(V.rates.EURUSD, 4) : '';
+  var fld = function(n, lab, ph){ return '<label class="field"><span>' + lab + '</span><input inputmode="decimal" autocomplete="off" data-kr="' + n + '" value="' + esc(k[n] || '') + '" placeholder="' + esc(ph || '') + '"></label>'; };
+  var tog = function(act, val, cur, lab){ return '<button data-act="' + act + '" data-v="' + val + '"' + (act === 'krdir' ? ' data-dir="' + val + '"' : '') + ' aria-pressed="' + (String(cur) === String(val)) + '">' + lab + '</button>'; };
+  var body = (k.name ? '<p class="small" style="margin:0 0 8px">Übernommen: <b>' + esc(k.name) + '</b> <button class="link small" data-act="krclear">leeren</button></p>' : '') +
+    '<div class="buysell">' + tog('krdir', 1, k.dir, 'Long / Call') + tog('krdir', -1, k.dir, 'Short / Put') + '</div>' +
+    '<div class="label" style="margin-top:12px">Schein (steht bei Trade Republic in den Details)</div>' +
+    '<div class="fields f2">' + fld('under', 'Basiswert jetzt', 'z. B. 23.810') + fld('ko', 'KO-Schwelle', 'z. B. 23.400') + '</div>' +
+    '<div class="fields f2" style="margin-top:8px">' + fld('ratio', 'Bezugsverhältnis', 'z. B. 0,01') + fld('ask', 'Schein Kaufkurs (€)', 'z. B. 4,12') + '</div>' +
+    '<div class="fields f2" style="margin-top:8px">' + fld('bid', 'Schein Verkaufskurs (€)', 'optional') +
+    '<label class="field"><span>Währung Basiswert</span><select data-kr="ccy">' + ['EUR', 'USD', 'GBP', 'JPY'].map(function(c){ return '<option' + (k.ccy === c ? ' selected' : '') + '>' + c + '</option>'; }).join('') + '</select></label></div>' +
+    (k.ccy === 'USD' ? '<div class="fields f2" style="margin-top:8px">' + fld('fx', '1 € = … $', fx || 'z. B. 1,08') + '<div></div></div>' : '') +
+    '<div class="row" style="margin-top:14px"><span class="label">Deine Marken</span></div><div class="buysell sm">' + tog('krmode', 'basis', k.mode, 'im Basiswert (Chart)') + tog('krmode', 'schein', k.mode, 'als Schein-Kurs (€)') + '</div>' +
+    '<div class="fields f2" style="margin-top:8px">' + fld('sl', 'Stop-Loss', k.mode === 'schein' ? 'z. B. 2,90' : 'z. B. 23.650') + fld('tp', 'Take-Profit', k.mode === 'schein' ? 'z. B. 6,50' : 'z. B. 24.100') + '</div>' +
+    '<div class="fields f2" style="margin-top:8px">' + fld('risk', 'Risiko (€)', (+S.cfg.account ? fmt((+S.cfg.account) * riskNow() / 100, 0) : 'z. B. 50')) + fld('qty', 'oder Stückzahl', 'optional') + '</div>' +
+    (i && (pnum(S.form.stop) > 0 || pnum(S.form.entry) > 0) ? '<button class="link small" style="margin-top:8px" data-act="krform">Marken aus der Order unten übernehmen (' + esc(i.name) + ')</button>' : '') +
+    '<div id="krout" style="margin-top:12px">' + krOut() + '</div>';
+  var c = krCalc(), sum = c && !c.error && c.sl && !c.sl.beyondKo ? 'SL ' + fmt(c.sl.bid, 2) + ' €' + (c.tp ? ' · TP ' + fmt(c.tp.bid, 2) + ' €' : '') : 'Stop-Loss & Take-Profit';
+  return fold('kr', 'KO-Rechner', esc(sum), body).replace('<details class="card fold"', '<details id="krcard" class="card fold"');
+}
+function krFill(o){ var k = krS(); Object.keys(o).forEach(function(n){ if (o[n] != null && o[n] !== '') k[n] = o[n]; }); k.qty = ''; save(); }
+function krFromPos(id){
+  var all = [].concat(V.ibsPos || [], V.swingPos || [], V.autoPos || [], V.dtPos || [], V.track || []), p = all.filter(function(x){ return x.id === id; })[0]; if (!p) return false;
+  var y = p.y || (typeof logSym === 'function' ? logSym(p) : ''), ins = INSTRUMENTS.filter(function(x){ return x.y === y || x.k === p.k || x.k === p.instr; })[0];
+  var ccy = ins ? ins.quote : (/^\^(GDAXI|STOXX50E|FCHI|AEX)$/.test(y) ? 'EUR' : /^\^FTSE$/.test(y) ? 'GBP' : 'USD'), dec = ins ? ins.dec : 1, entry = +(p.entry || p.px || p.e) || null, tg = +(p.tgt || p.target || p.tp) || null;
+  var S0 = krS(); S.kr = { dir: p.dir || 1, mode: 'basis', ccy: ccy, dec: dec, name: (p.name || y) + (p.cls ? ' · ' + p.cls : ''), under: entry ? krFmt(entry, dec) : '', sl: +p.stop ? krFmt(+p.stop, dec) : '', tp: tg ? krFmt(tg, dec) : '', risk: S0.risk || '', fx: S0.fx || '' };
+  S.fold = S.fold || {}; S.fold.kr = 1; S.tab = 'check'; save(); return true;
+}
 function viewCheck(){
   var f = S.form, i = instr(f.k) || INSTRUMENTS[0], d = V.data[f.k], px = lastPx(d), ch = dayChg(d);
   var chips = watchKeys().map(function(k){ var x = instr(k); return x ? '<button class="ichip" data-act="inst" data-k="' + esc(k) + '" aria-pressed="' + (k === f.k) + '">' + esc(x.name) + '</button>' : ''; }).join('') + '<button class="ichip" data-act="pick" aria-label="Weiteres Instrument">＋ Andere</button>';
@@ -370,6 +426,7 @@ function viewCheck(){
     '<div class="muted small" style="margin-top:4px">' + (V.loading === f.k ? '<span class="spin" style="display:inline-block;vertical-align:middle"></span> lädt' : (d ? 'Stand ' + hm(d.at) + ' · <button class="link" data-act="reload">aktualisieren</button>' : '')) + '</div></div>' +
     (d ? viewChartCard(i, d) : '') +
     (V.instErr ? '<p class="err">' + esc(V.instErr) + ' <button class="link" data-act="reload">Neu laden</button></p>' : '') +
+    viewKr() +
     '<div class="buysell"><button data-act="dir" data-dir="1" aria-pressed="' + (f.dir === 1) + '">Long</button><button data-act="dir" data-dir="-1" aria-pressed="' + (f.dir === -1) + '">Short</button></div>' +
     '<section class="card"><div class="row"><h2>Order</h2><span class="pill ' + (f.dir > 0 ? 'good' : 'bad') + '">' + (f.dir > 0 ? 'Call · Long' : 'Put · Short') + '</span></div>' +
     '<div class="fields">' + ['entry', 'stop', 'target'].map(function(n){ return '<label class="field"><span>' + { entry: 'Einstieg', stop: 'Stop', target: 'Ziel' }[n] + '</span><input inputmode="decimal" autocomplete="off" data-f="' + n + '" value="' + esc(f[n]) + '" placeholder="' + (px && n === 'entry' ? fmtIn(px, i.dec) : '') + '"></label>'; }).join('') + '</div>' +
@@ -995,6 +1052,7 @@ function openCard(ts){
   var open = ts.open, now = Date.now(), rows = [], obs = [], rows0 = rows;
   // jede Signal-Position: genommen -> normal, offen -> mit Frage, nicht genommen / Limit voll -> nur gezaehlt
   var gate = function(p, html, active){ var st = takeState(S.take, p, now);
+    if (+(p.entry || p.px || p.e) > 0 && +p.stop > 0) html = html.replace(/<\/div>$/, '') + '<button class="link small" data-act="krpos" data-id="' + esc(p.id) + '">KO-Rechner: Stop & Ziel als Schein-Kurs</button></div>';
     if (st === 'nein' || (!active && st !== 'ja')) { if (active) obs.push(p); return; }
     if (st === 'ja') return rows0.push(html);
     rows0.push(html.replace(/<\/div>$/, '') + '<div class="take"><span>' + (st === 'alt' ? 'Noch nicht beantwortet, zählt nicht mehr zum Konto-Risiko.' : 'Hast du das genommen?') + '</span><button class="btn sm" data-act="take" data-id="' + esc(p.id) + '" data-v="1">Genommen</button><button class="btn sm ghost" data-act="take" data-id="' + esc(p.id) + '" data-v="0">Nicht genommen</button></div></div>'); };
@@ -2438,6 +2496,7 @@ function bind(root){
   $$('input[data-watch]', root).forEach(function(el){ el.addEventListener('change', function(){ var k = el.dataset.watch, i = S.watch.indexOf(k); if (el.checked && i < 0) S.watch.push(k); if (!el.checked && i >= 0) S.watch.splice(i, 1); save(); syncTrade(); }); });
   $$('input[data-cfgb]', root).forEach(function(el){ el.addEventListener('change', function(){ if (el.dataset.cfgb === 'ddGuard') S.cfg.ddOff = !el.checked; save(); syncTrade().catch(function(){}); rerender(); }); });
   $$('input[data-push]', root).forEach(function(el){ el.addEventListener('change', function(){ S.cfg.push[el.dataset.push] = el.checked; save(); syncTrade(); }); });
+  $$('[data-kr]', root).forEach(function(el){ el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', function(){ var k = krS(); k[el.dataset.kr] = el.value; save(); if (el.tagName === 'SELECT') return rerender(); var o = $('#krout'); if (o) o.innerHTML = krOut(); }); });
   $$('input[data-fib]', root).forEach(function(el){ el.addEventListener('input', function(){ S.fib[el.dataset.fib] = el.value; save(); }); });
 }
 function setField(f, p){
@@ -2547,6 +2606,11 @@ function onAct(e){
   if (a === 'wkon' || a === 'wknew') return wkMake();
   if (a === 'wkoff'){ delete S.cfg.wk; delete S.cfg.wkh; save(); syncTrade().catch(function(){}); toast('Widget ausgeschaltet'); return rerender(); }
   if (a === 'wkcopy'){ var sc = wkScript(); return (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(sc) : Promise.reject()).then(function(){ toast('Script kopiert, jetzt in Scriptable einfügen'); }, function(){ var ta = $('#wkscript'); if (ta){ ta.closest('details').open = true; ta.focus(); ta.select(); } toast('Bitte das Script markieren und kopieren'); }); }
+  if (a === 'krdir'){ krS().dir = +el.dataset.v; save(); return rerender(); }
+  if (a === 'krmode'){ var k0 = krS(), c0 = krCalc(), nm = el.dataset.v; if (nm !== k0.mode){ if (c0 && !c0.error){ var dd = krDec(k0); if (c0.sl && !c0.sl.beyondKo) k0.sl = nm === 'schein' ? fmtIn(c0.sl.bid, 2) : krFmt(c0.sl.lv, dd); if (c0.tp) k0.tp = nm === 'schein' ? fmtIn(c0.tp.bid, 2) : krFmt(c0.tp.lv, dd); } k0.mode = nm; save(); } return rerender(); }
+  if (a === 'krclear'){ S.kr = { dir: krS().dir, mode: 'basis', ccy: krS().ccy, risk: krS().risk, fx: krS().fx }; save(); return rerender(); }
+  if (a === 'krform'){ var fi = instr(S.form.k), d0 = V.data[S.form.k], lp = lastPx(d0); krFill({ dir: S.form.dir, mode: 'basis', ccy: fi.quote === 'EUR' || fi.quote === 'USD' || fi.quote === 'GBP' || fi.quote === 'JPY' ? fi.quote : 'USD', dec: fi.dec, name: fi.name, under: pnum(S.form.entry) > 0 ? S.form.entry : (lp ? krFmt(lp, fi.dec) : ''), ko: S.form.ko, ratio: S.form.ratio, sl: S.form.stop, tp: S.form.target }); S.kr.mode = 'basis'; save(); return rerender(); }
+  if (a === 'krpos'){ if (krFromPos(el.dataset.id)){ rerender(); setTimeout(function(){ var c = $('#krcard'); if (c) c.scrollIntoView({ block: 'start' }); }, 50); toast('Marken übernommen: KO-Schwelle und Bezugsverhältnis deines Scheins eintragen'); } return; }
   if (a === 'take'){ var tv = +el.dataset.v; setTake(el.dataset.id, tv); toast(tv ? 'Als deine Position gespeichert' : 'Nicht genommen: zählt nicht mehr zum Risiko'); return rerender(); }
   if (a === 'deskm'){ V.deskM = el.dataset.m; return rerender(); }
   if (a === 'coachm'){ V.coachM = el.dataset.m; return rerender(); }
