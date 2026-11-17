@@ -1,0 +1,185 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// TC Levels: 1) Equal Highs  2) Opens (Tag, Woche, Monat, Quartal, Jahr)  3) Session-Ranges Asia, London, New York in deutscher Zeit
+//@version=6
+indicator("TC Levels: Equal Highs · Opens · Sessions", "TC Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500, max_bars_back = 600)
+
+// =====================================================================
+// 1 · EQUAL HIGHS
+// =====================================================================
+grpE = "1 · Equal Highs"
+eqOn    = input.bool(true, "Equal Highs anzeigen", group = grpE)
+eqLen   = input.int(200, "Lookback-Länge", minval = 10, maxval = 500, group = grpE, tooltip = "Wie viele Kerzen zurück nach einem gleich hohen Hoch gesucht wird.")
+eqPiv   = input.int(3, "Pivot-Länge", minval = 1, maxval = 20, group = grpE, tooltip = "Ein Hoch zählt, wenn links und rechts so viele Kerzen tiefer liegen. Das Hoch wird erst nach dieser Anzahl Kerzen bestätigt.")
+eqTol   = input.float(0.1, "Toleranz (× ATR 14)", minval = 0.0, step = 0.05, group = grpE, tooltip = "Wie nah zwei Hochs beieinander liegen müssen. 0,1 = ein Zehntel der durchschnittlichen Kerzenspanne.")
+eqCol   = input.color(color.new(#FF5252, 0), "Farbe", group = grpE)
+eqW     = input.int(2, "Linienbreite", minval = 1, maxval = 5, group = grpE)
+eqStyS  = input.string("Durchgezogen", "Linienstil", options = ["Durchgezogen", "Gestrichelt", "Gepunktet"], group = grpE)
+eqLbl   = input.bool(true, "Label „EQH“", group = grpE)
+eqDel   = input.bool(true, "Entfernen, wenn die Liquidität geholt wurde", group = grpE, tooltip = "Sobald der Kurs über das Equal High steigt, verschwindet die Linie.")
+
+eqSty = eqStyS == "Durchgezogen" ? line.style_solid : eqStyS == "Gestrichelt" ? line.style_dashed : line.style_dotted
+atr14 = ta.atr(14)
+ph    = ta.pivothigh(high, eqPiv, eqPiv)
+
+var array<float> pivP = array.new<float>()
+var array<int>   pivI = array.new<int>()
+var array<line>  eqL  = array.new<line>()
+var array<label> eqB  = array.new<label>()
+var array<float> eqLv = array.new<float>()
+var array<int>   eqX  = array.new<int>()
+
+if eqOn and not na(ph)
+    int   idx = bar_index - eqPiv
+    float tol = nz(atr14[eqPiv]) * eqTol
+    // Pivots ausserhalb des Lookbacks vergessen
+    while pivI.size() > 0 and idx - pivI.first() > eqLen
+        pivI.shift()
+        pivP.shift()
+    // vom juengsten zum aeltesten Pivot: erstes gleich hohes Hoch ohne hoeheres Hoch dazwischen
+    if pivI.size() > 0
+        for j = pivI.size() - 1 to 0
+            float p   = pivP.get(j)
+            int   pi  = pivI.get(j)
+            float top = math.max(p, ph)
+            bool  blocked = false
+            if bar_index - pi - 1 >= eqPiv + 1
+                for k = eqPiv + 1 to bar_index - pi - 1
+                    if high[k] > top + tol
+                        blocked := true
+                        break
+            if blocked
+                break
+            if math.abs(p - ph) <= tol
+                eqL.push(line.new(pi, p, idx, ph, color = eqCol, width = eqW, style = eqSty))
+                eqB.push(eqLbl ? label.new(math.round((pi + idx) / 2), top, "EQH", style = label.style_none, textcolor = eqCol, size = size.small, yloc = yloc.price) : na)
+                eqLv.push(top)
+                eqX.push(idx)
+                break
+    pivP.push(ph)
+    pivI.push(idx)
+
+// geholt (Kurs ueber dem Level) oder aelter als der Lookback: entfernen
+if eqL.size() > 0
+    for j = eqL.size() - 1 to 0
+        bool swept = eqDel and high > eqLv.get(j) and bar_index > eqX.get(j) + eqPiv
+        bool old   = bar_index - eqX.get(j) > eqLen
+        if swept or old
+            eqL.remove(j).delete()
+            label lb = eqB.remove(j)
+            if not na(lb)
+                lb.delete()
+            eqLv.remove(j)
+            eqX.remove(j)
+while eqL.size() > 100
+    eqL.shift().delete()
+    label lb0 = eqB.shift()
+    if not na(lb0)
+        lb0.delete()
+    eqLv.shift()
+    eqX.shift()
+
+// =====================================================================
+// 2 · OPENS
+// =====================================================================
+grpO = "2 · Opens"
+oD  = input.bool(true, "Daily",     inline = "d", group = grpO)
+cD  = input.color(color.new(#B0BEC5, 0), "", inline = "d", group = grpO)
+oW  = input.bool(true, "Weekly",    inline = "w", group = grpO)
+cW  = input.color(color.new(#42A5F5, 0), "", inline = "w", group = grpO)
+oM  = input.bool(true, "Monthly",   inline = "m", group = grpO)
+cM  = input.color(color.new(#AB47BC, 0), "", inline = "m", group = grpO)
+oQ  = input.bool(true, "3 Monthly", inline = "q", group = grpO)
+cQ  = input.color(color.new(#FFA726, 0), "", inline = "q", group = grpO)
+oY  = input.bool(true, "Yearly",    inline = "y", group = grpO)
+cY  = input.color(color.new(#FFD54F, 0), "", inline = "y", group = grpO)
+oLw = input.int(1, "Linienbreite", minval = 1, maxval = 4, group = grpO)
+oSS = input.string("Gestrichelt", "Linienstil", options = ["Durchgezogen", "Gestrichelt", "Gepunktet"], group = grpO)
+oPx = input.bool(true, "Kurs im Label", group = grpO)
+oSt = oSS == "Durchgezogen" ? line.style_solid : oSS == "Gestrichelt" ? line.style_dashed : line.style_dotted
+
+// Wechsel einmal je Kerze berechnen (nicht in Bedingungen)
+chD = timeframe.change("D")
+chW = timeframe.change("W")
+chM = timeframe.change("M")
+chQ = timeframe.change("3M")
+chY = timeframe.change("12M")
+
+type Lvl
+    line  ln = na
+    label lb = na
+    float px = na
+
+method run(Lvl this, bool ch, bool show, string tf, color col, string txt) =>
+    if show and timeframe.in_seconds() < timeframe.in_seconds(tf)
+        if ch
+            if not na(this.ln)
+                this.ln.delete()
+            if not na(this.lb)
+                this.lb.delete()
+            this.px := open
+            this.ln := line.new(bar_index, open, bar_index + 1, open, color = col, width = oLw, style = oSt, extend = extend.right)
+            this.lb := label.new(bar_index + 3, open, txt, style = label.style_label_left, color = color(na), textcolor = col, size = size.small)
+        if barstate.islast and not na(this.lb)
+            this.lb.set_x(bar_index + 3)
+            this.lb.set_text(oPx ? txt + "  " + str.tostring(this.px, format.mintick) : txt)
+    this
+
+var Lvl lvD = Lvl.new()
+var Lvl lvW = Lvl.new()
+var Lvl lvM = Lvl.new()
+var Lvl lvQ = Lvl.new()
+var Lvl lvY = Lvl.new()
+lvD.run(chD, oD, "D",   cD, "Daily Open")
+lvW.run(chW, oW, "W",   cW, "Weekly Open")
+lvM.run(chM, oM, "M",   cM, "Monthly Open")
+lvQ.run(chQ, oQ, "3M",  cQ, "3M Open")
+lvY.run(chY, oY, "12M", cY, "Yearly Open")
+
+// =====================================================================
+// 3 · SESSIONS (Ranges, deutsche Zeit)
+// =====================================================================
+grpS = "3 · Sessions (deutsche Zeit)"
+TZ   = "Europe/Berlin"
+sA   = input.bool(true, "Asia",     inline = "a", group = grpS)
+tA   = input.session("0100-0900", "", inline = "a", group = grpS)
+kA   = input.color(color.new(#7E57C2, 85), "", inline = "a", group = grpS)
+sL   = input.bool(true, "London",   inline = "l", group = grpS)
+tL   = input.session("0900-1730", "", inline = "l", group = grpS)
+kL   = input.color(color.new(#26A69A, 85), "", inline = "l", group = grpS)
+sN   = input.bool(true, "New York", inline = "n", group = grpS)
+tN   = input.session("1530-2200", "", inline = "n", group = grpS)
+kN   = input.color(color.new(#EF5350, 85), "", inline = "n", group = grpS)
+sDays = input.int(5, "Wie viele Tage zurück", minval = 1, maxval = 60, group = grpS)
+sTxt  = input.bool(true, "Name im Kasten", group = grpS)
+
+type Sess
+    box        bx  = na
+    array<box> all = na
+    float      hi  = na
+    float      lo  = na
+
+method run(Sess s, bool show, string sess, color col, string name) =>
+    bool inS = not na(time(timeframe.period, sess, TZ))
+    color bc = color.new(col, 30)
+    if show and timeframe.isintraday
+        if inS and not inS[1]
+            s.hi := high
+            s.lo := low
+            s.bx := box.new(bar_index, high, bar_index, low, border_color = bc, border_width = 1, bgcolor = col, text = sTxt ? name : "", text_color = bc, text_size = size.small, text_halign = text.align_left, text_valign = text.align_top)
+            s.all.push(s.bx)
+            if s.all.size() > sDays
+                s.all.shift().delete()
+        else if inS and not na(s.bx)
+            s.hi := math.max(s.hi, high)
+            s.lo := math.min(s.lo, low)
+            s.bx.set_top(s.hi)
+            s.bx.set_bottom(s.lo)
+            s.bx.set_right(bar_index)
+    s
+
+var Sess seA = Sess.new(all = array.new<box>())
+var Sess seL = Sess.new(all = array.new<box>())
+var Sess seN = Sess.new(all = array.new<box>())
+seA.run(sA, tA, kA, "Asia")
+seL.run(sL, tL, kL, "London")
+seN.run(sN, tN, kN, "New York")
