@@ -13,7 +13,7 @@
 //
 // Diese Datei wird automatisch erzeugt. Der Block "App-Logik" ist eine Kopie aus der App, damit Value hier exakt gleich gerechnet wird.
 
-const WORKER_VER = '0033517c4e';
+const WORKER_VER = '676ae033e9';
 const UPSTREAM = 'https://api.the-odds-api.com';
 const QUOTA_HEADERS = ['x-requests-remaining', 'x-requests-used', 'x-requests-last'];
 // Nur diese Parameter und Werte reicht der Zwischendienst weiter (so kann niemand teure Abfragen ueber ihn laufen lassen)
@@ -3868,11 +3868,12 @@ async function tradeRoute(request, headers, env, nowMs) {
       lock: b.lock && +b.lock.until > nowMs ? { until: Math.min(+b.lock.until, nowMs + 40 * 864e5), why: String(b.lock.why || '').slice(0, 220), kind: String(b.lock.kind || '').slice(0, 10) } : null,
       gefahr: b.gefahr && ['gruen', 'gelb', 'rot'].includes(b.gefahr.level) ? { level: b.gefahr.level, why: (Array.isArray(b.gefahr.why) ? b.gefahr.why : []).slice(0, 3).map((x) => String(x).slice(0, 260)), at: nowMs } : null,
       execX: b.gefahr ? num(b.gefahr.execX, 0, 2, 0) : 0,
+      minWin: b.minWin === 0.7 ? 0.7 : 0,
       alloc: (() => { const o = {}; if (b.alloc && typeof b.alloc === 'object') Object.keys(b.alloc).slice(0, 40).forEach((g) => { const v = +b.alloc[g]; if (/^[a-z0-9:_-]{1,30}$/i.test(g) && v >= 0.5 && v <= 1.25) o[g] = v; }); return o; })(), wkh: typeof b.wkh === 'string' && /^[a-f0-9]{64}$/.test(b.wkh) ? b.wkh : null });
     // Ereignisse nur fuer noch offene Trades behalten
     const ids = new Set(next.trades.map((x) => x.id)); Object.keys(next.tev).forEach((id) => { if (!ids.has(id)) delete next.tev[id]; });
     await env.VS.put('trade', JSON.stringify(next));
-    return jsonData({ ok: true, ver: WORKER_VER, taken: next.taken, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-400), swingPos: next.swingPos, ibsPos: next.ibsPos, autoPos: next.autoPos || [], dtPos: next.dtPos || [], brief: next.brief || null, radar: next.radar || null, log: (t.log || []).slice(-40),
+    return jsonData({ ok: true, ver: WORKER_VER, taken: next.taken, winSkip: next.winSkip || {}, active: validSub(next.sub), alerts: next.alerts, signals: next.signals, tev: next.tev, track: next.track, trackLog: next.trackLog.slice(-400), swingPos: next.swingPos, ibsPos: next.ibsPos, autoPos: next.autoPos || [], dtPos: next.dtPos || [], brief: next.brief || null, radar: next.radar || null, log: (t.log || []).slice(-40),
       bak: await env.VS.get('bak:meta', 'json'), proto: next.proto || null, news: (next.newsLog || []).slice(-20), newsStat: next.newsStat || null, lc: next.lc || null, wd: { hb: next.hb || null, dataSince: next.wd && next.wd.dataSince || null, gh: next.wd && next.wd.gh || [], ghAt: next.wd && next.wd.ghAt || null }, now: nowMs }, headers);
   }
   if (path === '/trade/backup') {
@@ -4187,6 +4188,12 @@ async function runTrade(env, nowMs) {
     if (msg.g && t.lc && t.lc.paused && t.lc.paused[msg.g]) msg = Object.assign({}, msg, { title: '⏸ ' + (msg.title || 'Trade Check'), body: '⏸ Pausiert: ' + TL.groupName(msg.g, msg) + ' liegt live deutlich unter der Rückrechnung. Nur beobachten, nicht handeln. Der Schatten-Bot verfolgt das Signal weiter. ' + (msg.body || '') });
     // Verlustgrenze erreicht: neue Signale nicht melden (der Schatten-Bot verfolgt sie weiter), laufende Positionen schon
     if (msg.g && !mid && t.lock && t.lock.until > nowMs) { t.sent[key] = nowMs; dirty = true; t.lockSkip = (t.lockSkip || 0) + 1; return false; }
+    // 7-von-10-Modus: neue Trade-Signale nur, wenn genau diese Variante in der Rueckrechnung mind. 70 % Gewinner hatte (unbekannt = nicht melden)
+    if (t.minWin > 0 && msg.g && msg.d && (msg.d.entry != null || msg.d.stop != null) && !(msg.pw && msg.pw.n && msg.pw.win >= t.minWin)) {
+      const pq = allPos(t).find((q) => q.id && (key === q.id || key.endsWith(':' + q.id) || key.indexOf(':' + q.id + ':') >= 0)); if (pq) { pq.skip = true; pq.silent = true; pq.w70 = true; }
+      t.sent[key] = nowMs; dirty = true; const wk = berlinDay(nowMs); t.winSkip = t.winSkip || {}; t.winSkip[wk] = (t.winSkip[wk] || 0) + 1; Object.keys(t.winSkip).sort().slice(0, -7).forEach((k) => { delete t.winSkip[k]; });
+      t.log.push({ id: key, at: nowMs, title: 'Still (unter ' + Math.round(t.minWin * 100) + ' % Treffer): ' + (msg.title || ''), t: (msg.pw && msg.pw.n ? 'Trefferquote ' + Math.round(msg.pw.win * 100) + ' %. ' : 'Keine belegte Trefferquote. ') + (msg.body || '').slice(0, 400), quiet: 1 }); t.log = t.log.slice(-40);
+      return false; }
     // Gefahr hoeher als Ertrag: im Titel sichtbar, damit du es schon auf dem Sperrbildschirm siehst
     const pz0 = msg.g && t.lc && t.lc.paused && t.lc.paused[msg.g];
     if (pz0) { /* pausiert hat Vorrang */ }
