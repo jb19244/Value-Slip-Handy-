@@ -1,275 +1,275 @@
 {
-  "at": "2026-11-16T21:44:23.059Z",
+  "at": "2026-11-17T15:10:49.304Z",
   "url": "https://value-slip.75rk4v4jg4.workers.dev",
   "checks": [
     {
       "what": "EURUSD=X 15m",
       "status": 200,
-      "ms": 444,
-      "n": 472,
-      "last": 1.1,
+      "ms": 292,
+      "n": 446,
+      "last": 1.0996,
       "err": ""
     },
     {
       "what": "EURUSD=X 60m",
       "status": 200,
-      "ms": 213,
-      "n": 506,
-      "last": 1.1,
+      "ms": 141,
+      "n": 521,
+      "last": 1.0996,
       "err": ""
     },
     {
       "what": "EURUSD=X 1d",
       "status": 200,
-      "ms": 239,
-      "n": 521,
-      "last": 1.1,
+      "ms": 159,
+      "n": 522,
+      "last": 1.0996,
       "err": ""
     },
     {
       "what": "GBPUSD=X 15m",
       "status": 200,
-      "ms": 193,
-      "n": 472,
-      "last": 1.3183,
+      "ms": 157,
+      "n": 446,
+      "last": 1.3192,
       "err": ""
     },
     {
       "what": "GBPUSD=X 60m",
       "status": 200,
-      "ms": 199,
-      "n": 506,
-      "last": 1.3183,
+      "ms": 110,
+      "n": 521,
+      "last": 1.3192,
       "err": ""
     },
     {
       "what": "GBPUSD=X 1d",
       "status": 200,
-      "ms": 165,
-      "n": 521,
-      "last": 1.3183,
+      "ms": 134,
+      "n": 522,
+      "last": 1.3192,
       "err": ""
     },
     {
       "what": "JPY=X 15m",
       "status": 200,
-      "ms": 185,
-      "n": 472,
-      "last": 159.448,
+      "ms": 109,
+      "n": 446,
+      "last": 159.39,
       "err": ""
     },
     {
       "what": "JPY=X 60m",
       "status": 200,
-      "ms": 160,
-      "n": 506,
-      "last": 159.438,
+      "ms": 131,
+      "n": 521,
+      "last": 159.39,
       "err": ""
     },
     {
       "what": "JPY=X 1d",
       "status": 200,
-      "ms": 193,
-      "n": 521,
-      "last": 159.448,
+      "ms": 143,
+      "n": 522,
+      "last": 159.39,
       "err": ""
     },
     {
       "what": "GC=F 15m",
       "status": 200,
-      "ms": 174,
-      "n": 452,
-      "last": 3858,
+      "ms": 188,
+      "n": 426,
+      "last": 3862.5,
       "err": ""
     },
     {
       "what": "GC=F 60m",
       "status": 200,
-      "ms": 151,
-      "n": 627,
-      "last": 3858,
+      "ms": 123,
+      "n": 619,
+      "last": 3862.5,
       "err": ""
     },
     {
       "what": "GC=F 1d",
       "status": 200,
-      "ms": 166,
-      "n": 504,
-      "last": 3858,
+      "ms": 197,
+      "n": 505,
+      "last": 3862.5,
       "err": ""
     },
     {
       "what": "SI=F 15m",
       "status": 200,
-      "ms": 187,
-      "n": 452,
-      "last": 46.94,
+      "ms": 108,
+      "n": 426,
+      "last": 47.675,
       "err": ""
     },
     {
       "what": "SI=F 60m",
       "status": 200,
-      "ms": 166,
-      "n": 627,
-      "last": 46.94,
+      "ms": 135,
+      "n": 619,
+      "last": 47.675,
       "err": ""
     },
     {
       "what": "SI=F 1d",
       "status": 200,
-      "ms": 200,
-      "n": 504,
-      "last": 46.94,
+      "ms": 129,
+      "n": 505,
+      "last": 47.675,
       "err": ""
     },
     {
       "what": "CL=F 15m",
       "status": 200,
-      "ms": 203,
-      "n": 452,
-      "last": 85.2,
+      "ms": 227,
+      "n": 426,
+      "last": 86.87,
       "err": ""
     },
     {
       "what": "CL=F 60m",
       "status": 200,
-      "ms": 185,
-      "n": 627,
-      "last": 85.2,
+      "ms": 283,
+      "n": 619,
+      "last": 86.87,
       "err": ""
     },
     {
       "what": "CL=F 1d",
       "status": 200,
-      "ms": 172,
-      "n": 504,
-      "last": 85.2,
+      "ms": 105,
+      "n": 505,
+      "last": 86.87,
       "err": ""
     },
     {
       "what": "^GDAXI 15m",
       "status": 200,
-      "ms": 211,
-      "n": 171,
-      "last": 26598.64,
+      "ms": 163,
+      "n": 165,
+      "last": 26264.63,
       "err": ""
     },
     {
       "what": "^GDAXI 60m",
       "status": 200,
-      "ms": 146,
-      "n": 190,
-      "last": 26598.64,
+      "ms": 135,
+      "n": 197,
+      "last": 26264.63,
       "err": ""
     },
     {
       "what": "^GDAXI 1d",
       "status": 200,
-      "ms": 154,
-      "n": 505,
-      "last": 26598.64,
+      "ms": 171,
+      "n": 506,
+      "last": 26264.02,
       "err": ""
     },
     {
       "what": "^NDX 15m",
       "status": 200,
-      "ms": 229,
-      "n": 131,
-      "last": 27197.152,
+      "ms": 157,
+      "n": 108,
+      "last": 27069.764,
       "err": ""
     },
     {
       "what": "^NDX 60m",
       "status": 200,
-      "ms": 190,
-      "n": 148,
-      "last": 27197.152,
+      "ms": 171,
+      "n": 149,
+      "last": 27069.764,
       "err": ""
     },
     {
       "what": "^NDX 1d",
       "status": 200,
-      "ms": 147,
-      "n": 500,
-      "last": 27197.152,
+      "ms": 458,
+      "n": 501,
+      "last": 27069.764,
       "err": ""
     },
     {
       "what": "^GSPC 15m",
       "status": 200,
-      "ms": 167,
-      "n": 131,
-      "last": 7416.59,
+      "ms": 128,
+      "n": 108,
+      "last": 7382.08,
       "err": ""
     },
     {
       "what": "^GSPC 60m",
       "status": 200,
-      "ms": 147,
-      "n": 148,
-      "last": 7416.59,
+      "ms": 138,
+      "n": 149,
+      "last": 7382.08,
       "err": ""
     },
     {
       "what": "^GSPC 1d",
       "status": 200,
-      "ms": 160,
-      "n": 500,
-      "last": 7416.59,
+      "ms": 107,
+      "n": 501,
+      "last": 7382.3,
       "err": ""
     },
     {
       "what": "SAP.DE 15m",
       "status": 200,
-      "ms": 152,
-      "n": 171,
-      "last": 213.4,
+      "ms": 115,
+      "n": 165,
+      "last": 203.2,
       "err": ""
     },
     {
       "what": "SAP.DE 60m",
       "status": 200,
-      "ms": 152,
-      "n": 190,
-      "last": 213.4,
+      "ms": 110,
+      "n": 197,
+      "last": 203.2,
       "err": ""
     },
     {
       "what": "SAP.DE 1d",
       "status": 200,
-      "ms": 187,
-      "n": 505,
-      "last": 213.4,
+      "ms": 142,
+      "n": 506,
+      "last": 203.2,
       "err": ""
     },
     {
       "what": "NVDA 15m",
       "status": 200,
-      "ms": 142,
-      "n": 131,
-      "last": 156.14,
+      "ms": 98,
+      "n": 108,
+      "last": 154.258,
       "err": ""
     },
     {
       "what": "NVDA 60m",
       "status": 200,
-      "ms": 153,
-      "n": 148,
-      "last": 156.14,
+      "ms": 121,
+      "n": 149,
+      "last": 154.29,
       "err": ""
     },
     {
       "what": "NVDA 1d",
       "status": 200,
-      "ms": 180,
-      "n": 500,
-      "last": 156.14,
+      "ms": 118,
+      "n": 501,
+      "last": 154.258,
       "err": ""
     },
     {
       "what": "Kalender",
       "status": 200,
-      "n": 120,
+      "n": 125,
       "err": "",
       "sample": [
         {
@@ -295,12 +295,12 @@
       "status": 200,
       "n": 160,
       "sample": {
-        "report_date_as_yyyy_mm_dd": "2026-11-03T00:00:00.000",
-        "noncomm_positions_long_all": "229383",
-        "noncomm_positions_short_all": "387174",
-        "comm_positions_long_all": "507069",
-        "comm_positions_short_all": "382218",
-        "open_interest_all": "876122"
+        "report_date_as_yyyy_mm_dd": "2026-11-10T00:00:00.000",
+        "noncomm_positions_long_all": "227478",
+        "noncomm_positions_short_all": "363874",
+        "comm_positions_long_all": "488832",
+        "comm_positions_short_all": "384210",
+        "open_interest_all": "854705"
       },
       "err": ""
     },
@@ -309,12 +309,12 @@
       "status": 200,
       "n": 160,
       "sample": {
-        "report_date_as_yyyy_mm_dd": "2026-11-03T00:00:00.000",
-        "noncomm_positions_long_all": "220530",
-        "noncomm_positions_short_all": "40982",
-        "comm_positions_long_all": "64326",
-        "comm_positions_short_all": "269228",
-        "open_interest_all": "399169"
+        "report_date_as_yyyy_mm_dd": "2026-11-10T00:00:00.000",
+        "noncomm_positions_long_all": "226234",
+        "noncomm_positions_short_all": "36127",
+        "comm_positions_long_all": "70463",
+        "comm_positions_short_all": "287985",
+        "open_interest_all": "404725"
       },
       "err": ""
     },
@@ -323,12 +323,12 @@
       "status": 200,
       "n": 160,
       "sample": {
-        "report_date_as_yyyy_mm_dd": "2026-11-03T00:00:00.000",
-        "noncomm_positions_long_all": "229322",
-        "noncomm_positions_short_all": "358736",
-        "comm_positions_long_all": "1444052",
-        "comm_positions_short_all": "1438857",
-        "open_interest_all": "1986532"
+        "report_date_as_yyyy_mm_dd": "2026-11-10T00:00:00.000",
+        "noncomm_positions_long_all": "211412",
+        "noncomm_positions_short_all": "350046",
+        "comm_positions_long_all": "1479734",
+        "comm_positions_short_all": "1465040",
+        "open_interest_all": "2017687"
       },
       "err": ""
     },
@@ -337,12 +337,12 @@
       "status": 200,
       "n": 160,
       "sample": {
-        "report_date_as_yyyy_mm_dd": "2026-11-03T00:00:00.000",
-        "noncomm_positions_long_all": "88899",
-        "noncomm_positions_short_all": "46026",
-        "comm_positions_long_all": "150650",
-        "comm_positions_short_all": "213920",
-        "open_interest_all": "292587"
+        "report_date_as_yyyy_mm_dd": "2026-11-10T00:00:00.000",
+        "noncomm_positions_long_all": "79072",
+        "noncomm_positions_short_all": "49941",
+        "comm_positions_long_all": "155255",
+        "comm_positions_short_all": "205070",
+        "open_interest_all": "288717"
       },
       "err": ""
     },
