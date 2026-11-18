@@ -11,6 +11,19 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: Eigene Zusatzpruefung
+        # Die oeffentliche Pruefung (translate_light) erkennt nicht alles, was der Editor beim Hinzufuegen meldet.
+        # CE10182: ueberladene Funktionen/Methoden duerfen keine globalen Variablen nutzen -> bei uns gar keine Ueberladung.
+        run: |
+          node -e "
+          const fs = require('fs'); let bad = 0;
+          for (const f of fs.readdirSync('trade').filter((x) => /^tradingview-.*\\.txt$/.test(x))) {
+            const src = fs.readFileSync('trade/' + f, 'utf8'), seen = {};
+            src.split('\\n').forEach((l, i) => { const m = l.match(/^(?:method\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*\\([^)]*\\)\\s*=>/); if (m) (seen[m[1]] = seen[m[1]] || []).push(i + 1); });
+            for (const [n, ls] of Object.entries(seen)) if (ls.length > 1) { bad = 1; console.log(f + ': Funktion/Methode ' + n + ' mehrfach definiert (Zeilen ' + ls.join(', ') + ') -> Fehler CE10182 moeglich'); }
+            console.log(f + ': Zusatzpruefung ' + (bad ? 'FEHLER' : 'ok'));
+          }
+          process.exit(bad);"
       - name: Kompilieren
         run: |
           fail=0
