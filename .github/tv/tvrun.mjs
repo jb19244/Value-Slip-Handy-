@@ -42,7 +42,9 @@ try {
   let added = false;
   for (const c of add) { const l = pg.locator(c).first(); if (await l.count()) { try { await l.click({ timeout: 3000 }); added = true; log.push('added via ' + c); break; } catch (e) {} } }
   if (!added) { await pg.keyboard.press('Control+Enter'); log.push('Ctrl+Enter'); }
-  await pg.waitForTimeout(15000); await pg.keyboard.press('Escape');
+  await pg.waitForTimeout(5000); await shot('3b_afteradd');
+  log.push('dialoge: ' + JSON.stringify(await pg.evaluate(() => Array.from(document.querySelectorAll('[role="dialog"], [data-dialog-name], [class*="dialog"]')).map((e) => e.innerText.replace(/\s+/g, ' ').slice(0, 200)).filter(Boolean).slice(0, 5))));
+  await pg.waitForTimeout(10000); await shot('3c_beforeesc'); await pg.keyboard.press('Escape');
   await shot('4_result');
   // Fehlertexte einsammeln
   const txt = await pg.evaluate(() => Array.from(document.querySelectorAll('body *')).filter((e) => e.children.length === 0 && /error|Error|cannot|Cannot|Fehler|runtime|Runtime/.test(e.textContent || '') && (e.textContent || '').length < 400).map((e) => e.textContent.trim()).slice(0, 40));
