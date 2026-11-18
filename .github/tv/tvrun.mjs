@@ -22,10 +22,18 @@ try {
   await pg.waitForTimeout(5000); await shot('2_editor');
   log.push('editor opened: ' + opened + ', monaco: ' + await pg.locator('.monaco-editor').count());
   const ed = pg.locator('.monaco-editor .view-lines').first();
-  await ed.click({ timeout: 10000 });
-  await pg.keyboard.press('Control+A'); await pg.keyboard.press('Delete');
-  await pg.evaluate((t) => navigator.clipboard.writeText(t), code);
-  await pg.keyboard.press('Control+V'); await pg.waitForTimeout(2000);
+  await ed.click({ timeout: 10000 }); await pg.waitForTimeout(500);
+  const viaApi = await pg.evaluate((t) => { try { const m = window.monaco && window.monaco.editor && window.monaco.editor.getModels(); if (m && m.length) { m[m.length - 1].setValue(t); return 'monaco ' + m.length; } } catch (e) { return 'err ' + e.message; } return 'none'; }, code);
+  log.push('setValue: ' + viaApi);
+  if (!/^monaco/.test(viaApi)) {
+    await pg.locator('.monaco-editor textarea').first().focus();
+    for (let r = 0; r < 2; r++) { await pg.keyboard.press('Control+a'); await pg.waitForTimeout(300); await pg.keyboard.press('Backspace'); await pg.waitForTimeout(300); }
+    await pg.evaluate((t) => navigator.clipboard.writeText(t), code);
+    await pg.keyboard.press('Control+v'); await pg.waitForTimeout(2000);
+  }
+  // Kontrolle: Anzahl Zeilen im Editor
+  log.push('lines in editor: ' + await pg.evaluate(() => { const ln = Array.from(document.querySelectorAll('.monaco-editor .line-numbers')).map((e) => +e.textContent).filter((x) => x > 0); return Math.max(0, ...ln); }) + ' / Datei: ' + code.split('\n').length);
+  await pg.keyboard.press('Control+Home'); await pg.waitForTimeout(500); await shot('3a_top');
   await shot('3_pasted');
   const add = ['button:has-text("Add to chart")', '[title*="Add to chart"]', '[data-name="add-script-to-chart"]', 'button:has-text("Update on chart")'];
   let added = false;
