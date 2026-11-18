@@ -1,0 +1,11 @@
+console: 2026-11-18T09:34:14.207Z:Lib.SessionScopedSettings:sessionThenTvSettings.get is about to return the default value due to error: Parsed value does not satisfy the provided validation predicate
+opened via [data-name="pine-dialog-button"]
+editor opened: true, monaco: 2
+added via button:has-text("Add to chart")
+console: [GSI_LOGGER]: FedCM get() rejects with NetworkError: Error retrieving a token.
+texts: []
+pine console: 9:34:27 AM"Untitled script" opened
+---
+
+legend-errors: 
+legend: 
