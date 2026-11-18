@@ -137,7 +137,7 @@ type Lvl
     label lb = na
     float px = na
 
-method run(Lvl this, bool ch, bool show, string tf, color col, string txt) =>
+method runOpen(Lvl this, bool ch, bool show, string tf, color col, string txt) =>
     if show and timeframe.in_seconds() < timeframe.in_seconds(tf)
         if ch
             if not na(this.ln)
@@ -157,11 +157,11 @@ var Lvl lvW = Lvl.new()
 var Lvl lvM = Lvl.new()
 var Lvl lvQ = Lvl.new()
 var Lvl lvY = Lvl.new()
-lvD.run(chD, oD, "D",   cD, "Daily Open")
-lvW.run(chW, oW, "W",   cW, "Weekly Open")
-lvM.run(chM, oM, "M",   cM, "Monthly Open")
-lvQ.run(chQ, oQ, "3M",  cQ, "3M Open")
-lvY.run(chY, oY, "12M", cY, "Yearly Open")
+lvD.runOpen(chD, oD, "D",   cD, "Daily Open")
+lvW.runOpen(chW, oW, "W",   cW, "Weekly Open")
+lvM.runOpen(chM, oM, "M",   cM, "Monthly Open")
+lvQ.runOpen(chQ, oQ, "3M",  cQ, "3M Open")
+lvY.runOpen(chY, oY, "12M", cY, "Yearly Open")
 
 // =====================================================================
 // 3 · SESSIONS (Ranges, deutsche Zeit)
@@ -186,7 +186,7 @@ type Sess
     float      hi  = na
     float      lo  = na
 
-method run(Sess s, bool show, string sess, color col, string name) =>
+method runSess(Sess s, bool show, string sess, color col, string name) =>
     bool inS = not na(time(timeframe.period, sess, TZ))
     color bc = color.new(col, 30)
     if show and timeframe.isintraday
@@ -208,9 +208,9 @@ method run(Sess s, bool show, string sess, color col, string name) =>
 var Sess seA = Sess.new(all = array.new<box>())
 var Sess seL = Sess.new(all = array.new<box>())
 var Sess seN = Sess.new(all = array.new<box>())
-seA.run(sA, tA, kA, "Asia")
-seL.run(sL, tL, kL, "London")
-seN.run(sN, tN, kN, "New York")
+seA.runSess(sA, tA, kA, "Asia")
+seL.runSess(sL, tL, kL, "London")
+seN.runSess(sN, tN, kN, "New York")
 
 // =====================================================================
 // 4 · TREND-TABELLE (mehrere Zeiteinheiten)

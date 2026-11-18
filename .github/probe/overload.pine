@@ -1,0 +1,18 @@
+//@version=6
+indicator("probe", overlay = true)
+g = input.int(2, "g")
+type A
+    int x = 0
+type B
+    int y = 0
+method run(A a) =>
+    a.x := g
+    a
+method run(B b) =>
+    b.y := g
+    b
+var A aa = A.new()
+var B bb = B.new()
+aa.run()
+bb.run()
+plot(close)
