@@ -1,0 +1,32 @@
+# Laeuft ein TradingView-Skript in einem echten Chart (als Gast) und speichert Bildschirmfotos und Fehlermeldungen
+name: TradingView-Laufzeittest
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/tv/**', '.github/workflows/tv-run.yml', 'trade/tradingview-levels.txt']
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Playwright
+        run: |
+          npm i --no-save playwright@1.48.2
+          npx playwright install --with-deps chromium
+      - name: Alt (v1) auf DAX 15 Min
+        run: node .github/tv/tvrun.mjs .github/tv/levels_v1.pine "XETR:DAX" 15 v1_dax15 || true
+      - name: Neu auf DAX 15 Min
+        run: node .github/tv/tvrun.mjs trade/tradingview-levels.txt "XETR:DAX" 15 v2_dax15 || true
+      - name: Neu auf Nasdaq 5 Min
+        run: node .github/tv/tvrun.mjs trade/tradingview-levels.txt "NASDAQ:NDX" 5 v2_ndx5 || true
+      - name: Neu auf DAX Tag
+        run: node .github/tv/tvrun.mjs trade/tradingview-levels.txt "XETR:DAX" D v2_daxD || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tv
+          path: out/

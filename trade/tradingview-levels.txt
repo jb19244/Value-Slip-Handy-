@@ -1,82 +1,106 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// TC Levels: 1) Equal Highs  2) Opens (Tag, Woche, Monat, Quartal, Jahr)  3) Session-Ranges Asia, London, New York in deutscher Zeit
+// TC Levels: 1) Equal Highs und Equal Lows  2) Opens (Tag, Woche, Monat, Quartal, Jahr)  3) Session-Ranges Asia, London, New York in deutscher Zeit
+//            4) Trend-Tabelle über mehrere Zeiteinheiten  5) Trendkerzen zählen (Zahl unter der Kerze)
 //@version=6
-indicator("TC Levels: Equal Highs · Opens · Sessions", "TC Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500, max_bars_back = 600)
+indicator("TC Levels: Equal Highs/Lows · Opens · Sessions · Trend", "TC Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500, max_bars_back = 600)
 
 // =====================================================================
-// 1 · EQUAL HIGHS
+// 1 · EQUAL HIGHS UND EQUAL LOWS
 // =====================================================================
-grpE = "1 · Equal Highs"
-eqOn    = input.bool(true, "Equal Highs anzeigen", group = grpE)
-eqLen   = input.int(200, "Lookback-Länge", minval = 10, maxval = 500, group = grpE, tooltip = "Wie viele Kerzen zurück nach einem gleich hohen Hoch gesucht wird.")
-eqPiv   = input.int(3, "Pivot-Länge", minval = 1, maxval = 20, group = grpE, tooltip = "Ein Hoch zählt, wenn links und rechts so viele Kerzen tiefer liegen. Das Hoch wird erst nach dieser Anzahl Kerzen bestätigt.")
-eqTol   = input.float(0.1, "Toleranz (× ATR 14)", minval = 0.0, step = 0.05, group = grpE, tooltip = "Wie nah zwei Hochs beieinander liegen müssen. 0,1 = ein Zehntel der durchschnittlichen Kerzenspanne.")
-eqCol   = input.color(color.new(#FF5252, 0), "Farbe", group = grpE)
+grpE = "1 · Equal Highs / Equal Lows"
+eqhOn   = input.bool(true, "Equal Highs", inline = "eh", group = grpE)
+eqhCol  = input.color(color.new(#FF5252, 0), "", inline = "eh", group = grpE)
+eqlOn   = input.bool(true, "Equal Lows",  inline = "el", group = grpE)
+eqlCol  = input.color(color.new(#00E676, 0), "", inline = "el", group = grpE)
+eqLen   = input.int(200, "Lookback-Länge", minval = 10, maxval = 500, group = grpE, tooltip = "Wie viele Kerzen zurück nach einem gleich hohen Hoch (gleich tiefen Tief) gesucht wird.")
+eqPiv   = input.int(3, "Pivot-Länge", minval = 1, maxval = 20, group = grpE, tooltip = "Ein Hoch zählt, wenn links und rechts so viele Kerzen tiefer liegen (beim Tief: höher). Bestätigt wird es erst nach dieser Anzahl Kerzen.")
+eqTol   = input.float(0.1, "Toleranz (× ATR 14)", minval = 0.0, step = 0.05, group = grpE, tooltip = "Wie nah zwei Hochs/Tiefs beieinander liegen müssen. 0,1 = ein Zehntel der durchschnittlichen Kerzenspanne.")
 eqW     = input.int(2, "Linienbreite", minval = 1, maxval = 5, group = grpE)
 eqStyS  = input.string("Durchgezogen", "Linienstil", options = ["Durchgezogen", "Gestrichelt", "Gepunktet"], group = grpE)
-eqLbl   = input.bool(true, "Label „EQH“", group = grpE)
-eqDel   = input.bool(true, "Entfernen, wenn die Liquidität geholt wurde", group = grpE, tooltip = "Sobald der Kurs über das Equal High steigt, verschwindet die Linie.")
+eqLbl   = input.bool(true, "Label „EQH“ / „EQL“", group = grpE)
+eqDel   = input.bool(true, "Entfernen, wenn die Liquidität geholt wurde", group = grpE, tooltip = "Sobald der Kurs über das Equal High (unter das Equal Low) läuft, verschwindet die Linie.")
 
 eqSty = eqStyS == "Durchgezogen" ? line.style_solid : eqStyS == "Gestrichelt" ? line.style_dashed : line.style_dotted
 atr14 = ta.atr(14)
 ph    = ta.pivothigh(high, eqPiv, eqPiv)
+pl    = ta.pivotlow(low, eqPiv, eqPiv)
+EQ_MAX = 60
 
-var array<float> pivP = array.new<float>()
-var array<int>   pivI = array.new<int>()
-var array<line>  eqL  = array.new<line>()
-var array<label> eqB  = array.new<label>()
-var array<float> eqLv = array.new<float>()
-var array<int>   eqX  = array.new<int>()
+type EqSide
+    bool         isHigh
+    array<float> pivP
+    array<int>   pivI
+    array<line>  lns
+    array<label> lbs
+    array<float> lvs
+    array<int>   xs
 
-if eqOn and not na(ph)
-    int   idx = bar_index - eqPiv
-    float tol = nz(atr14[eqPiv]) * eqTol
-    // Pivots ausserhalb des Lookbacks vergessen
-    while pivI.size() > 0 and idx - pivI.first() > eqLen
-        pivI.shift()
-        pivP.shift()
-    // vom juengsten zum aeltesten Pivot: erstes gleich hohes Hoch ohne hoeheres Hoch dazwischen
-    if pivI.size() > 0
-        for j = pivI.size() - 1 to 0
-            float p   = pivP.get(j)
-            int   pi  = pivI.get(j)
-            float top = math.max(p, ph)
-            bool  blocked = false
-            if bar_index - pi - 1 >= eqPiv + 1
-                for k = eqPiv + 1 to bar_index - pi - 1
-                    if high[k] > top + tol
-                        blocked := true
-                        break
-            if blocked
-                break
-            if math.abs(p - ph) <= tol
-                eqL.push(line.new(pi, p, idx, ph, color = eqCol, width = eqW, style = eqSty))
-                eqB.push(eqLbl ? label.new(math.round((pi + idx) / 2), top, "EQH", style = label.style_none, textcolor = eqCol, size = size.small, yloc = yloc.price) : na)
-                eqLv.push(top)
-                eqX.push(idx)
-                break
-    pivP.push(ph)
-    pivI.push(idx)
+eqNew(bool isHigh) =>
+    EqSide.new(isHigh, array.new<float>(), array.new<int>(), array.new<line>(), array.new<label>(), array.new<float>(), array.new<int>())
 
-// geholt (Kurs ueber dem Level) oder aelter als der Lookback: entfernen
-if eqL.size() > 0
-    for j = eqL.size() - 1 to 0
-        bool swept = eqDel and high > eqLv.get(j) and bar_index > eqX.get(j) + eqPiv
-        bool old   = bar_index - eqX.get(j) > eqLen
-        if swept or old
-            eqL.remove(j).delete()
-            label lb = eqB.remove(j)
-            if not na(lb)
-                lb.delete()
-            eqLv.remove(j)
-            eqX.remove(j)
-while eqL.size() > 100
-    eqL.shift().delete()
-    label lb0 = eqB.shift()
-    if not na(lb0)
-        lb0.delete()
-    eqLv.shift()
-    eqX.shift()
+// neues bestaetigtes Pivot pruefen: gleiches Hoch/Tief im Lookback, ohne hoeheres Hoch (tieferes Tief) dazwischen
+method addPivot(EqSide s, float pv, bool show, color col) =>
+    if show and not na(pv)
+        int   idx = bar_index - eqPiv
+        float tol = nz(atr14[eqPiv]) * eqTol
+        while s.pivI.size() > 0 and idx - s.pivI.first() > eqLen
+            s.pivI.shift()
+            s.pivP.shift()
+        int n = s.pivI.size()
+        if n > 0
+            for j = n - 1 to 0
+                float p   = s.pivP.get(j)
+                int   pi  = s.pivI.get(j)
+                float ext = s.isHigh ? math.max(p, pv) : math.min(p, pv)
+                bool  blocked = false
+                int   kEnd = bar_index - pi - 1
+                if kEnd >= eqPiv + 1
+                    for k = eqPiv + 1 to kEnd
+                        if s.isHigh ? high[k] > ext + tol : low[k] < ext - tol
+                            blocked := true
+                            break
+                if blocked
+                    break
+                if math.abs(p - pv) <= tol
+                    s.lns.push(line.new(pi, p, idx, pv, color = col, width = eqW, style = eqSty))
+                    s.lbs.push(eqLbl ? label.new(math.round((pi + idx) / 2), ext, s.isHigh ? "EQH" : "EQL", style = s.isHigh ? label.style_label_down : label.style_label_up, color = color(na), textcolor = col, size = size.small) : label(na))
+                    s.lvs.push(ext)
+                    s.xs.push(idx)
+                    break
+        s.pivP.push(pv)
+        s.pivI.push(idx)
+    s
+
+// geholt oder aelter als der Lookback: entfernen
+method sweep(EqSide s) =>
+    int n = s.lns.size()
+    if n > 0
+        for j = n - 1 to 0
+            float lv    = s.lvs.get(j)
+            bool  swept = eqDel and bar_index > s.xs.get(j) + eqPiv and (s.isHigh ? high > lv : low < lv)
+            bool  old   = bar_index - s.xs.get(j) > eqLen
+            if swept or old
+                s.lns.remove(j).delete()
+                label lb = s.lbs.remove(j)
+                if not na(lb)
+                    lb.delete()
+                s.lvs.remove(j)
+                s.xs.remove(j)
+    while s.lns.size() > EQ_MAX
+        s.lns.shift().delete()
+        label lb0 = s.lbs.shift()
+        if not na(lb0)
+            lb0.delete()
+        s.lvs.shift()
+        s.xs.shift()
+    s
+
+var EqSide eqH = eqNew(true)
+var EqSide eqL = eqNew(false)
+eqH.addPivot(ph, eqhOn, eqhCol)
+eqL.addPivot(pl, eqlOn, eqlCol)
+eqH.sweep()
+eqL.sweep()
 
 // =====================================================================
 // 2 · OPENS
@@ -183,3 +207,98 @@ var Sess seN = Sess.new(all = array.new<box>())
 seA.run(sA, tA, kA, "Asia")
 seL.run(sL, tL, kL, "London")
 seN.run(sN, tN, kN, "New York")
+
+// =====================================================================
+// 4 · TREND-TABELLE (mehrere Zeiteinheiten)
+// =====================================================================
+grpT = "4 · Trend-Tabelle"
+tOn   = input.bool(true, "Tabelle anzeigen", group = grpT)
+tFast = input.int(20, "Schneller Schnitt (EMA)", minval = 2, group = grpT, tooltip = "Aufwärts: Schluss über dem langsamen Schnitt und schneller über langsamem. Abwärts: beides darunter. Sonst seitwärts.")
+tSlow = input.int(50, "Langsamer Schnitt (EMA)", minval = 3, group = grpT)
+tf1   = input.timeframe("5",   "Zeiteinheit 1", group = grpT)
+tf2   = input.timeframe("15",  "Zeiteinheit 2", group = grpT)
+tf3   = input.timeframe("60",  "Zeiteinheit 3", group = grpT)
+tf4   = input.timeframe("240", "Zeiteinheit 4", group = grpT)
+tf5   = input.timeframe("D",   "Zeiteinheit 5", group = grpT)
+tf6   = input.timeframe("W",   "Zeiteinheit 6", group = grpT)
+tPosS = input.string("Oben rechts", "Position", options = ["Oben rechts", "Oben links", "Unten rechts", "Unten links", "Mitte rechts"], group = grpT)
+tSizS = input.string("Klein", "Schriftgröße", options = ["Winzig", "Klein", "Normal"], group = grpT)
+tUp   = input.color(color.new(#00C853, 0), "Aufwärts", inline = "tc", group = grpT)
+tDn   = input.color(color.new(#FF1744, 0), "Abwärts",  inline = "tc", group = grpT)
+tSw   = input.color(color.new(#9E9E9E, 0), "Seitwärts", inline = "tc", group = grpT)
+
+trendOf() =>
+    float f = ta.ema(close, tFast)
+    float s = ta.ema(close, tSlow)
+    close > s and f > s ? 1 : close < s and f < s ? -1 : 0
+
+trChart = trendOf()
+tr1 = request.security(syminfo.tickerid, tf1, trendOf())
+tr2 = request.security(syminfo.tickerid, tf2, trendOf())
+tr3 = request.security(syminfo.tickerid, tf3, trendOf())
+tr4 = request.security(syminfo.tickerid, tf4, trendOf())
+tr5 = request.security(syminfo.tickerid, tf5, trendOf())
+tr6 = request.security(syminfo.tickerid, tf6, trendOf())
+
+tfName(string tf) =>
+    tf == "D" or tf == "1D" ? "1 Tag" : tf == "W" or tf == "1W" ? "1 Woche" : tf == "M" or tf == "1M" ? "1 Monat" : str.endswith(tf, "S") ? tf : str.endswith(tf, "D") ? str.replace(tf, "D", " Tage") : str.endswith(tf, "W") ? str.replace(tf, "W", " Wochen") : str.endswith(tf, "M") ? str.replace(tf, "M", " Monate") : str.tonumber(tf) % 60 == 0 ? str.tostring(str.tonumber(tf) / 60) + " Std" : tf + " Min"
+trTxt(int t) =>
+    t == 1 ? "▲ Aufwärts" : t == -1 ? "▼ Abwärts" : "► Seitwärts"
+trCol(int t) =>
+    t == 1 ? tUp : t == -1 ? tDn : tSw
+
+tPos = tPosS == "Oben rechts" ? position.top_right : tPosS == "Oben links" ? position.top_left : tPosS == "Unten rechts" ? position.bottom_right : tPosS == "Unten links" ? position.bottom_left : position.middle_right
+tSiz = tSizS == "Winzig" ? size.tiny : tSizS == "Klein" ? size.small : size.normal
+var table tTab = table.new(tPos, 2, 8, bgcolor = color.new(#131722, 10), border_color = color.new(#363A45, 0), border_width = 1, frame_color = color.new(#363A45, 0), frame_width = 1)
+
+setRow(int r, string name, int t) =>
+    tTab.cell(0, r, name, text_color = color.new(#D1D4DC, 0), text_size = tSiz, text_halign = text.align_left)
+    tTab.cell(1, r, trTxt(t), text_color = trCol(t), text_size = tSiz, text_halign = text.align_left)
+
+if barstate.islast
+    if tOn
+        tTab.cell(0, 0, "Zeiteinheit", text_color = color.new(#787B86, 0), text_size = tSiz, text_halign = text.align_left)
+        tTab.cell(1, 0, "Trend", text_color = color.new(#787B86, 0), text_size = tSiz, text_halign = text.align_left)
+        setRow(1, tfName(tf1), tr1)
+        setRow(2, tfName(tf2), tr2)
+        setRow(3, tfName(tf3), tr3)
+        setRow(4, tfName(tf4), tr4)
+        setRow(5, tfName(tf5), tr5)
+        setRow(6, tfName(tf6), tr6)
+        setRow(7, "Chart (" + tfName(timeframe.period) + ")", trChart)
+    else
+        tTab.clear(0, 0, 1, 7)
+
+// =====================================================================
+// 5 · TRENDKERZEN ZÄHLEN (Zahl unter der Kerze)
+// =====================================================================
+grpC = "5 · Trendkerzen zählen"
+cOn   = input.bool(true, "Trendkerzen zählen", group = grpC)
+cMode = input.string("Kerzen in Folge", "Zählweise", options = ["Kerzen in Folge", "Seit Trendbeginn"], group = grpC, tooltip = "Trend wie im Chart-Feld der Tabelle.\nKerzen in Folge: Kerzen, die in Trendrichtung schließen (im Aufwärtstrend grün, im Abwärtstrend rot). Eine Gegenkerze startet die Zählung neu.\nSeit Trendbeginn: alle Kerzen, seit der Trend des Charts gewechselt hat.")
+cKeep = input.int(300, "Zahlen auf den letzten … Kerzen", minval = 20, maxval = 350, group = grpC)
+cSizS = input.string("Klein", "Schriftgröße", options = ["Winzig", "Klein", "Normal"], group = grpC)
+cSiz  = cSizS == "Winzig" ? size.tiny : cSizS == "Klein" ? size.small : size.normal
+
+var int cnt  = 0
+var int cDir = 0
+bool withTrend = (trChart == 1 and close > open) or (trChart == -1 and close < open)
+if cMode == "Kerzen in Folge"
+    if withTrend
+        cnt  := cDir == trChart ? cnt + 1 : 1
+        cDir := trChart
+    else
+        cnt  := 0
+        cDir := 0
+else
+    if trChart != 0
+        cnt  := cDir == trChart ? cnt + 1 : 1
+        cDir := trChart
+    else
+        cnt  := 0
+        cDir := 0
+
+var array<label> cLbs = array.new<label>()
+if cOn and cnt > 0 and bar_index > last_bar_index - cKeep
+    cLbs.push(label.new(bar_index, low, str.tostring(cnt), xloc = xloc.bar_index, yloc = yloc.belowbar, style = label.style_none, textcolor = cDir == 1 ? tUp : tDn, size = cSiz))
+    if cLbs.size() > cKeep
+        cLbs.shift().delete()
