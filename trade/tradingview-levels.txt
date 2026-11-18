@@ -223,9 +223,9 @@ tf5   = input.timeframe("D",   "Zeiteinheit 5", group = grpT)
 tf6   = input.timeframe("W",   "Zeiteinheit 6", group = grpT)
 tPosS = input.string("Oben rechts", "Position", options = ["Oben rechts", "Oben links", "Unten rechts", "Unten links", "Mitte rechts"], group = grpT)
 tSizS = input.string("Klein", "Schriftgröße", options = ["Winzig", "Klein", "Normal"], group = grpT)
-tUp   = input.color(color.new(#00C853, 0), "Aufwärts", inline = "tc", group = grpT)
-tDn   = input.color(color.new(#FF1744, 0), "Abwärts",  inline = "tc", group = grpT)
-tSw   = input.color(color.new(#9E9E9E, 0), "Seitwärts", inline = "tc", group = grpT)
+tUp   = input.color(color.new(#00C853, 0), "Farben: aufwärts / abwärts / seitwärts", inline = "tc", group = grpT)
+tDn   = input.color(color.new(#FF1744, 0), "", inline = "tc", group = grpT)
+tSw   = input.color(color.new(#9E9E9E, 0), "", inline = "tc", group = grpT)
 
 trendOf() =>
     float f = ta.ema(close, tFast)

@@ -38,7 +38,11 @@ try {
   log.push('texts: ' + JSON.stringify(txt));
   const cons = await pg.evaluate(() => Array.from(document.querySelectorAll('[class*="console"], [class*="Console"]')).map((e) => e.innerText).join('\n---\n').slice(0, 3000));
   log.push('pine console: ' + cons);
-  const legend = await pg.evaluate(() => Array.from(document.querySelectorAll('[data-name="legend-source-item"], [class*="legend"]')).map((e) => e.innerText).join(' | ').slice(0, 1500));
+  const legend = await pg.evaluate(() => Array.from(document.querySelectorAll('[data-name="legend-source-item"]')).map((e) => e.innerText.replace(/\s+/g, ' ')).join(' | ').slice(0, 1500));
+  const errIcon = await pg.evaluate(() => Array.from(document.querySelectorAll('[data-name="legend-source-item"] [class*="error"], [data-name="legend-source-item"] [class*="Error"]')).map((e) => (e.getAttribute('title') || '') + ' ' + e.className).join(' | '));
+  log.push('legend-errors: ' + errIcon);
+  // Fehler-Symbol anklicken, falls vorhanden, um den Text zu sehen
+  const ei = pg.locator('[data-name="legend-source-item"] [class*="error"]').first(); if (await ei.count()) { try { await ei.hover(); await pg.waitForTimeout(1500); await shot('5_errhover'); const tip = await pg.evaluate(() => Array.from(document.querySelectorAll('[class*="tooltip"], [role="tooltip"]')).map((e) => e.innerText).join(' | ')); log.push('error tooltip: ' + tip); } catch (e) {} }
   log.push('legend: ' + legend);
 } catch (e) { log.push('FEHLER Ablauf: ' + e.message.slice(0, 500)); await shot('9_fail'); }
 writeFileSync(`out/${tag}.log`, log.join('\n')); console.log(log.join('\n'));
