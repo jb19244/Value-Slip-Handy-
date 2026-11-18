@@ -27,7 +27,10 @@ try {
   log.push('setValue: ' + viaApi);
   if (!/^monaco/.test(viaApi)) {
     await pg.locator('.monaco-editor textarea').first().focus();
-    for (let r = 0; r < 2; r++) { await pg.keyboard.press('Control+a'); await pg.waitForTimeout(300); await pg.keyboard.press('Backspace'); await pg.waitForTimeout(300); }
+    const nLines = () => pg.evaluate(() => { const ln = Array.from(document.querySelectorAll('.monaco-editor .line-numbers')).map((e) => +e.textContent).filter((x) => x > 0); return Math.max(0, ...ln); });
+    for (let r = 0; r < 5; r++) { await pg.keyboard.press('Control+End'); await pg.keyboard.press('Control+Shift+Home'); await pg.waitForTimeout(200); await pg.keyboard.press('Backspace'); await pg.waitForTimeout(400);
+      const t = await pg.evaluate(() => (document.querySelector('.monaco-editor .view-lines') || {}).innerText || ''); if ((await nLines()) <= 1 && !t.trim()) break; }
+    log.push('nach Leeren: ' + await nLines() + ' Zeilen');
     await pg.evaluate((t) => navigator.clipboard.writeText(t), code);
     await pg.keyboard.press('Control+v'); await pg.waitForTimeout(2000);
   }
