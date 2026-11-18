@@ -69,6 +69,10 @@ method addPivot(EqSide s, float pv, bool show, color col) =>
                     break
         s.pivP.push(pv)
         s.pivI.push(idx)
+        // Rechenzeit begrenzen: hoechstens 60 Pivots merken
+        while s.pivI.size() > 60
+            s.pivI.shift()
+            s.pivP.shift()
     s
 
 // geholt oder aelter als der Lookback: entfernen
@@ -251,21 +255,23 @@ tPos = tPosS == "Oben rechts" ? position.top_right : tPosS == "Oben links" ? pos
 tSiz = tSizS == "Winzig" ? size.tiny : tSizS == "Klein" ? size.small : size.normal
 var table tTab = table.new(tPos, 2, 8, bgcolor = color.new(#131722, 10), border_color = color.new(#363A45, 0), border_width = 1, frame_color = color.new(#363A45, 0), frame_width = 1)
 
-setRow(int r, string name, int t) =>
+setRow(int r, string name, int t, bool lower) =>
     tTab.cell(0, r, name, text_color = color.new(#D1D4DC, 0), text_size = tSiz, text_halign = text.align_left)
-    tTab.cell(1, r, trTxt(t), text_color = trCol(t), text_size = tSiz, text_halign = text.align_left)
+    tTab.cell(1, r, lower ? "– kleiner als Chart" : trTxt(t), text_color = lower ? color.new(#787B86, 0) : trCol(t), text_size = tSiz, text_halign = text.align_left)
+lowerTf(string tf) =>
+    timeframe.in_seconds(tf) < timeframe.in_seconds()
 
 if barstate.islast
     if tOn
         tTab.cell(0, 0, "Zeiteinheit", text_color = color.new(#787B86, 0), text_size = tSiz, text_halign = text.align_left)
         tTab.cell(1, 0, "Trend", text_color = color.new(#787B86, 0), text_size = tSiz, text_halign = text.align_left)
-        setRow(1, tfName(tf1), tr1)
-        setRow(2, tfName(tf2), tr2)
-        setRow(3, tfName(tf3), tr3)
-        setRow(4, tfName(tf4), tr4)
-        setRow(5, tfName(tf5), tr5)
-        setRow(6, tfName(tf6), tr6)
-        setRow(7, "Chart (" + tfName(timeframe.period) + ")", trChart)
+        setRow(1, tfName(tf1), tr1, lowerTf(tf1))
+        setRow(2, tfName(tf2), tr2, lowerTf(tf2))
+        setRow(3, tfName(tf3), tr3, lowerTf(tf3))
+        setRow(4, tfName(tf4), tr4, lowerTf(tf4))
+        setRow(5, tfName(tf5), tr5, lowerTf(tf5))
+        setRow(6, tfName(tf6), tr6, lowerTf(tf6))
+        setRow(7, "Chart (" + tfName(timeframe.period) + ")", trChart, false)
     else
         tTab.clear(0, 0, 1, 7)
 
