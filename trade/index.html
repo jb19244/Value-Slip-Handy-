@@ -3507,16 +3507,22 @@ function realRows(){
 // ================= Echte Ausfuehrungspreise: was Spread, Timing und Gebuehren wirklich kosten =================
 // Knock-out: fairer Scheinpreis aus dem Basiswert (Long (Kurs - KO) / Bezugsverhaeltnis, Short umgekehrt) beim Signal-Einstieg und -Ausstieg.
 // Plan = was der Schein bei den Signalkursen gebracht haette. Einstieg/Ausstieg = wie weit dein Kauf/Verkauf davon weg lag (Spread, Aufgeld, Timing).
+function koRatioMul(r){ r = +r; return r > 0 ? (r >= 1 ? 1 / r : r) : null; }
+function logCcy(x){ var i = INSTRUMENTS.filter(function(q){ return (x.k && q.k === x.k) || (x.y && q.y === x.y); })[0]; if (i) return i.quote;
+  var y = x.y || ''; return /^\^(GDAXI|STOXX50E|FCHI|AEX|MDAXI|TECDAX)$/.test(y) || /DAX|Euro Stoxx|STOXX/i.test(x.name || '') ? 'EUR' : /^\^FTSE$/.test(y) ? 'GBP' : /^\^N225$/.test(y) ? 'JPY' : 'USD'; }
+function logConv(x){ var c = logCcy(x); return c === 'EUR' ? 1 : (V.rates ? eurPer(c, V.rates) || 1 : 1); }
 function execUx(x){ if (x.xp) return x.xp; return x.e && x.sp && x.r != null ? x.e * (1 + (x.dir || 1) * x.r * x.sp) : null; }
 function execCost(x, m){
-  if (!m || !(m.buy > 0 && m.sell > 0 && m.qty > 0)) return null;
-  var fee = 2 * (m.fee != null ? m.fee : (+S.cfg.fee || 0)), act = (m.sell - m.buy) * m.qty - fee, ue = x.e, ux = execUx(x), dir = x.dir || 1;
+  if (!m || !(m.buy > 0 && m.sell >= 0 && m.sell != null && m.qty > 0)) return null;
+  var fee = (m.sell === 0 ? 1 : 2) * (m.fee != null ? m.fee : (+S.cfg.fee || 0)), act = (m.sell - m.buy) * m.qty - fee, ue = x.e, ux = execUx(x), dir = x.dir || 1;
   if (!(ue > 0 && ux > 0)) return { act: act, fee: fee, plan: null };
   if (m.prod === 'ko'){
     if (!(m.ratio > 0 && m.ko > 0)) return { act: act, fee: fee, plan: null };
-    var cb = dir * (ue - m.ko) / m.ratio, cs = dir * (ux - m.ko) / m.ratio;
-    if (!(cb > 0 && cs > 0)) return { act: act, fee: fee, plan: null };
-    return { act: act, fee: fee, plan: (cs - cb) * m.qty, entry: (m.buy - cb) * m.qty, exit: (cs - m.sell) * m.qty, lev: ue / (m.ratio * cb) };
+    // Bezugsverhaeltnis in beiden Schreibweisen: 0,01 (Schein je Punkt) oder 100 (100 Scheine = 1 Basiswert). Dazu Basiswert-Waehrung in Euro.
+    var rf = koRatioMul(m.ratio), cv = logConv(x);
+    var cb = dir * (ue - m.ko) * rf * cv, cs = dir * (ux - m.ko) * rf * cv;
+    if (!(cb > 0 && cs >= 0)) return { act: act, fee: fee, plan: null };
+    return { act: act, fee: fee, plan: (cs - cb) * m.qty, entry: (m.buy - cb) * m.qty, exit: (cs - m.sell) * m.qty, lev: ue * rf * cv / cb };
   }
   var plan = m.buy * m.qty * dir * (ux / ue - 1);
   return { act: act, fee: fee, plan: plan, slip: plan - act - fee };
@@ -3569,7 +3575,7 @@ function tpmEst(){
   var since = Date.now() - 180 * 864e5, n = realRows().filter(function(x){ return x.t > since; }).length;
   return n >= 6 ? Math.round(n / 6 * 10) / 10 : 8;
 }
-function mpInput(){ var rs = rSample(); return { start: Math.max(0, +S.cfg.account > 0 ? ddGuard(+S.cfg.account, realRows()).eq : 0), save: +S.cfg.save || 0, years: Math.max(0.1, +S.cfg.goalY || 20), tpm: tpmEst(), risk: +S.cfg.risk || 1,
+function mpInput(){ var rs = rSample(); return { start: Math.max(0, +S.cfg.account > 0 ? ddGuard(+S.cfg.account, realRows().filter(function(x){ return !x.est; })).eq : 0), save: +S.cfg.save || 0, years: Math.max(0.1, +S.cfg.goalY || 20), tpm: tpmEst(), risk: +S.cfg.risk || 1,
   R: rs.R, src: rs.src, fee: S.cfg.fee != null ? +S.cfg.fee : 1, target: +S.cfg.goal || 1e6, sims: 600, seed: 11, free: S.cfg.free != null ? +S.cfg.free : 1000, dd: !S.cfg.ddOff }; }
 function viewMillion(){
   var o = mpInput(), key = JSON.stringify([o.start, o.save, o.years, o.tpm, o.risk, o.fee, o.target, o.free, Array.isArray(o.R) ? o.R.length + ':' + o.R.reduce(function(a, b){ return a + b; }, 0) : 'a']);
@@ -3615,7 +3621,7 @@ function viewCostRep(){
     (r.rules.length ? '<ul class="list-plain">' + r.rules.map(function(t){ return '<li class="warn">⚠️ ' + esc(t) + '</li>'; }).join('') + '</ul>' : '<p class="hint">Keine Uhrzeit fällt aus dem Rahmen.</p>') + '</section>';
 }
 function viewTax(){
-  var y = berlinParts(Date.now()).key.slice(0, 4), g = realRows().filter(function(x){ return berlinParts(x.t).key.slice(0, 4) === y; }).map(function(x){ return x.eur; });
+  var y = berlinParts(Date.now()).key.slice(0, 4), g = realRows().filter(function(x){ return !x.est && berlinParts(x.t).key.slice(0, 4) === y; }).map(function(x){ return x.eur; });
   if (!g.length) return '';
   var free = S.cfg.free != null ? +S.cfg.free : 1000, t = taxEst(g, free, +S.cfg.kist || 0);
   return '<section class="card" id="steuer"><div class="row"><h2>Steuer ' + y + ' (Schätzung)</h2><span class="muted small">Trade Republic führt sie selbst ab</span></div><dl class="kv"><div><dt>Ergebnis</dt><dd class="' + (t.net >= 0 ? 'good' : 'bad') + '">' + sgn(t.net, 0) + ' €</dd></div><div><dt>Freibetrag übrig</dt><dd>' + fmt(t.freeLeft, 0) + ' €</dd></div><div><dt>Steuer</dt><dd>' + fmt(t.tax, 0) + ' €</dd></div><div><dt>Bleibt dir</dt><dd class="' + (t.after >= 0 ? 'good' : 'bad') + '">' + sgn(t.after, 0) + ' €</dd></div></dl>' +
@@ -3623,16 +3629,22 @@ function viewTax(){
     '<p class="hint">Abgeltungsteuer 25 % plus Soli' + (+S.cfg.kist ? ' und Kirchensteuer' : '') + ' auf alles über dem Freibetrag. Verluste werden im selben Jahr verrechnet. Schätzung aus deinen Einträgen unter „Echtes Geld“; maßgeblich ist die Jahressteuerbescheinigung von Trade Republic. Keine Steuerberatung.</p></section>';
 }
 function viewReal(){
-  var rows = realRows(), L2 = (V.trackLog || []).filter(function(x){ return x.r != null; });
+  var allRows = realRows(), rows = allRows.filter(function(x){ return !x.est; }), estRows = allRows.filter(function(x){ return x.est; }), L2 = (V.trackLog || []).filter(function(x){ return x.r != null; });
   var asked = L2.filter(function(x){ return !S.real[x.id]; }).slice(-5).reverse();
   var h = '<section class="card real"><div class="row"><h2>Echtes Geld</h2><span><button class="link small" data-act="trpdf">Abrechnungen (PDF)</button> · <button class="link small" data-act="realimp">CSV</button></span></div>';
   var trOpen = pairTrFills(S.trf || []).filter(function(t){ return !t.closed; });
   if ((S.trf || []).length) h += '<p class="muted small" style="margin:2px 0 6px">' + S.trf.length + (S.trf.length === 1 ? ' Abrechnung' : ' Abrechnungen') + ' eingelesen' + (trOpen.length ? ', ' + trOpen.length + ' offen (Verkauf fehlt noch)' : '') + '.</p>';
-  if (!rows.length && !asked.length) return h + '<p class="hint">Hier landet, was wirklich auf deinem Konto passiert: Markier nach jedem gemeldeten Signal, ob du es gehandelt hast und mit welchem Ergebnis in Euro, oder lies deine Abrechnungen von Trade Republic als PDF ein (Aktivität → Trade → Dokumente → Abrechnung → Teilen). Dann siehst du, ob du die Rückrechnung triffst, und was dir ausgelassene Signale gebracht hätten.</p><input type="file" id="realfile" accept=".csv,text/csv,text/plain" hidden><input type="file" id="trpdffile" accept=".pdf,application/pdf" multiple hidden></section>';
+  // Ausgeknockte Scheine bekommen bei Trade Republic keine Verkaufsabrechnung: hier als Totalverlust buchen
+  var koOpen = trOpen.filter(function(t){ return t.prod === 'ko'; });
+  if (koOpen.length) h += '<div class="banner" style="margin:4px 0 10px"><span>Knock-outs ohne Verkauf: Wenn ein Schein ausgeknockt wurde, schickt Trade Republic keine Verkaufsabrechnung. Dann fehlt der Verlust hier. Buch ihn mit einem Tipp:</span></div>' +
+    '<ul class="list-plain">' + koOpen.map(function(t){ return '<li><div class="row"><span><b>' + esc(t.name || t.isin) + '</b> <span class="muted small">' + fmt(t.qty, t.qty % 1 ? 4 : 0) + ' Stk. · gekauft ' + dm(t.buyAt) + ' zu ' + fmt(t.buy, 2) + ' €</span></span><button class="btn sm ghost" data-act="trko" data-x="' + esc(t.exec || (t.isin + '|' + t.buyAt)) + '">Ausgeknockt</button></div></li>'; }).join('') + '</ul>';
+  if (!allRows.length && !asked.length) return h + '<p class="hint">Hier landet, was wirklich auf deinem Konto passiert: Markier nach jedem gemeldeten Signal, ob du es gehandelt hast und mit welchem Ergebnis in Euro, oder lies deine Abrechnungen von Trade Republic als PDF ein (Aktivität → Trade → Dokumente → Abrechnung → Teilen). Dann siehst du, ob du die Rückrechnung triffst, und was dir ausgelassene Signale gebracht hätten.</p><input type="file" id="realfile" accept=".csv,text/csv,text/plain" hidden><input type="file" id="trpdffile" accept=".pdf,application/pdf" multiple hidden></section>';
   if (rows.length){
     var sum = 0, w = 0, curve = [0], mon = {}, now = berlinParts(Date.now()).key.slice(0, 7), peak = 0, dd = 0;
     rows.forEach(function(x){ sum += x.eur; curve.push(sum); if (x.eur > 0) w++; peak = Math.max(peak, sum); dd = Math.max(dd, peak - sum); var m = berlinParts(x.t).key.slice(0, 7); mon[m] = (mon[m] || 0) + x.eur; });
     var gw = rows.filter(function(x){ return x.eur > 0; }).reduce(function(a, x){ return a + x.eur; }, 0), gl = -rows.filter(function(x){ return x.eur < 0; }).reduce(function(a, x){ return a + x.eur; }, 0);
+    if (estRows.length){ var estSum = estRows.reduce(function(a, x){ return a + x.eur; }, 0);
+      h += '<p class="hint" style="margin:0 0 8px">Dazu ' + estRows.length + (estRows.length === 1 ? ' gehandelter Trade' : ' gehandelte Trades') + ' ohne Kurse, geschätzt ' + sgn(estSum, 0) + ' €. Die zählen hier nicht mit, weil sie nur aus dem Signal und deinem heutigen Risiko geschätzt sind. Unter „Alle Einträge“ bei „Preise“ nachtragen.</p>'; }
     h += '<div class="real-hero"><div><small>Gesamt</small><b class="' + (sum >= 0 ? 'good' : 'bad') + '">' + sgn(sum, 0) + ' €</b></div><div><small>Dieser Monat</small><b class="' + ((mon[now] || 0) >= 0 ? 'good' : 'bad') + '">' + sgn(mon[now] || 0, 0) + ' €</b></div></div>' +
       '<dl class="kv"><div><dt>Trades</dt><dd>' + rows.length + '</dd></div><div><dt>Treffer</dt><dd>' + fmt(w / rows.length * 100, 0) + ' %</dd></div><div><dt>Profitfaktor</dt><dd>' + (gl ? fmt(gw / gl, 2) : '–') + '</dd></div><div><dt>Max. Rückgang</dt><dd class="bad">' + (dd ? '−' + fmt(dd, 0) + ' €' : '0 €') + '</dd></div></dl>' + spark(curve);
     var ms = Object.keys(mon).sort().slice(-6);
@@ -3654,7 +3666,7 @@ function viewReal(){
   }
   h += viewExec();
   if (asked.length) h += '<div class="label" style="margin-top:12px">Hast du die gehandelt?</div>' + asked.map(function(x){ return '<div class="ask"><span><b>' + esc(x.name) + '</b> <span class="' + (x.dir > 0 ? 'good' : 'bad') + '">' + (x.dir > 0 ? 'Long' : 'Short') + '</span> <span class="muted small">' + dm(x.t) + ' · Signal ' + sgn(x.r, 2) + ' R</span></span><span class="btns"><button class="btn sm" data-act="realyes" data-id="' + esc(x.id) + '">Ja</button><button class="btn sm ghost" data-act="realno" data-id="' + esc(x.id) + '">Nein</button></span></div>'; }).join('');
-  if (rows.length) h += '<details class="real-list"><summary>Alle Einträge (' + rows.length + ')</summary><ul class="list-plain">' + rows.slice().reverse().slice(0, 60).map(function(x){ return '<li><div class="row"><span>' + esc(x.name) + ' <span class="muted small">' + dm(x.t) + ' · ' + esc(x.src) + (x.est ? ' · geschätzt' : '') + '</span>' + (x.id ? ' <button class="link tiny" data-act="realyes" data-id="' + esc(x.id) + '">Preise</button>' : '') + '</span><span class="num ' + (x.eur >= 0 ? 'good' : 'bad') + '">' + sgn(x.eur, 2) + ' €</span></div></li>'; }).join('') + '</ul>' + ((S.imp || []).length ? '<button class="link tiny" data-act="realclr">Importierte Zeilen entfernen</button>' : '') + '</details>';
+  if (allRows.length) h += '<details class="real-list"><summary>Alle Einträge (' + allRows.length + ')</summary><ul class="list-plain">' + allRows.slice().reverse().slice(0, 60).map(function(x){ return '<li><div class="row"><span>' + esc(x.name) + ' <span class="muted small">' + dm(x.t) + ' · ' + esc(x.src) + (x.est ? ' · geschätzt' : '') + '</span>' + (x.id ? ' <button class="link tiny" data-act="realyes" data-id="' + esc(x.id) + '">Preise</button>' : '') + '</span><span class="num ' + (x.eur >= 0 ? 'good' : 'bad') + '">' + sgn(x.eur, 2) + ' €</span></div></li>'; }).join('') + '</ul>' + ((S.imp || []).length ? '<button class="link tiny" data-act="realclr">Importierte Zeilen entfernen</button>' : '') + '</details>';
   return h + '<input type="file" id="realfile" accept=".csv,text/csv,text/plain" hidden><input type="file" id="trpdffile" accept=".pdf,application/pdf" multiple hidden></section>';
 }
 // CSV: Trennzeichen, Kopfzeile und Spalten selbst erkennen (Datum, Name, Ergebnis in Euro)
@@ -3713,7 +3725,7 @@ function trSheet(todo){
     var c = trCands(t);
     return '<div class="tr-row"><div class="row"><b>' + esc(t.name || t.isin) + '</b><span class="num ' + (t.eur >= 0 ? 'good' : 'bad') + '">' + (t.eur != null ? sgn(t.eur, 2) + ' €' : '–') + '</span></div><div class="muted small">' + fmt(t.qty, t.qty % 1 ? 4 : 0) + ' Stk.' + (t.buyAt ? ' · Kauf ' + dm(t.buyAt) + ' ' + hm(t.buyAt) + ' zu ' + fmt(t.buy, 3) : ' · Kauf-Abrechnung fehlt, Ergebnis aus dem Bruttogewinn') + ' · Verkauf ' + dm(t.sellAt) + ' ' + hm(t.sellAt) + ' zu ' + fmt(t.sell, 3) + ' · Gebühren ' + fmt(t.fee, 2) + ' €' + (t.tax ? ' · Steuern ' + fmt(t.tax, 2) + ' €' : '') + '</div>' +
       '<label class="field" style="margin-top:6px"><span>Gehört zu</span><select id="trsel' + i + '">' + c.map(function(q, j){ return '<option value="' + esc(q.x.id) + '"' + (j === 0 ? ' selected' : '') + '>' + esc(q.x.name) + ' · ' + esc(groupName(groupOf(q.x), q.x)) + ' · ' + dm(q.x.t) + ' ' + hm(q.x.t) + '</option>'; }).join('') + '<option value=""' + (c.length ? '' : ' selected') + '>Eigener Trade (kein Signal)</option></select></label>' +
-      (t.prod === 'ko' ? '<label class="field"><span>Bezugsverhältnis (optional, für die Kostenrechnung)</span><input inputmode="decimal" id="trratio' + i + '" value="' + esc(t.isin && S.isinR[t.isin] ? fmtIn(S.isinR[t.isin], 2) : '') + '" placeholder="steht im Produktblatt, z. B. 100"></label>' : '') + '</div>'; }).join('') +
+      (t.prod === 'ko' ? '<label class="field"><span>Bezugsverhältnis (optional, für die Kostenrechnung)</span><input inputmode="decimal" id="trratio' + i + '" value="' + esc(t.isin && S.isinR[t.isin] ? fmtIn(S.isinR[t.isin], S.isinR[t.isin] < 1 ? 4 : 2) : '') + '" placeholder="z. B. 0,01 (oder 100)"></label>' : '') + '</div>'; }).join('') +
     '<div class="btns"><button class="btn block" data-act="trsave">Speichern</button></div>');
 }
 function trSave(){
@@ -4502,15 +4514,23 @@ function onAct(e){
     sheet('<h2>' + esc(tl.name) + ' gehandelt</h2><p class="hint">Signal ' + sgn(tl.r, 2) + ' R' + (tl.e ? ', Einstieg ' + fmt(tl.e, 2) + (execUx(tl) ? ', Ausstieg ' + fmt(execUx(tl), 2) : '') + ' im Basiswert' : '') + '. Trag Kauf- und Verkaufskurs deines Scheins ein, dann rechnet die App dein echtes Ergebnis und was Spread, Timing und Gebühren gekostet haben.</p>' +
       '<div class="seg" style="margin:10px 0 4px" id="realprod"><button data-act="realprod" data-p="ko" aria-pressed="' + isKo + '">Knock-out</button><button data-act="realprod" data-p="etf" aria-pressed="' + !isKo + '">ETF oder Aktie</button></div>' +
       '<div class="fields f2"><label class="field"><span>Kaufkurs je Stück (€)</span><input inputmode="decimal" id="realbuy" value="' + fk(m0.buy, 3) + '" placeholder="z. B. 12,34"></label><label class="field"><span>Verkaufskurs je Stück (€)</span><input inputmode="decimal" id="realsell" value="' + fk(m0.sell, 3) + '" placeholder="z. B. 13,10"></label>' +
+      '<button class="link small" data-act="realknock" style="grid-column:1/-1;justify-self:start">Ausgeknockt? Verkaufskurs 0 € setzen</button>' +
       '<label class="field"><span>Stück</span><input inputmode="decimal" id="realqty" value="' + fk(m0.qty, 0) + '" placeholder="z. B. 40"></label>' +
-      '<label class="field ko-only"' + (isKo ? '' : ' hidden') + '><span>Bezugsverhältnis</span><input inputmode="decimal" id="realratio" value="' + fk(m0.ratio, 2) + '" placeholder="z. B. 100"></label><label class="field ko-only"' + (isKo ? '' : ' hidden') + '><span>KO-Schwelle</span><input inputmode="decimal" id="realko" value="' + fk(m0.ko, 2) + '" placeholder="Basiswert-Punkte"></label></div>' +
+      '<label class="field ko-only"' + (isKo ? '' : ' hidden') + '><span>Bezugsverhältnis</span><input inputmode="decimal" id="realratio" value="' + fk(m0.ratio, m0.ratio > 0 && m0.ratio < 1 ? 4 : 2) + '" placeholder="z. B. 0,01 (oder 100)"></label><label class="field ko-only"' + (isKo ? '' : ' hidden') + '><span>KO-Schwelle</span><input inputmode="decimal" id="realko" value="' + fk(m0.ko, 2) + '" placeholder="Basiswert-Punkte"></label></div>' +
       '<details class="more"><summary>Nur das Ergebnis eintragen</summary><div class="fields f2" style="margin-top:8px"><label class="field"><span>Ergebnis in €</span><input inputmode="decimal" id="realeur" value="' + (m0.eur != null && m0.buy == null ? esc(fmtIn(m0.eur, 2)) : '') + '" placeholder="z. B. 42,50 oder -20"></label></div></details>' +
       '<div class="btns"><button class="btn block" data-act="realsave" data-id="' + esc(tl.id) + '">Speichern</button></div>');
     return; }
+  if (a === 'trko'){ var key = el.dataset.x, op = pairTrFills(S.trf || []).filter(function(t){ return !t.closed && (t.exec || (t.isin + '|' + t.buyAt)) === key; })[0]; if (!op) return;
+    S.trf.push({ side: 'sell', type: 'Knock-out', at: Date.now(), isin: op.isin, name: op.name, qty: op.qty, price: 0, amount: 0, fee: 0, tax: 0, total: 0, gross: null, dir: op.dir, ko: op.ko, prod: 'ko', exec: 'ko-' + key, order: null });
+    save(); S.trBooked = S.trBooked || {}; var todoK = pairTrFills(S.trf).filter(function(t){ return t.closed && !S.trBooked[t.exec]; });
+    toast('Als ausgeknockt gebucht'); if (todoK.length) trSheet(todoK); else rerender(); return; }
+  if (a === 'realknock'){ var rs = $('#realsell'); if (rs){ rs.value = '0'; rs.focus(); } return; }
   if (a === 'realprod'){ $$('#realprod button').forEach(function(b){ b.setAttribute('aria-pressed', String(b === el)); }); $$('.ko-only').forEach(function(f){ f.hidden = el.dataset.p !== 'ko'; }); return; }
   if (a === 'realsave'){ var vv = function(id){ var e2 = $('#' + id); return e2 ? pnum(e2.value) : null; }, ve = $('#realeur') ? String($('#realeur').value).trim() : '';
     var prod = ($('#realprod [aria-pressed=true]') || { dataset: { p: 'ko' } }).dataset.p, m = { traded: true, prod: prod, buy: vv('realbuy'), sell: vv('realsell'), qty: vv('realqty'), ratio: prod === 'ko' ? vv('realratio') : null, ko: prod === 'ko' ? vv('realko') : null, fee: +S.cfg.fee || 0 };
-    if (m.buy > 0 && m.sell > 0 && m.qty > 0) m.eur = Math.round(((m.sell - m.buy) * m.qty - 2 * m.fee) * 100) / 100; else { m.buy = m.sell = m.qty = null; m.eur = ve === '' ? null : numDE(ve); }
+    var sellTxt = $('#realsell') ? String($('#realsell').value).trim() : '';
+    if (m.buy > 0 && sellTxt !== '' && m.sell >= 0 && m.qty > 0){ m.ko0 = m.sell === 0 || undefined; m.eur = Math.round(((m.sell - m.buy) * m.qty - (m.sell === 0 ? 1 : 2) * m.fee) * 100) / 100; }
+    else { m.buy = m.sell = m.qty = null; m.eur = ve === '' ? null : numDE(ve); }
     S.real[el.dataset.id] = m; save(); closeSheet(); toast(m.eur != null ? 'Gespeichert: ' + sgn(m.eur, 2) + ' €' : 'Gespeichert'); return rerender(); }
   if (a === 'protocheck'){ protoCheck(); return; }
   if (a === 'bakcode'){ V.showCode = !V.showCode; return rerender(); }
